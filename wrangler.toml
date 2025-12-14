@@ -10,4 +10,5 @@ compatibility_flags = []
 
 [[routes]]
   pattern = "https://infl-worker.loto09090909.workers.dev/*"   # 기본 제공되는 workers.dev 도메인
-  script_name = "infl-worker"   # 워커의 이름
+  zone_name = "loto09090909.workers.dev"   # 현재 Cloudflare 제공 도메인에 해당하는 zone_name 추가
+
