@@ -10,6 +10,4 @@ compatibility_flags = []
 
 [[routes]]
   pattern = "https://infl-worker.loto09090909.workers.dev/*"
-  zone_id = "a20f2b408516e4ff277ff784cc24adea"
-
-compatibility_date = "2025-12-14"
+  custom_domain = "workers.dev"
