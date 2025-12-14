@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{PAGE_NAME}}</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="header">
+        <h1>{{PAGE_NAME}}</h1>
+        <img src="{{PAGE_PHOTO_URL}}" alt="{{PAGE_NAME}}" class="profile-photo">
+        <p>{{PAGE_DESCRIPTION}}</p>
+    </div>
+
+    <div class="links">
+        <h3>Links</h3>
+        <ul>
+            {{#each LINKS}}
+                <li><a href="{{this.url}}" target="_blank">{{this.name}}</a></li>
+            {{/each}}
+        </ul>
+    </div>
+
+    <div class="ads-banner">
+        <p>Advertisement Here</p>
+    </div>
+
+    <script src="js/script.js"></script>
+</body>
+</html>
