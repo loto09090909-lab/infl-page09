@@ -1,0 +1,31 @@
+name: Deploy to Cloudflare Workers
+
+on:
+  push:
+    branches:
+      - main  # 자동 배포할 브랜치 설정
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v2
+      with:
+        node-version: '16'
+
+    - name: Install dependencies
+      run: npm install
+
+    - name: Install Wrangler
+      run: npm install -g wrangler
+
+    - name: Publish to Cloudflare Workers
+      run: |
+        wrangler publish --env production
+      env:
+        CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}  # Cloudflare API 토큰
