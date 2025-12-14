@@ -1,6 +1,6 @@
 compatibility_date = "2025-12-14"
 name = "infl-worker"
-main = "worker/index.ts"
+main = "index.ts"
 compatibility_flags = []
 
 workers_dev = true  # workers.dev에서 실행되도록 설정
