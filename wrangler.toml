@@ -10,4 +10,4 @@ compatibility_flags = []
 
 [[routes]]
   pattern = "https://infl-worker.loto09090909.workers.dev/*"
-  script_name = "infl-worker"
+  zone_id = "a20f2b408516e4ff277ff784cc24adea"
