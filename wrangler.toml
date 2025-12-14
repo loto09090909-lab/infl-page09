@@ -1,0 +1,13 @@
+name = "infl-worker"
+main = "worker/index.ts"
+compatibility_flags = []
+
+[env.production]
+  kv_namespaces = [
+    { binding = "PAGE_KV", id = "df984fdb34cf4546816e70f8e029b47a" },
+    { binding = "DB", id = "1bc18749-585b-4c55-b378-78a29af5b5ca" }
+  ]
+
+[[routes]]
+  pattern = "https://infl-worker.loto09090909.workers.dev/*"
+  script_name = "infl-worker"
