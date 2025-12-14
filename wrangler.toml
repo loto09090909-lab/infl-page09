@@ -5,8 +5,9 @@ compatibility_flags = []
 
 workers_dev = true  # workers.dev에서 실행되도록 설정
 
-[env.production]
   kv_namespaces = [
-    { binding = "PAGE_KV", id = "df984fdb34cf4546816e70f8e029b47a" },
-    { binding = "DB", id = "1bc18749-585b-4c55-b378-78a29af5b5ca" }
+    { binding = "PAGE_KV", id = "df984fdb34cf4546816e70f8e029b47a" },  # KV 설정 (PAGE_KV)
+  ]
+  d1_databases = [
+    { binding = "DB", id = "1bc18749-585b-4c55-b378-78a29af5b5ca" }  # D1 DB 설정 (DB)
   ]
