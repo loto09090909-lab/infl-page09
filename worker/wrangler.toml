@@ -11,3 +11,4 @@ workers_dev = true  # workers.dev에서 실행되도록 설정
   d1_databases = [
     { binding = "DB", database_id = "1bc18749-585b-4c55-b378-78a29af5b5ca" }  # D1 DB 설정 (DB)
   ]
+
