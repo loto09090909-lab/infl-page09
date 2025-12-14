@@ -34,3 +34,4 @@ jobs:
       working-directory: './worker' # 👈 **[핵심 수정]**
       env:
         CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+
