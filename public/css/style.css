@@ -1,0 +1,47 @@
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    text-align: center;
+    background-color: #f4f4f4;
+}
+
+header, .section {
+    margin: 20px;
+}
+
+h1, h3 {
+    color: #333;
+}
+
+input, button {
+    padding: 10px;
+    font-size: 16px;
+    margin: 10px;
+}
+
+input[type="url"] {
+    width: 300px;
+}
+
+button {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    cursor: pointer;
+}
+
+button:hover {
+    background-color: #45a049;
+}
+
+.profile-photo {
+    border-radius: 50%;
+    width: 120px;
+}
+
+.ads-banner {
+    margin-top: 20px;
+    background-color: #ddd;
+    padding: 20px;
+}
