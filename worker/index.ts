@@ -54,3 +54,52 @@ export default {
     return new Response("Not Found", { status: 404 });
   }
 };
+
+export default {
+  async fetch(req: Request, env: any) {
+    const url = new URL(req.url);
+    const path = url.pathname;
+
+    if (path === "/index.html") {
+      return htmlResponse("<h1>Welcome to the index page</h1>");
+    }
+
+    if (path === "/admin.html") {
+      return htmlResponse("<h1>Admin page</h1>");
+    }
+
+    // Static files like CSS, JS, images should be handled as well.
+    if (path.endsWith(".css")) {
+      return cssResponse();
+    }
+
+    if (path.endsWith(".js")) {
+      return jsResponse();
+    }
+
+    return new Response("Not Found", { status: 404 });
+  }
+};
+
+function htmlResponse(content: string) {
+  return new Response(content, {
+    headers: { "Content-Type": "text/html; charset=UTF-8" },
+  });
+}
+
+function cssResponse() {
+  return new Response(`
+    body { background-color: lightblue; }
+    h1 { color: navy; }
+  `, {
+    headers: { "Content-Type": "text/css; charset=UTF-8" },
+  });
+}
+
+function jsResponse() {
+  return new Response(`
+    console.log('JavaScript is working!');
+  `, {
+    headers: { "Content-Type": "application/javascript; charset=UTF-8" },
+  });
+}
