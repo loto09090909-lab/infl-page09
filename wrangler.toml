@@ -9,5 +9,6 @@ compatibility_flags = []
   ]
 
 [[routes]]
-  pattern = "https://infl-worker.loto09090909.workers.dev/*"
-  custom_domain = "workers.dev"
+  pattern = "https://infl-worker.loto09090909.workers.dev/*"  # workers.dev 도메인
+
+compatibility_date = "2025-12-14"
