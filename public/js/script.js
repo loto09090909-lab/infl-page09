@@ -55,3 +55,30 @@ function saveAdsSettings() {
       .then(data => alert('광고 설정이 저장되었습니다.'))
       .catch(error => alert('광고 설정 실패: ' + error));
 }
+
+// 페이지 ID를 URL에서 추출해서 페이지를 동적으로 로드
+async function loadPageData(pageId) {
+    const res = await fetch(`/api/pages/${pageId}`);
+    const data = await res.json();
+    
+    if (data && data.profile) {
+        document.title = data.profile.name;
+        document.querySelector('h1').innerText = data.profile.name;
+        document.querySelector('.profile-photo').src = data.profile.photoUrl;
+        document.querySelector('.profile-description').innerText = data.profile.description;
+
+        // 링크 동적 삽입
+        const linksList = document.getElementById('links-list');
+        data.links.forEach(link => {
+            const li = document.createElement('li');
+            li.innerHTML = `<a href="${link.url}" target="_blank">${link.name}</a>`;
+            linksList.appendChild(li);
+        });
+    } else {
+        console.error('Page data not found');
+    }
+}
+
+// URL에서 pageId (슬러그) 추출
+const pageId = window.location.pathname.split('/')[2]; // '/user/{pageId}' 형태
+loadPageData(pageId);
