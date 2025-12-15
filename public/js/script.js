@@ -1,4 +1,5 @@
 const API_BASE = "https://infl-worker.loto09090909.workers.dev";
+const hasUserView = document.getElementById("links-list") !== null;
 
 // 관리자 페이지: 페이지 저장
 function savePage() {
@@ -105,23 +106,51 @@ async function loadPageData(pageId) {
 const pathSegments = window.location.pathname.split('/').filter(Boolean);
 const searchParams = new URLSearchParams(window.location.search);
 const pageIdFromQuery = searchParams.get('pageId');
+const pageRole = document.body?.dataset?.pageRole;
+const pageIdFromPath =
+    pathSegments.length >= 2 && pathSegments[1] === 'admin' ? pathSegments[0] : '';
 const isUserPage = pathSegments.length === 2 && pathSegments[0] === 'user' && pathSegments[1];
 const looksLikeSlugPage =
     pathSegments.length === 1 &&
     !pathSegments[0].includes('.') &&
-    !['admin', 'login', 'super-admin'].includes(pathSegments[0]);
+    !['admin', 'login', 'super-admin', 'super-admin.html', 'page-admin-login'].includes(pathSegments[0]);
 const isAdminHtml = pathSegments.length === 1 && pathSegments[0].startsWith('admin');
 
-if (isUserPage) {
-    const pageId = pathSegments[1];
-    loadPageData(pageId);
-} else if (looksLikeSlugPage) {
-    loadPageData(pathSegments[0]);
-} else if (isAdminHtml && pageIdFromQuery) {
-    loadPageData(pageIdFromQuery);
-} else {
-    console.debug('사용자 페이지가 아니므로 페이지 데이터 로드를 건너뜁니다.');
+// 페이지 관리자 대시보드는 토큰과 pageId를 필수로 요구
+if (pageRole === 'page-admin') {
+    const derivedPageId = pageIdFromPath || pageIdFromQuery || '';
+    const token = sessionStorage.getItem('page_admin_token');
+
+    if (!token) {
+        const redirectTarget = derivedPageId
+            ? `/page-admin-login.html?pageId=${encodeURIComponent(derivedPageId)}`
+            : '/page-admin-login.html';
+        window.location.href = redirectTarget;
+    }
 }
+
+if (hasUserView) {
+    if (isUserPage) {
+        const pageId = pathSegments[1];
+        loadPageData(pageId);
+    } else if (looksLikeSlugPage) {
+        loadPageData(pathSegments[0]);
+    } else if (isAdminHtml && pageIdFromQuery) {
+        loadPageData(pageIdFromQuery);
+    } else {
+        console.debug('사용자 페이지가 아니므로 페이지 데이터 로드를 건너뜁니다.');
+    }
+} else {
+    console.debug('사용자 페이지 컨테이너가 없어 페이지 데이터를 요청하지 않습니다.');
+}
+
+// 페이지 관리자 로그인 화면에서 URL로 받은 pageId를 자동 입력
+document.addEventListener('DOMContentLoaded', () => {
+    const pageAdminIdInput = document.getElementById('page-admin-id');
+    if (pageAdminIdInput && (pageIdFromPath || pageIdFromQuery)) {
+        pageAdminIdInput.value = pageIdFromPath || pageIdFromQuery;
+    }
+});
 
 // 로그인 함수
 async function login() {

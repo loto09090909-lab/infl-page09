@@ -1,3 +1,5 @@
+const API_BASE = "https://infl-worker.loto09090909.workers.dev";
+
 // 페이지 생성 함수
 async function createPage() {
     const name = document.getElementById('pageName').value;
@@ -23,7 +25,7 @@ async function createPage() {
         return;
     }
 
-    const res = await fetch("https://infl-worker.loto09090909.workers.dev/api/admin/pages", {
+    const res = await fetch(`${API_BASE}/api/admin/pages`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -48,7 +50,7 @@ async function loadPageList() {
         return;
     }
 
-    const res = await fetch("https://infl-worker.loto09090909.workers.dev/api/admin/pages", {
+    const res = await fetch(`${API_BASE}/api/admin/pages`, {
         headers: { 'Authorization': `Bearer ${token}` }
     });
     const pages = await res.json();
@@ -71,7 +73,7 @@ async function deletePage(pageId) {
         return;
     }
 
-    const res = await fetch(`https://infl-worker.loto09090909.workers.dev/api/admin/pages/${pageId}`, {
+    const res = await fetch(`${API_BASE}/api/admin/pages/${pageId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
     });
@@ -92,7 +94,7 @@ async function editPage(pageId) {
         return;
     }
 
-    const res = await fetch("https://infl-worker.loto09090909.workers.dev/api/admin/pages", {
+    const res = await fetch(`${API_BASE}/api/admin/pages`, {
         headers: { 'Authorization': `Bearer ${token}` }
     });
     const pages = await res.json();
@@ -112,5 +114,10 @@ async function editPage(pageId) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    const token = sessionStorage.getItem('super_admin_token');
+    if (!token) {
+        window.location.href = '/login.html';
+        return;
+    }
     loadPageList();
 });
