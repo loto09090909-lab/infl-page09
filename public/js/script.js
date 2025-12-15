@@ -1,3 +1,5 @@
+const API_BASE = "https://infl-worker.loto09090909.workers.dev";
+
 // 관리자 페이지: 페이지 저장
 function savePage() {
     const name = document.getElementById('name').value;
@@ -5,7 +7,7 @@ function savePage() {
     const photo = document.getElementById('photo').value;
 
     // API 호출로 페이지 정보 저장
-    fetch("https://infl-worker.loto09090909.workers.dev/api/pages/save", {
+    fetch(`${API_BASE}/api/pages/save`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -24,7 +26,7 @@ function addLink() {
     const url = document.getElementById('newLinkUrl').value;
 
     // API 호출로 새 링크 추가
-    fetch("https://infl-worker.loto09090909.workers.dev/api/pages/save", {
+    fetch(`${API_BASE}/api/pages/save`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -47,7 +49,7 @@ function saveAdsSettings() {
     const adsEnabled = document.getElementById('ads').checked;
 
     // 광고 설정을 서버에 저장
-    fetch("https://infl-worker.loto09090909.workers.dev/api/pages/saveAds", {
+    fetch(`${API_BASE}/api/pages/saveAds`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ adsEnabled: adsEnabled })
@@ -58,8 +60,13 @@ function saveAdsSettings() {
 
 // 페이지 데이터 로드
 async function loadPageData(pageId) {
+    if (!pageId) {
+        console.debug('pageId가 없어 페이지 데이터를 요청하지 않습니다.');
+        return;
+    }
+
     // 템플릿 문자열 대신 `pageId`를 바로 넣기
-    const res = await fetch(`https://infl-worker.loto09090909.workers.dev/api/pages/${pageId}`);
+    const res = await fetch(`${API_BASE}/api/pages/${encodeURIComponent(pageId)}`);
     
     if (!res.ok) {
         console.error('Failed to fetch page data:', res);
@@ -70,32 +77,47 @@ async function loadPageData(pageId) {
 
     if (data && data.profile) {
         document.title = data.profile.name;
-        document.querySelector('h1').innerText = data.profile.name;
-        document.querySelector('.profile-photo').src = data.profile.photoUrl;
-        document.querySelector('.profile-description').innerText = data.profile.description;
+
+        const titleEl = document.querySelector('h1');
+        if (titleEl) titleEl.innerText = data.profile.name;
+
+        const photoEl = document.querySelector('.profile-photo');
+        if (photoEl && data.profile.photoUrl) photoEl.src = data.profile.photoUrl;
+
+        const descEl = document.querySelector('.profile-description');
+        if (descEl && data.profile.description) descEl.innerText = data.profile.description;
 
         // 링크 동적 삽입
         const linksList = document.getElementById('links-list');
-        data.links.forEach(link => {
-            const li = document.createElement('li');
-            li.innerHTML = `<a href="${link.url}" target="_blank">${link.name}</a>`;
-            linksList.appendChild(li);
-        });
+        if (linksList && Array.isArray(data.links)) {
+            data.links.forEach(link => {
+                const li = document.createElement('li');
+                li.innerHTML = `<a href="${link.url}" target="_blank">${link.name}</a>`;
+                linksList.appendChild(li);
+            });
+        }
     } else {
         console.error('Page data not found');
     }
 }
 
 // URL에서 pageId (슬러그) 추출
-const pageId = window.location.pathname.split('/')[2]; // '/user/{pageId}' 형태
-loadPageData(pageId);
+const pathSegments = window.location.pathname.split('/').filter(Boolean);
+const isUserPage = pathSegments[0] === 'user' && pathSegments[1];
+
+if (isUserPage) {
+    const pageId = pathSegments[1];
+    loadPageData(pageId);
+} else {
+    console.debug('사용자 페이지가 아니므로 페이지 데이터 로드를 건너뜁니다.');
+}
 
 // 로그인 함수
 async function login() {
     const password = document.getElementById('password').value;
 
     // 백엔드 API의 절대 경로를 사용하여 요청
-    const res = await fetch('https://infl-worker.loto09090909.workers.dev/api/admin/login', {
+    const res = await fetch(`${API_BASE}/api/admin/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: password })
