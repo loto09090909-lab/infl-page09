@@ -6,4 +6,5 @@
 /admin /admin.html 200!
 /login /login.html 200!
 / /index.html 200!
+/:slug/admin /admin.html 200!
 /:slug /user.html 200!
