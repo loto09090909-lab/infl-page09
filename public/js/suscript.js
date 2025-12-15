@@ -17,7 +17,7 @@ async function createPage() {
         plan: "free"  // 기본적으로 무료로 설정
     };
 
-    const res = await fetch('/api/admin/pages', {
+    const res = await fetch("https://infl-worker.loto09090909.workers.dev/api/admin/pages", {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json'
@@ -35,7 +35,7 @@ async function createPage() {
 
 // 페이지 목록 불러오기
 async function loadPageList() {
-    const res = await fetch('/api/admin/pages');
+    const res = await fetch("https://infl-worker.loto09090909.workers.dev/api/admin/pages");
     const pages = await res.json();
 
     const pageList = document.getElementById('pages');
@@ -50,7 +50,7 @@ async function loadPageList() {
 
 // 페이지 삭제
 async function deletePage(pageId) {
-    const res = await fetch(`/api/admin/pages/${pageId}/delete`, { method: 'POST' });
+    const res = await fetch("https://infl-worker.loto09090909.workers.dev/api/admin/pages/${pageId}/delete", { method: 'POST' });
 
     if (res.ok) {
         alert('페이지가 삭제되었습니다.');
@@ -63,7 +63,7 @@ async function deletePage(pageId) {
 // 페이지 수정
 async function editPage(pageId) {
     // 수정할 페이지의 정보를 불러오고 수정 폼에 채워넣는 작업
-    const res = await fetch(`/api/admin/pages/${pageId}`);
+    const res = await fetch("https://infl-worker.loto09090909.workers.dev/api/admin/pages/${pageId}");
     const page = await res.json();
 
     // 수정된 내용을 입력할 수 있도록 설정하는 부분
