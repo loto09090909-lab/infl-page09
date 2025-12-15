@@ -103,17 +103,22 @@ async function loadPageData(pageId) {
 
 // URL에서 pageId (슬러그) 추출
 const pathSegments = window.location.pathname.split('/').filter(Boolean);
+const searchParams = new URLSearchParams(window.location.search);
+const pageIdFromQuery = searchParams.get('pageId');
 const isUserPage = pathSegments.length === 2 && pathSegments[0] === 'user' && pathSegments[1];
 const looksLikeSlugPage =
     pathSegments.length === 1 &&
     !pathSegments[0].includes('.') &&
-    !['admin', 'login'].includes(pathSegments[0]);
+    !['admin', 'login', 'super-admin'].includes(pathSegments[0]);
+const isAdminHtml = pathSegments.length === 1 && pathSegments[0].startsWith('admin');
 
 if (isUserPage) {
     const pageId = pathSegments[1];
     loadPageData(pageId);
 } else if (looksLikeSlugPage) {
     loadPageData(pathSegments[0]);
+} else if (isAdminHtml && pageIdFromQuery) {
+    loadPageData(pageIdFromQuery);
 } else {
     console.debug('사용자 페이지가 아니므로 페이지 데이터 로드를 건너뜁니다.');
 }
@@ -122,7 +127,8 @@ if (isUserPage) {
 async function login() {
     const usernameInput = document.getElementById('username');
     const passwordInput = document.getElementById('password');
-    const username = usernameInput ? usernameInput.value : '';
+    // username이 비어 있으면 기본 값 'admin'을 사용하여 기존 단일 계정과 호환
+    const username = usernameInput && usernameInput.value ? usernameInput.value : 'admin';
     const password = passwordInput ? passwordInput.value : '';
 
     if (!username || !password) {
@@ -138,10 +144,14 @@ async function login() {
     });
 
     if (res.ok) {
-        document.cookie = "session=super-admin; path=/; max-age=3600";  // 로그인 성공 시 세션 쿠키 설정 (1시간)
-        window.location.href = "/admin.html";  // 관리자 페이지로 리디렉션
+        const session = await res.json();
+        if (session?.token) {
+            sessionStorage.setItem('super_admin_token', session.token);
+        }
+        window.location.href = "/super-admin.html";  // 슈퍼 관리자 페이지로 리디렉션
     } else {
-        alert("로그인 실패");
+        const errText = await res.text();
+        alert(`로그인 실패: ${errText || res.status}`);
     }
 }
 

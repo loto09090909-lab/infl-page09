@@ -24,14 +24,19 @@ export async function superAdminLogin(
   headers: HeadersInit
 ): Promise<Response> {
   const body = await parseJsonBody<LoginBody>(req);
-  if (!body || typeof body.username !== "string" || typeof body.password !== "string") {
+  if (!body || typeof body.password !== "string") {
     return errorResponse("아이디와 비밀번호를 모두 입력하세요", 400, headers);
   }
+
+  const username =
+    typeof body.username === "string" && body.username.trim()
+      ? body.username.trim()
+      : "admin"; // 기본 슈퍼 관리자 호환
 
   const row = await env.DB.prepare(
     "SELECT username, password_hash FROM super_admin WHERE username = ? LIMIT 1"
   )
-    .bind(body.username)
+    .bind(username)
     .first<{ username: string; password_hash: string }>();
 
   if (!row || row.password_hash !== body.password) {
