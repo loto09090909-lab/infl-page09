@@ -56,11 +56,18 @@ function saveAdsSettings() {
       .catch(error => alert('광고 설정 실패: ' + error));
 }
 
-// 페이지 ID를 URL에서 추출해서 페이지를 동적으로 로드
+// 페이지 데이터 로드
 async function loadPageData(pageId) {
-    const res = await fetch("https://infl-worker.loto09090909.workers.dev/api/pages/${pageId}");
-    const data = await res.json();
+    // 템플릿 문자열 대신 `pageId`를 바로 넣기
+    const res = await fetch(`https://infl-worker.loto09090909.workers.dev/api/pages/${pageId}`);
     
+    if (!res.ok) {
+        console.error('Failed to fetch page data:', res);
+        return;
+    }
+    
+    const data = await res.json();
+
     if (data && data.profile) {
         document.title = data.profile.name;
         document.querySelector('h1').innerText = data.profile.name;
