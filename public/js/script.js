@@ -1,6 +1,11 @@
 function resolveApiBases() {
     const bases = [];
 
+    const metaApiBase = document.querySelector('meta[name="api-base"]')?.content?.trim();
+    if (metaApiBase) {
+        bases.push(metaApiBase);
+    }
+
     if (window.API_BASE) {
         bases.push(window.API_BASE);
     }
@@ -12,6 +17,11 @@ function resolveApiBases() {
         if (!bases.includes(guessedWorker)) {
             bases.push(guessedWorker);
         }
+    }
+
+    const knownWorkerBase = 'https://infl-worker.loto09090909.workers.dev';
+    if (!bases.includes(knownWorkerBase)) {
+        bases.push(knownWorkerBase);
     }
 
     return bases;
