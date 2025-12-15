@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>슈퍼 관리자 페이지</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <header>
+        <h1>슈퍼 관리자 페이지</h1>
+        <nav>
+            <ul>
+                <li><a href="index.html">메인 페이지</a></li>
+                <li><a href="admin.html">페이지 관리자</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <section class="page-creation">
+        <h2>페이지 생성</h2>
+        <input id="pageName" type="text" placeholder="페이지 이름" />
+        <input id="pageSlug" type="text" placeholder="슬러그 (고유 이름)" />
+        <input id="pageDescription" type="text" placeholder="페이지 설명" />
+        <input id="pagePhoto" type="text" placeholder="사진 URL" />
+        <input id="adminPassword" type="password" placeholder="관리자 비밀번호" />
+        <button onclick="createPage()">페이지 생성</button>
+    </section>
+
+    <section class="page-list">
+        <h2>페이지 목록</h2>
+        <ul id="pages">
+            <!-- 동적으로 페이지 목록을 표시 -->
+        </ul>
+    </section>
+
+    <footer>
+        <p>&copy; 2025 인플루언서 페이지 관리 시스템</p>
+    </footer>
+
+    <script src="js/script.js"></script>
+</body>
+</html>
