@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{PAGE_NAME}} 프로필</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <header>
+        <h1>{{PAGE_NAME}}의 프로필</h1>
+    </header>
+
+    <section class="profile">
+        <img src="{{PAGE_PHOTO_URL}}" alt="{{PAGE_NAME}}" class="profile-photo">
+        <p>{{PAGE_DESCRIPTION}}</p>
+    </section>
+
+    <section class="links">
+        <h3>링크</h3>
+        <ul id="links-list">
+            <!-- Links will be dynamically inserted here -->
+        </ul>
+    </section>
+
+    <footer>
+        <p>&copy; 2025 인플루언서 페이지</p>
+    </footer>
+
+    <script src="js/script.js"></script>
+</body>
+</html>
