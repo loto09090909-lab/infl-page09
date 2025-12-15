@@ -3,38 +3,37 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>관리자 페이지 - {{PAGE_NAME}}</title>
+    <title>{{PAGE_NAME}} 관리자</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-    <h1>관리자 페이지</h1>
-    
-    <div class="section">
+    <header>
+        <h1>{{PAGE_NAME}} 관리자 페이지</h1>
+    </header>
+
+    <section class="profile-edit">
         <h3>페이지 정보 수정</h3>
         <input id="name" placeholder="페이지 이름" value="{{PAGE_NAME}}">
         <input id="desc" placeholder="페이지 설명" value="{{PAGE_DESCRIPTION}}">
         <input id="photo" placeholder="프로필 사진 URL" value="{{PAGE_PHOTO_URL}}">
         <button onclick="savePage()">저장</button>
-    </div>
+    </section>
 
-    <div class="section">
+    <section class="link-management">
         <h3>링크 관리</h3>
         <ul id="link-list">
-            {{#each LINKS}}
-                <li>{{this.name}} - <input type="url" value="{{this.url}}" placeholder="링크 수정">
-                <button onclick="removeLink('{{this.name}}')">삭제</button></li>
-            {{/each}}
+            <!-- Links will be dynamically inserted here -->
         </ul>
         <input id="newLinkName" placeholder="새 링크 이름">
         <input id="newLinkUrl" placeholder="새 링크 URL">
         <button onclick="addLink()">링크 추가</button>
-    </div>
+    </section>
 
-    <div class="section">
+    <section class="ads-management">
         <h3>광고 설정</h3>
-        <input type="checkbox" id="ads" {{#if ADS_ENABLED}}checked{{/if}}> 광고 표시
+        <input type="checkbox" id="ads"> 광고 표시
         <button onclick="saveAdsSettings()">저장</button>
-    </div>
+    </section>
 
     <script src="js/script.js"></script>
 </body>
