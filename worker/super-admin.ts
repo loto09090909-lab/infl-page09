@@ -1,71 +1,112 @@
-import { json } from "./utils";  // 공통 JSON 유틸리티
+import { createSessionToken } from "./auth";
+import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
 
-// 슈퍼 관리자 로그인 처리
-export async function superAdminLogin(req: Request, env: any): Promise<Response> {
-  const { password } = await req.json();
-  const storedPassword = await env.PAGE_KV.get("super_admin_password");
+type CreatePageBody = {
+  pageId: string;
+  profile?: unknown;
+  adminPassword: string;
+  plan?: unknown;
+};
 
-  if (storedPassword !== password) {
-    return new Response("Unauthorized", { status: 401 });
+type UpdatePageBody = {
+  profile?: unknown;
+  plan?: unknown;
+};
+
+type LoginBody = {
+  password?: string;
+};
+
+export async function superAdminLogin(
+  req: Request,
+  env: any,
+  headers: HeadersInit
+): Promise<Response> {
+  const body = await parseJsonBody<LoginBody>(req);
+  if (!body || typeof body.password !== "string") {
+    return errorResponse("유효한 비밀번호를 입력하세요", 400, headers);
   }
 
-  return new Response("Login successful");
+  const storedPassword = await env.PAGE_KV.get("super_admin_password");
+  if (storedPassword !== body.password) {
+    return errorResponse("인증에 실패했습니다", 401, headers);
+  }
+
+  const session = await createSessionToken(env, "super", "super-admin");
+  return jsonResponse(session, 200, headers);
 }
 
-// 페이지 생성
-export async function createPage(req: Request, env: any): Promise<Response> {
-  const { pageId, profile, adminPassword, plan } = await req.json();
+export async function createPage(
+  req: Request,
+  env: any,
+  headers: HeadersInit
+): Promise<Response> {
+  const body = await parseJsonBody<CreatePageBody>(req);
+  if (!body || !body.pageId || !body.adminPassword) {
+    return errorResponse("pageId와 adminPassword는 필수입니다", 400, headers);
+  }
 
-  // 페이지 데이터 및 관리자 비밀번호 저장
-  const pageData = { profile, plan };
-  await env.PAGE_KV.put(`page:${pageId}`, JSON.stringify(pageData));  // 페이지 데이터 저장
-  await env.PAGE_KV.put(`page_auth:${pageId}`, adminPassword);  // 관리자 비밀번호 저장
+  const pageData = { profile: body.profile ?? {}, plan: body.plan ?? null };
+  await env.PAGE_KV.put(`page:${body.pageId}`, JSON.stringify(pageData));
+  await env.PAGE_KV.put(`page_auth:${body.pageId}`, body.adminPassword);
 
-  return json({ success: true, message: "Page created successfully" });
+  return jsonResponse({ success: true, message: "Page created" }, 201, headers);
 }
 
-// 페이지 목록 조회
-export async function listPages(env: any): Promise<Response> {
-  // 페이지 목록을 가져와서 반환
+export async function listPages(env: any, headers: HeadersInit): Promise<Response> {
   const keys = await env.PAGE_KV.list({ prefix: "page:" });
   const pages = await Promise.all(
     keys.keys.map(async (key) => {
       const data = await env.PAGE_KV.get(key.name);
-      return JSON.parse(data!);  // 페이지 데이터를 JSON 형식으로 반환
+      if (!data) return null;
+      try {
+        const parsed = JSON.parse(data);
+        const pageId = key.name.replace(/^page:/, "");
+        return { pageId, ...parsed };
+      } catch (error) {
+        return null;
+      }
     })
   );
 
-  return json(pages);  // 페이지 목록 반환
+  const sanitized = pages.filter(Boolean);
+  return jsonResponse(sanitized, 200, headers);
 }
 
-// 페이지 삭제
-export async function deletePage(req: Request, env: any, pageId: string): Promise<Response> {
+export async function deletePage(
+  env: any,
+  pageId: string,
+  headers: HeadersInit
+): Promise<Response> {
   const exists = await env.PAGE_KV.get(`page:${pageId}`);
-
-  // 페이지가 존재하지 않으면 404 반환
   if (!exists) {
-    return new Response("Page not found", { status: 404 });
+    return errorResponse("Page not found", 404, headers);
   }
 
-  // 페이지 삭제
   await env.PAGE_KV.delete(`page:${pageId}`);
   await env.PAGE_KV.delete(`page_auth:${pageId}`);
 
-  return json({ success: true, message: "Page deleted successfully" });
+  return jsonResponse({ success: true, message: "Page deleted" }, 200, headers);
 }
 
-// 페이지 수정 (수정 기능)
-export async function updatePage(req: Request, env: any, pageId: string): Promise<Response> {
-  const { profile, plan } = await req.json();
+export async function updatePage(
+  req: Request,
+  env: any,
+  pageId: string,
+  headers: HeadersInit
+): Promise<Response> {
   const existingPage = await env.PAGE_KV.get(`page:${pageId}`);
-
-  // 페이지가 존재하지 않으면 404 반환
   if (!existingPage) {
-    return new Response("Page not found", { status: 404 });
+    return errorResponse("Page not found", 404, headers);
   }
 
-  const updatedPage = { profile, plan };
+  const body = await parseJsonBody<UpdatePageBody>(req);
+  if (!body) {
+    return errorResponse("잘못된 요청 본문입니다", 400, headers);
+  }
+
+  const updatedPage = { profile: body.profile ?? {}, plan: body.plan ?? null };
   await env.PAGE_KV.put(`page:${pageId}`, JSON.stringify(updatedPage));
 
-  return json({ success: true, message: "Page updated successfully" });
+  return jsonResponse({ success: true, message: "Page updated" }, 200, headers);
 }
