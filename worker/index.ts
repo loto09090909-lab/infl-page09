@@ -7,6 +7,7 @@ import {
   superAdminLogin,
   updatePage,
 } from "./super-admin";
+import { getPage } from "./page-view";
 import { buildCorsHeaders, CorsOptions, errorResponse } from "./utils";
 
 export default {
@@ -25,6 +26,14 @@ export default {
     // Preflight 처리
     if (method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders });
+    }
+
+    if (method === "GET" && path.startsWith("/api/pages/")) {
+      const pageId = path.replace("/api/pages/", "");
+      if (!pageId) {
+        return errorResponse("pageId가 필요합니다", 400, corsHeaders);
+      }
+      return getPage(env, decodeURIComponent(pageId), corsHeaders);
     }
 
     // --- 1. 관리자 API ---

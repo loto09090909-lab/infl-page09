@@ -14,6 +14,7 @@ type UpdatePageBody = {
 };
 
 type LoginBody = {
+  username?: string;
   password?: string;
 };
 
@@ -23,12 +24,17 @@ export async function superAdminLogin(
   headers: HeadersInit
 ): Promise<Response> {
   const body = await parseJsonBody<LoginBody>(req);
-  if (!body || typeof body.password !== "string") {
-    return errorResponse("유효한 비밀번호를 입력하세요", 400, headers);
+  if (!body || typeof body.username !== "string" || typeof body.password !== "string") {
+    return errorResponse("아이디와 비밀번호를 모두 입력하세요", 400, headers);
   }
 
-  const storedPassword = await env.PAGE_KV.get("super_admin_password");
-  if (storedPassword !== body.password) {
+  const row = await env.DB.prepare(
+    "SELECT username, password_hash FROM super_admin WHERE username = ? LIMIT 1"
+  )
+    .bind(body.username)
+    .first<{ username: string; password_hash: string }>();
+
+  if (!row || row.password_hash !== body.password) {
     return errorResponse("인증에 실패했습니다", 401, headers);
   }
 
@@ -50,27 +56,43 @@ export async function createPage(
   await env.PAGE_KV.put(`page:${body.pageId}`, JSON.stringify(pageData));
   await env.PAGE_KV.put(`page_auth:${body.pageId}`, body.adminPassword);
 
+  await env.DB.prepare(
+    "INSERT OR REPLACE INTO page_auth (page_id, password_hash) VALUES (?, ?)"
+  )
+    .bind(body.pageId, body.adminPassword)
+    .run();
+
+  await env.DB.prepare(
+    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
+  )
+    .bind(
+      body.pageId,
+      (body.profile as any)?.name ?? null,
+      (body.profile as any)?.photoUrl ?? null,
+      (body.profile as any)?.description ?? null,
+      JSON.stringify((body as any).links ?? [])
+    )
+    .run();
+
   return jsonResponse({ success: true, message: "Page created" }, 201, headers);
 }
 
 export async function listPages(env: any, headers: HeadersInit): Promise<Response> {
-  const keys = await env.PAGE_KV.list({ prefix: "page:" });
-  const pages = await Promise.all(
-    keys.keys.map(async (key) => {
-      const data = await env.PAGE_KV.get(key.name);
-      if (!data) return null;
-      try {
-        const parsed = JSON.parse(data);
-        const pageId = key.name.replace(/^page:/, "");
-        return { pageId, ...parsed };
-      } catch (error) {
-        return null;
-      }
-    })
-  );
+  const dbRows = await env.DB.prepare(
+    "SELECT page_id, name, photo_url, description, links FROM page_meta"
+  ).all<{ page_id: string; name: string | null; photo_url: string | null; description: string | null; links: string | null }>();
 
-  const sanitized = pages.filter(Boolean);
-  return jsonResponse(sanitized, 200, headers);
+  const mapped = (dbRows?.results ?? []).map((row) => ({
+    pageId: row.page_id,
+    profile: {
+      name: row.name,
+      photoUrl: row.photo_url,
+      description: row.description,
+    },
+    links: safeParseLinks(row.links),
+  }));
+
+  return jsonResponse(mapped, 200, headers);
 }
 
 export async function deletePage(
@@ -85,6 +107,14 @@ export async function deletePage(
 
   await env.PAGE_KV.delete(`page:${pageId}`);
   await env.PAGE_KV.delete(`page_auth:${pageId}`);
+
+  await env.DB.prepare("DELETE FROM page_auth WHERE page_id = ?")
+    .bind(pageId)
+    .run();
+
+  await env.DB.prepare("DELETE FROM page_meta WHERE page_id = ?")
+    .bind(pageId)
+    .run();
 
   return jsonResponse({ success: true, message: "Page deleted" }, 200, headers);
 }
@@ -108,5 +138,27 @@ export async function updatePage(
   const updatedPage = { profile: body.profile ?? {}, plan: body.plan ?? null };
   await env.PAGE_KV.put(`page:${pageId}`, JSON.stringify(updatedPage));
 
+  await env.DB.prepare(
+    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
+  )
+    .bind(
+      pageId,
+      (updatedPage.profile as any)?.name ?? null,
+      (updatedPage.profile as any)?.photoUrl ?? null,
+      (updatedPage.profile as any)?.description ?? null,
+      JSON.stringify((body as any).links ?? [])
+    )
+    .run();
+
   return jsonResponse({ success: true, message: "Page updated" }, 200, headers);
+}
+
+function safeParseLinks(raw: string | null) {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    return [];
+  }
 }

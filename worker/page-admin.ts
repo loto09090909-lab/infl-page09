@@ -21,8 +21,14 @@ export async function pageAdminLogin(
     return errorResponse("유효한 비밀번호를 입력하세요", 400, headers);
   }
 
-  const storedPassword = await env.PAGE_KV.get(`page_auth:${pageId}`);
-  if (storedPassword !== body.password) {
+  const dbRow = await env.DB.prepare(
+    "SELECT password_hash FROM page_auth WHERE page_id = ? LIMIT 1"
+  )
+    .bind(pageId)
+    .first<{ password_hash: string }>();
+
+  const storedPassword = dbRow?.password_hash ?? (await env.PAGE_KV.get(`page_auth:${pageId}`));
+  if (!storedPassword || storedPassword !== body.password) {
     return errorResponse("인증에 실패했습니다", 401, headers);
   }
 
@@ -49,6 +55,18 @@ export async function savePage(
 
   const pageData = { profile: body.profile ?? {}, links: body.links ?? [] };
   await env.PAGE_KV.put(`page:${pageId}`, JSON.stringify(pageData));
+
+  await env.DB.prepare(
+    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
+  )
+    .bind(
+      pageId,
+      (pageData.profile as any)?.name ?? null,
+      (pageData.profile as any)?.photoUrl ?? null,
+      (pageData.profile as any)?.description ?? null,
+      JSON.stringify(pageData.links)
+    )
+    .run();
 
   return jsonResponse({ success: true, message: "Page saved" }, 200, headers);
 }
