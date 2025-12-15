@@ -1,4 +1,4 @@
-import { json } from "./utils";  // 기존 유틸리티 함수들
+import { json, html } from "./utils";  // 기존 유틸리티 함수들
 import { superAdminLogin, createPage, listPages } from "./super-admin";  // 슈퍼 관리자 관련 함수들
 import { pageAdminLogin, savePage } from "./page-admin";  // 페이지 관리자 관련 함수들
 
@@ -7,6 +7,19 @@ export default {
     const url = new URL(req.url);
     const path = url.pathname;
     const method = req.method;
+
+    // CORS 헤더 추가
+    const headers = {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",  // 모든 도메인에서 접근 가능
+      "Access-Control-Allow-Methods": "GET,POST,OPTIONS",  // 허용된 HTTP 메서드
+      "Access-Control-Allow-Headers": "Content-Type"  // 허용된 헤더
+    };
+
+    // CORS Preflight 요청 처리 (OPTIONS 요청)
+    if (method === "OPTIONS") {
+      return new Response(null, { status: 204, headers });
+    }
 
     // --- 1. 정적 파일 라우팅 (Static File Routing) ---
     // 퍼블릭 HTML 파일을 Worker 코드 내에 정의하여 제공
@@ -57,7 +70,7 @@ export default {
     }
 
     // --- 3. API 호출이 아닌 경우 404 ---
-    return new Response("Not Found", { status: 404 });
+    return new Response("Not Found", { status: 404, headers });
   }
 };
 
@@ -91,7 +104,7 @@ function json(data: any, status = 200) {
     status,
     headers: {
       "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Origin": "*",  // 모든 도메인에서 접근 가능
       "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type"
     }
