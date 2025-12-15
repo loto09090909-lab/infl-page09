@@ -82,3 +82,27 @@ async function loadPageData(pageId) {
 // URL에서 pageId (슬러그) 추출
 const pageId = window.location.pathname.split('/')[2]; // '/user/{pageId}' 형태
 loadPageData(pageId);
+
+// 로그인 함수
+async function login() {
+    const password = document.getElementById('password').value;
+
+    const res = await fetch('/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: password })
+    });
+
+    if (res.ok) {
+        document.cookie = "session=super-admin; path=/; max-age=3600";  // 로그인 성공 시 세션 쿠키 설정 (1시간)
+        window.location.href = "/admin.html";  // 관리자 페이지로 리디렉션
+    } else {
+        alert("로그인 실패");
+    }
+}
+
+// 로그아웃 함수
+function logout() {
+    document.cookie = "session=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/";  // 세션 쿠키 삭제
+    window.location.href = "/login.html";  // 로그인 페이지로 리디렉션
+}
