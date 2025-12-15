@@ -1,4 +1,4 @@
-import { json, html } from "./utils";  // 기존 유틸리티 함수들
+import { json } from "./utils";  // 기존 유틸리티 함수들
 import { superAdminLogin, createPage, listPages } from "./super-admin";  // 슈퍼 관리자 관련 함수들
 import { pageAdminLogin, savePage } from "./page-admin";  // 페이지 관리자 관련 함수들
 
@@ -56,38 +56,7 @@ export default {
       }
     }
 
-    // --- 3. 퍼블릭 페이지 라우팅 (Public Page Routing) ---
-    if (method === "GET" && path.startsWith("/user/")) {
-      const pageId = path.slice(6); // /user/{pageId}
-      const data = await env.PAGE_KV.get(`page:${pageId}`);
-
-      if (!data) return new Response("Not Found", { status: 404 });
-
-      const page = JSON.parse(data);
-
-      return html(`
-        <!DOCTYPE html>
-        <html lang="ko">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>${page.profile.name}</title>
-            <link rel="stylesheet" href="/style.css">
-        </head>
-        <body>
-            <h1>${page.profile.name}</h1>
-            <p>${page.profile.description}</p>
-            <img src="${page.profile.photoUrl}" alt="${page.profile.name}" class="profile-photo">
-            <ul id="links-list">
-              ${page.links.map(link => `<li><a href="${link.url}" target="_blank">${link.name}</a></li>`).join('')}
-            </ul>
-            <script src="/script.js"></script>
-        </body>
-        </html>
-      `);
-    }
-
-    // --- 4. 최종 404 응답 (Fallback) ---
+    // --- 3. API 호출이 아닌 경우 404 ---
     return new Response("Not Found", { status: 404 });
   }
 };
@@ -116,18 +85,7 @@ function jsResponse() {
   });
 }
 
-function json(data: any, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type"
-    }
-  });
-}
-
+// JSON 응답 처리 함수
 function json(data: any, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
