@@ -1,4 +1,4 @@
-const API_BASE = "https://infl-worker.loto09090909.workers.dev";
+const API_BASE = window.API_BASE || "";
 
 // 페이지 생성 함수
 async function createPage() {

@@ -1,62 +1,110 @@
-const API_BASE = "https://infl-worker.loto09090909.workers.dev";
+const API_BASE = window.API_BASE || "";
 const hasUserView = document.getElementById("links-list") !== null;
+let currentLinks = [];
+let currentProfile = {};
+
+function getAdminPageId() {
+    return pageIdFromPath || pageIdFromQuery || '';
+}
+
+// 관리자 페이지: 링크 목록 렌더링
+function renderLinks() {
+    const linkList = document.getElementById('link-list');
+    if (!linkList) return;
+
+    linkList.innerHTML = '';
+    currentLinks.forEach((link, idx) => {
+        const li = document.createElement('li');
+        const nameSpan = document.createElement('span');
+        nameSpan.innerText = `${link.name} - ${link.url}`;
+
+        const removeBtn = document.createElement('button');
+        removeBtn.innerText = '삭제';
+        removeBtn.onclick = () => removeLink(idx);
+
+        li.appendChild(nameSpan);
+        li.appendChild(removeBtn);
+        linkList.appendChild(li);
+    });
+}
 
 // 관리자 페이지: 페이지 저장
-function savePage() {
-    const name = document.getElementById('name').value;
-    const desc = document.getElementById('desc').value;
-    const photo = document.getElementById('photo').value;
+async function savePage() {
+    const pageId = getAdminPageId();
+    if (!pageId) {
+        alert('페이지 식별자를 알 수 없어 저장할 수 없습니다.');
+        return;
+    }
 
-    // API 호출로 페이지 정보 저장
-    fetch(`${API_BASE}/api/pages/save`, {
+    const token = sessionStorage.getItem('page_admin_token');
+    if (!token) {
+        alert('페이지 관리자 로그인이 필요합니다. 다시 로그인해 주세요.');
+        return;
+    }
+
+    const name = document.getElementById('name')?.value || '';
+    const desc = document.getElementById('desc')?.value || '';
+    const photo = document.getElementById('photo')?.value || '';
+    const adsCheckbox = document.getElementById('ads');
+    const adsEnabled = adsCheckbox ? adsCheckbox.checked : undefined;
+
+    const profile = {
+        ...currentProfile,
+        name,
+        description: desc,
+        photoUrl: photo,
+    };
+
+    if (typeof adsEnabled === 'boolean') {
+        profile.adsEnabled = adsEnabled;
+    }
+
+    const res = await fetch(`${API_BASE}/api/page/${encodeURIComponent(pageId)}/save`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            name: name,
-            description: desc,
-            photoUrl: photo
-        })
-    }).then(response => response.json())
-      .then(data => alert('페이지가 저장되었습니다.'))
-      .catch(error => alert('저장 실패: ' + error));
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ profile, links: currentLinks }),
+    });
+
+    if (res.ok) {
+        currentProfile = profile;
+        alert('페이지가 저장되었습니다.');
+    } else {
+        const errText = await res.text();
+        alert(`저장 실패: ${errText || res.status}`);
+    }
 }
 
 // 관리자 페이지: 링크 추가
 function addLink() {
-    const name = document.getElementById('newLinkName').value;
-    const url = document.getElementById('newLinkUrl').value;
+    const nameInput = document.getElementById('newLinkName');
+    const urlInput = document.getElementById('newLinkUrl');
+    const name = nameInput?.value.trim();
+    const url = urlInput?.value.trim();
 
-    // API 호출로 새 링크 추가
-    fetch(`${API_BASE}/api/pages/save`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            name: name,
-            url: url
-        })
-    }).then(response => response.json())
-      .then(data => alert('링크가 추가되었습니다.'))
-      .catch(error => alert('링크 추가 실패: ' + error));
+    if (!name || !url) {
+        alert('링크 이름과 URL을 모두 입력하세요.');
+        return;
+    }
+
+    currentLinks.push({ name, url });
+    renderLinks();
+
+    if (nameInput) nameInput.value = '';
+    if (urlInput) urlInput.value = '';
 }
 
 // 관리자 페이지: 링크 삭제
-function removeLink(linkName) {
-    // 링크 삭제 로직 (API 호출)
-    alert(linkName + ' 링크가 삭제되었습니다.');
+function removeLink(index) {
+    currentLinks.splice(index, 1);
+    renderLinks();
 }
 
-// 관리자 페이지: 광고 설정 저장
+// 관리자 페이지: 광고 설정 저장 (페이지 저장 로직과 공유)
 function saveAdsSettings() {
-    const adsEnabled = document.getElementById('ads').checked;
-
-    // 광고 설정을 서버에 저장
-    fetch(`${API_BASE}/api/pages/saveAds`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ adsEnabled: adsEnabled })
-    }).then(response => response.json())
-      .then(data => alert('광고 설정이 저장되었습니다.'))
-      .catch(error => alert('광고 설정 실패: ' + error));
+    savePage();
 }
 
 // 페이지 데이터 로드
@@ -91,11 +139,31 @@ async function loadPageData(pageId) {
         // 링크 동적 삽입
         const linksList = document.getElementById('links-list');
         if (linksList && Array.isArray(data.links)) {
+            linksList.innerHTML = '';
             data.links.forEach(link => {
                 const li = document.createElement('li');
                 li.innerHTML = `<a href="${link.url}" target="_blank">${link.name}</a>`;
                 linksList.appendChild(li);
             });
+        }
+
+        if (pageRole === 'page-admin') {
+            currentProfile = data.profile || {};
+            currentLinks = Array.isArray(data.links) ? data.links.slice() : [];
+
+            const nameInput = document.getElementById('name');
+            if (nameInput) nameInput.value = data.profile.name || '';
+
+            const descInput = document.getElementById('desc');
+            if (descInput) descInput.value = data.profile.description || '';
+
+            const photoInput = document.getElementById('photo');
+            if (photoInput) photoInput.value = data.profile.photoUrl || '';
+
+            const adsCheckbox = document.getElementById('ads');
+            if (adsCheckbox) adsCheckbox.checked = Boolean(data.profile.adsEnabled);
+
+            renderLinks();
         }
     } else {
         console.error('Page data not found');
@@ -149,6 +217,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const pageAdminIdInput = document.getElementById('page-admin-id');
     if (pageAdminIdInput && (pageIdFromPath || pageIdFromQuery)) {
         pageAdminIdInput.value = pageIdFromPath || pageIdFromQuery;
+    }
+
+    if (pageRole === 'page-admin') {
+        const pageId = getAdminPageId();
+        if (pageId) {
+            loadPageData(pageId);
+        }
     }
 });
 
