@@ -41,3 +41,21 @@
    - Sentry/Workers Trace 등 오류 추적을 붙여 500/401/404 발생 시점을 관찰하고, KV/D1 쿼리 실패 시 재시도 또는 폴백 전략을 마련하십시오.
 
 위 항목을 적용하면 로그인/관리 플로우의 안정성과 보안을 높이고, 환경별 라우팅/데이터 무결성 문제를 예방할 수 있습니다.
+
+## 4. 최근 미동작 원인 분석
+- **슬러그 라우팅과 Pages 규칙 충돌 가능성**: `_redirects`가 단일 세그먼트 슬러그(`/:slug`)를 `user.html`로 리라이트하지만, 최하단 `/* /index.html 200!`가 여전히 존재해 캐시나 우선순위 문제 시 인덱스로 포워딩될 여지가 있습니다. `user.html`이 제공되더라도 API 요청이 404/405/네트워크 오류이면 화면이 기본 템플릿으로 남을 수 있습니다.【F:public/_redirects†L1-L18】【F:public/js/script.js†L1-L76】
+- **페이지 데이터 미존재/슬러그 매핑 누락**: 사용자 페이지는 URL 세그먼트를 그대로 `GET /api/pages/:pageId`에 전달해 KV/D1에서 페이지 메타를 조회합니다. `slug_map`에 별칭이 없거나 `page_meta`/`page:{id}`가 비어 있으면 404로 끝나고 템플릿이 채워지지 않습니다.【F:public/js/script.js†L39-L73】【F:worker/page-view.ts†L10-L44】
+- **API BASE 불일치 시도**: 프런트는 `meta api-base` → 고정 워커 도메인 → pages.dev 유추 → 현재 오리진 순으로 순회합니다. 실제 배포 도메인이 이 목록과 다르면 모든 베이스가 실패해 데이터가 비어 보일 수 있습니다.【F:public/js/script.js†L1-L38】
+
+## 5. 단기 해결 가이드
+1) `_redirects`에서 최종 `/* /index.html 200!`를 제거하거나 주석으로 남기고, 로컬/스테이징에서 슬러그 호출이 항상 `user.html`을 반환하는지 점검합니다.
+2) Cloudflare Pages 캐시를 무효화한 뒤, `curl -I https://<도메인>/<slug>`로 응답 헤더의 리디렉션/리라이트 여부를 확인하고 200이 `user.html`인지 검사합니다.
+3) 슈퍼 관리자 생성 API가 `slug_map`과 `page_meta`를 모두 채웠는지 D1 콘솔에서 `SELECT * FROM slug_map WHERE display_name='<slug>'`로 검증하고, 없다면 재저장/수동 삽입합니다.【F:worker/super-admin.ts†L21-L169】
+4) `user.html`에서 `window.location.pathname`이 원하는 슬러그로 인식되는지 콘솔에서 `pathSegments` 값을 확인해 전역 `API_BASES`가 올바른지 함께 로깅합니다.【F:public/js/script.js†L48-L79】
+
+## 6. 향후 추가 개발 제안 (슬러그/라우팅 중심)
+- **서버사이드 렌더링/HTML 프리패치**: `Pages Functions`나 Worker에서 슬러그 요청 시 `user.html`을 불러와 KV/D1 데이터를 주입한 뒤 반환하면, 클라이언트 JS 실패 시에도 완성된 HTML이 노출됩니다.
+- **라우트·도메인 검증 자동화**: 헬스체크 스크립트로 모든 슬러그(또는 샘플) 경로에 대해 200/콘텐츠 서명 여부를 배포 직후 검증하고 실패 시 알림하도록 CI를 구성합니다.
+- **슬러그 예약어·중복 관리**: `slug_map`에 고유 제약을 적용하고, 관리자 UI에서 예약어(`admin`, `login` 등) 사용 시 경고/차단 로직을 추가해 리다이렉트 충돌을 예방합니다.
+- **읽기 전용 CDN 캐시**: 공개 페이지 응답을 `Cache-Control`과 `ETag`로 캐싱하고, 페이지 저장 시 해당 슬러그 경로만 퍼지하도록 해 성능과 일관성을 확보합니다.
+- **API 베이스 주입 개선**: 빌드 시 환경변수로 `API_BASE`를 삽입하고, 메타 태그 대신 `config.js`를 생성해 Pages/Workers 환경을 분리·문서화하면 잘못된 베이스로의 호출을 방지할 수 있습니다.
