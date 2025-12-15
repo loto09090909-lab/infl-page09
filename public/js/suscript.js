@@ -10,7 +10,10 @@ function resolveApiBases() {
         bases.push(window.API_BASE);
     }
 
-    bases.push(window.location.origin);
+    const knownWorkerBase = 'https://infl-worker.loto09090909.workers.dev';
+    if (!bases.includes(knownWorkerBase)) {
+        bases.push(knownWorkerBase);
+    }
 
     if (window.location.hostname.endsWith('pages.dev')) {
         const guessedWorker = window.location.origin.replace('.pages.dev', '.workers.dev');
@@ -19,17 +22,18 @@ function resolveApiBases() {
         }
     }
 
-    const knownWorkerBase = 'https://infl-worker.loto09090909.workers.dev';
-    if (!bases.includes(knownWorkerBase)) {
-        bases.push(knownWorkerBase);
-    }
+    bases.push(window.location.origin);
 
     return bases;
 }
 
 const API_BASES = resolveApiBases();
 
-async function apiFetch(path, options = {}, fallbackStatuses = [404, 405]) {
+async function apiFetch(
+    path,
+    options = {},
+    fallbackStatuses = [301, 302, 307, 308, 404, 405]
+) {
     let lastError;
 
     for (const base of API_BASES) {
