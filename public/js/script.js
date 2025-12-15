@@ -87,7 +87,8 @@ loadPageData(pageId);
 async function login() {
     const password = document.getElementById('password').value;
 
-    const res = await fetch("https://infl-worker.loto09090909.workers.dev/api/admin/login", {
+    // 백엔드 API의 절대 경로를 사용하여 요청
+    const res = await fetch('https://infl-worker.loto09090909.workers.dev/api/admin/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: password })
