@@ -1,12 +1,47 @@
-function resolveApiBase() {
-    if (window.API_BASE) return window.API_BASE;
-    if (window.location.hostname.endsWith('pages.dev')) {
-        return window.location.origin.replace('pages.dev', 'workers.dev');
+function resolveApiBases() {
+    const bases = [];
+
+    if (window.API_BASE) {
+        bases.push(window.API_BASE);
     }
-    return window.location.origin;
+
+    bases.push(window.location.origin);
+
+    if (window.location.hostname.endsWith('pages.dev')) {
+        const guessedWorker = window.location.origin.replace('.pages.dev', '.workers.dev');
+        if (!bases.includes(guessedWorker)) {
+            bases.push(guessedWorker);
+        }
+    }
+
+    return bases;
 }
 
-const API_BASE = resolveApiBase();
+const API_BASES = resolveApiBases();
+
+async function apiFetch(path, options = {}, fallbackStatuses = [404, 405]) {
+    let lastError;
+
+    for (const base of API_BASES) {
+        try {
+            const res = await fetch(`${base}${path}`, options);
+            if (res.ok) {
+                return res;
+            }
+
+            if (!fallbackStatuses.includes(res.status)) {
+                return res;
+            }
+
+            lastError = res;
+        } catch (err) {
+            lastError = err;
+        }
+    }
+
+    if (lastError instanceof Response) return lastError;
+    throw lastError;
+}
 let editingPageId = null;
 let managedLinks = [];
 
@@ -78,10 +113,10 @@ async function submitPage() {
 
     const method = editingPageId ? 'PUT' : 'POST';
     const endpoint = editingPageId
-        ? `${API_BASE}/api/admin/pages/${encodeURIComponent(targetPageId)}`
-        : `${API_BASE}/api/admin/pages`;
+        ? `/api/admin/pages/${encodeURIComponent(targetPageId)}`
+        : '/api/admin/pages';
 
-    const res = await fetch(endpoint, {
+    const res = await apiFetch(endpoint, {
         method,
         headers: {
             'Content-Type': 'application/json',
@@ -108,7 +143,7 @@ async function loadPageList() {
         return;
     }
 
-    const res = await fetch(`${API_BASE}/api/admin/pages`, {
+    const res = await apiFetch('/api/admin/pages', {
         headers: { 'Authorization': `Bearer ${token}` }
     });
 
@@ -144,7 +179,7 @@ async function deletePage(pageId) {
         return;
     }
 
-    const res = await fetch(`${API_BASE}/api/admin/pages/${pageId}`, {
+    const res = await apiFetch(`/api/admin/pages/${pageId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
     });
@@ -166,7 +201,7 @@ async function editPage(pageId) {
         return;
     }
 
-    const res = await fetch(`${API_BASE}/api/admin/pages`, {
+    const res = await apiFetch('/api/admin/pages', {
         headers: { 'Authorization': `Bearer ${token}` }
     });
     const pages = await res.json();

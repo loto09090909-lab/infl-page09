@@ -1,12 +1,47 @@
-function resolveApiBase() {
-    if (window.API_BASE) return window.API_BASE;
-    if (window.location.hostname.endsWith('pages.dev')) {
-        return window.location.origin.replace('pages.dev', 'workers.dev');
+function resolveApiBases() {
+    const bases = [];
+
+    if (window.API_BASE) {
+        bases.push(window.API_BASE);
     }
-    return window.location.origin;
+
+    bases.push(window.location.origin);
+
+    if (window.location.hostname.endsWith('pages.dev')) {
+        const guessedWorker = window.location.origin.replace('.pages.dev', '.workers.dev');
+        if (!bases.includes(guessedWorker)) {
+            bases.push(guessedWorker);
+        }
+    }
+
+    return bases;
 }
 
-const API_BASE = resolveApiBase();
+const API_BASES = resolveApiBases();
+
+async function apiFetch(path, options = {}, fallbackStatuses = [404, 405]) {
+    let lastError;
+
+    for (const base of API_BASES) {
+        try {
+            const res = await fetch(`${base}${path}`, options);
+            if (res.ok) {
+                return res;
+            }
+
+            if (!fallbackStatuses.includes(res.status)) {
+                return res;
+            }
+
+            lastError = res;
+        } catch (err) {
+            lastError = err;
+        }
+    }
+
+    if (lastError instanceof Response) return lastError;
+    throw lastError;
+}
 const hasUserView = document.getElementById("links-list") !== null;
 let adminLinks = [];
 
@@ -17,7 +52,7 @@ async function loadPageData(pageId) {
         return;
     }
 
-    const res = await fetch(`${API_BASE}/api/pages/${encodeURIComponent(pageId)}`);
+    const res = await apiFetch(`/api/pages/${encodeURIComponent(pageId)}`);
 
     if (!res.ok) {
         console.error('Failed to fetch page data:', res);
@@ -135,7 +170,7 @@ async function savePage() {
         links: adminLinks,
     };
 
-    const res = await fetch(`${API_BASE}/api/page/${encodeURIComponent(derivedPageId)}/save`, {
+    const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/save`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -200,7 +235,7 @@ async function login() {
         return;
     }
 
-    const res = await fetch(`${API_BASE}/api/admin/login`, {
+    const res = await apiFetch('/api/admin/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password })
@@ -238,7 +273,7 @@ async function pageAdminLogin() {
         return;
     }
 
-    const res = await fetch(`${API_BASE}/api/page/${encodeURIComponent(pageId)}/login`, {
+    const res = await apiFetch(`/api/page/${encodeURIComponent(pageId)}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password })
