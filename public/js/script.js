@@ -5,7 +5,7 @@ function savePage() {
     const photo = document.getElementById('photo').value;
 
     // API 호출로 페이지 정보 저장
-    fetch('/api/pages/save', {
+    fetch("https://infl-worker.loto09090909.workers.dev/api/pages/save", {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -24,7 +24,7 @@ function addLink() {
     const url = document.getElementById('newLinkUrl').value;
 
     // API 호출로 새 링크 추가
-    fetch('/api/pages/save', {
+    fetch("https://infl-worker.loto09090909.workers.dev/api/pages/save", {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -47,7 +47,7 @@ function saveAdsSettings() {
     const adsEnabled = document.getElementById('ads').checked;
 
     // 광고 설정을 서버에 저장
-    fetch('/api/pages/saveAds', {
+    fetch("https://infl-worker.loto09090909.workers.dev/api/pages/saveAds", {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ adsEnabled: adsEnabled })
@@ -58,7 +58,7 @@ function saveAdsSettings() {
 
 // 페이지 ID를 URL에서 추출해서 페이지를 동적으로 로드
 async function loadPageData(pageId) {
-    const res = await fetch(`/api/pages/${pageId}`);
+    const res = await fetch("https://infl-worker.loto09090909.workers.dev/api/pages/${pageId}");
     const data = await res.json();
     
     if (data && data.profile) {
@@ -87,7 +87,7 @@ loadPageData(pageId);
 async function login() {
     const password = document.getElementById('password').value;
 
-    const res = await fetch('/api/admin/login', {
+    const res = await fetch("https://infl-worker.loto09090909.workers.dev/api/admin/login", {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: password })
