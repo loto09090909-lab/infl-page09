@@ -1,4 +1,12 @@
-const API_BASE = window.API_BASE ?? window.location.origin;
+function resolveApiBase() {
+    if (window.API_BASE) return window.API_BASE;
+    if (window.location.hostname.endsWith('pages.dev')) {
+        return window.location.origin.replace('pages.dev', 'workers.dev');
+    }
+    return window.location.origin;
+}
+
+const API_BASE = resolveApiBase();
 const hasUserView = document.getElementById("links-list") !== null;
 let adminLinks = [];
 

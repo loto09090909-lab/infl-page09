@@ -1,4 +1,12 @@
-const API_BASE = window.API_BASE ?? window.location.origin;
+function resolveApiBase() {
+    if (window.API_BASE) return window.API_BASE;
+    if (window.location.hostname.endsWith('pages.dev')) {
+        return window.location.origin.replace('pages.dev', 'workers.dev');
+    }
+    return window.location.origin;
+}
+
+const API_BASE = resolveApiBase();
 let editingPageId = null;
 let managedLinks = [];
 
@@ -103,6 +111,13 @@ async function loadPageList() {
     const res = await fetch(`${API_BASE}/api/admin/pages`, {
         headers: { 'Authorization': `Bearer ${token}` }
     });
+
+    if (!res.ok) {
+        const errText = await res.text();
+        alert(`페이지 목록 불러오기 실패: ${errText || res.status}`);
+        return;
+    }
+
     const pages = await res.json();
 
     const pageList = document.getElementById('pages');
@@ -112,8 +127,11 @@ async function loadPageList() {
                 <strong>${page.profile?.name || page.pageId}</strong> (${page.pageId})
                 <span class="plan-badge">플랜: ${page.plan || 'free'}</span>
             </div>
-            <button onclick="editPage('${page.pageId}')">편집</button>
-            <button onclick="deletePage('${page.pageId}')">삭제</button>
+            <div class="page-actions">
+                <a class="preview-link" href="/${page.pageId}" target="_blank" rel="noopener">페이지 보기</a>
+                <button onclick="editPage('${page.pageId}')">편집</button>
+                <button onclick="deletePage('${page.pageId}')">삭제</button>
+            </div>
         </li>
     `).join('');
 }
