@@ -1,4 +1,11 @@
 import { createSessionToken } from "./auth";
+import {
+  collectNormalizedSlugs,
+  fetchSlugsForPage,
+  findSlugConflict,
+  normalizeSlug,
+  replaceSlugs,
+} from "./slugs";
 import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
 
 type CreatePageBody = {
@@ -7,6 +14,7 @@ type CreatePageBody = {
   adminPassword: string;
   plan?: unknown;
   links?: unknown;
+  slugs?: unknown;
 };
 
 type UpdatePageBody = {
@@ -14,6 +22,7 @@ type UpdatePageBody = {
   plan?: unknown;
   links?: unknown;
   adminPassword?: string;
+  slugs?: unknown;
 };
 
 type LoginBody = {
@@ -60,31 +69,40 @@ export async function createPage(
     return errorResponse("pageId와 adminPassword는 필수입니다", 400, headers);
   }
 
+  const pageId = body.pageId.trim();
+  const slugs = collectNormalizedSlugs(pageId, body.slugs);
+  const conflict = await findSlugConflict(env, slugs, pageId);
+  if (conflict) {
+    return errorResponse(`이미 사용 중인 슬러그: ${conflict}`, 409, headers);
+  }
+
   const pageData = {
     profile: body.profile ?? {},
     links: Array.isArray((body as any).links) ? (body as any).links : [],
     plan: body.plan ?? null,
   };
-  await env.PAGE_KV.put(`page:${body.pageId}`, JSON.stringify(pageData));
-  await env.PAGE_KV.put(`page_auth:${body.pageId}`, body.adminPassword);
+  await env.PAGE_KV.put(`page:${pageId}`, JSON.stringify(pageData));
+  await env.PAGE_KV.put(`page_auth:${pageId}`, body.adminPassword);
 
   await env.DB.prepare(
     "INSERT OR REPLACE INTO page_auth (page_id, password_hash) VALUES (?, ?)"
   )
-    .bind(body.pageId, body.adminPassword)
+    .bind(pageId, body.adminPassword)
     .run();
 
   await env.DB.prepare(
     "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
   )
     .bind(
-      body.pageId,
+      pageId,
       (body.profile as any)?.name ?? null,
       (body.profile as any)?.photoUrl ?? null,
       (body.profile as any)?.description ?? null,
       JSON.stringify((body as any).links ?? [])
     )
     .run();
+
+  await replaceSlugs(env, pageId, slugs);
 
   return jsonResponse({ success: true, message: "Page created" }, 201, headers);
 }
@@ -106,6 +124,7 @@ export async function listPages(env: any, headers: HeadersInit): Promise<Respons
         }
       }
 
+      const slugs = await fetchSlugsForPage(env, row.page_id);
       return {
         pageId: row.page_id,
         profile: {
@@ -115,6 +134,7 @@ export async function listPages(env: any, headers: HeadersInit): Promise<Respons
         },
         links: safeParseLinks(row.links),
         plan,
+        slugs: slugs.length ? slugs : [normalizeSlug(row.page_id)],
       };
     })
   );
@@ -143,6 +163,10 @@ export async function deletePage(
     .bind(pageId)
     .run();
 
+  await env.DB.prepare("DELETE FROM slug_map WHERE page_id = ?")
+    .bind(pageId)
+    .run();
+
   return jsonResponse({ success: true, message: "Page deleted" }, 200, headers);
 }
 
@@ -160,6 +184,13 @@ export async function updatePage(
   const body = await parseJsonBody<UpdatePageBody>(req);
   if (!body) {
     return errorResponse("잘못된 요청 본문입니다", 400, headers);
+  }
+
+  const existingSlugs = await fetchSlugsForPage(env, pageId);
+  const requestedSlugs = collectNormalizedSlugs(pageId, body.slugs ?? existingSlugs);
+  const conflict = await findSlugConflict(env, requestedSlugs, pageId);
+  if (conflict) {
+    return errorResponse(`이미 사용 중인 슬러그: ${conflict}`, 409, headers);
   }
 
   const updatedPage = {
@@ -189,6 +220,8 @@ export async function updatePage(
       JSON.stringify((body as any).links ?? [])
     )
     .run();
+
+  await replaceSlugs(env, pageId, requestedSlugs);
 
   return jsonResponse({ success: true, message: "Page updated" }, 200, headers);
 }

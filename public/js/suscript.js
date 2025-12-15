@@ -58,6 +58,7 @@ async function apiFetch(
 }
 let editingPageId = null;
 let managedLinks = [];
+let managedSlugs = [];
 
 function setFormTitle(titleText) {
     const titleEl = document.getElementById('form-title');
@@ -65,17 +66,19 @@ function setFormTitle(titleText) {
 }
 
 function resetForm() {
-    editingPageId = null;
-    managedLinks = [];
-    document.getElementById('pageName').value = '';
-    document.getElementById('pageSlug').value = '';
-    document.getElementById('pageSlug').removeAttribute('disabled');
+  editingPageId = null;
+  managedLinks = [];
+  managedSlugs = [];
+  document.getElementById('pageName').value = '';
+  document.getElementById('pageSlug').value = '';
+  document.getElementById('pageSlug').removeAttribute('disabled');
     document.getElementById('pageDescription').value = '';
     document.getElementById('pagePhoto').value = '';
-    document.getElementById('adminPassword').value = '';
-    document.getElementById('plan').value = 'free';
-    renderSuperAdminLinks();
-    setFormTitle('페이지 생성');
+  document.getElementById('adminPassword').value = '';
+  document.getElementById('plan').value = 'free';
+  renderSuperAdminLinks();
+  renderSuperAdminSlugs();
+  setFormTitle('페이지 생성');
     const submitBtn = document.getElementById('submit-btn');
     if (submitBtn) submitBtn.innerText = '페이지 생성';
     const cancelBtn = document.getElementById('cancel-edit-btn');
@@ -88,8 +91,9 @@ async function submitPage() {
     const slug = document.getElementById('pageSlug').value.trim();
     const description = document.getElementById('pageDescription').value.trim();
     const photoUrl = document.getElementById('pagePhoto').value.trim();
-    const adminPassword = document.getElementById('adminPassword').value;
-    const plan = document.getElementById('plan').value || 'free';
+  const adminPassword = document.getElementById('adminPassword').value;
+  const plan = document.getElementById('plan').value || 'free';
+  const extraSlugs = [...managedSlugs];
 
     if (!editingPageId && (!slug || !adminPassword)) {
         alert('슬러그와 관리자 비밀번호는 필수 입력입니다.');
@@ -101,17 +105,20 @@ async function submitPage() {
         return;
     }
 
-    const data = {
-        pageId: slug,
-        profile: {
-            name: name,
-            description: description,
-            photoUrl: photoUrl
-        },
-        links: managedLinks,
-        adminPassword: adminPassword || undefined,
-        plan: plan
-    };
+  const normalizedSlugs = Array.from(new Set([slug, ...extraSlugs].map(s => s.trim().toLowerCase()).filter(Boolean)));
+
+  const data = {
+    pageId: slug,
+    profile: {
+      name: name,
+      description: description,
+      photoUrl: photoUrl
+    },
+    links: managedLinks,
+    adminPassword: adminPassword || undefined,
+    plan: plan,
+    slugs: normalizedSlugs
+  };
 
     const targetPageId = editingPageId || slug;
     if (!targetPageId) {
@@ -175,6 +182,7 @@ async function loadPageList() {
             <div class="page-meta">
                 <strong>${page.profile?.name || page.pageId}</strong> (${page.pageId})
                 <span class="plan-badge">플랜: ${page.plan || 'free'}</span>
+                <div class="slug-badge">슬러그: ${(page.slugs && page.slugs.length ? page.slugs : [page.pageId]).join(', ')}</div>
             </div>
             <div class="page-actions">
                 <a class="preview-link" href="/${page.pageId}" target="_blank" rel="noopener">페이지 보기</a>
@@ -235,7 +243,11 @@ async function editPage(pageId) {
     document.getElementById('adminPassword').value = '';
     document.getElementById('plan').value = page.plan || 'free';
     managedLinks = Array.isArray(page.links) ? [...page.links] : [];
+    managedSlugs = Array.isArray(page.slugs)
+      ? page.slugs.filter((s) => s !== page.pageId)
+      : [];
     renderSuperAdminLinks();
+    renderSuperAdminSlugs();
     setFormTitle(`페이지 수정: ${page.pageId}`);
 
     const submitBtn = document.getElementById('submit-btn');
@@ -308,6 +320,64 @@ function renderSuperAdminLinks() {
 
         li.appendChild(nameInput);
         li.appendChild(urlInput);
+        li.appendChild(removeBtn);
+
+        list.appendChild(li);
+    });
+}
+
+function addSuperAdminSlug() {
+    const input = document.getElementById('saSlug');
+    const slug = input?.value?.trim().toLowerCase();
+    const primarySlug = document.getElementById('pageSlug')?.value?.trim().toLowerCase();
+
+    if (!slug) {
+        alert('추가할 슬러그를 입력하세요.');
+        return;
+    }
+
+    if (primarySlug && slug === primarySlug) {
+        alert('주 슬러그와 동일한 슬러그는 추가할 수 없습니다.');
+        return;
+    }
+
+    if (managedSlugs.includes(slug)) {
+        alert('이미 추가된 슬러그입니다.');
+        return;
+    }
+
+    managedSlugs.push(slug);
+    renderSuperAdminSlugs();
+    if (input) input.value = '';
+}
+
+function removeSuperAdminSlug(index) {
+    managedSlugs.splice(index, 1);
+    renderSuperAdminSlugs();
+}
+
+function renderSuperAdminSlugs() {
+    const list = document.getElementById('sa-slug-list');
+    if (!list) return;
+
+    list.innerHTML = '';
+
+    managedSlugs.forEach((slug, index) => {
+        const li = document.createElement('li');
+        li.className = 'link-row';
+
+        const slugInput = document.createElement('input');
+        slugInput.placeholder = '추가 슬러그';
+        slugInput.value = slug;
+        slugInput.oninput = (e) => {
+            managedSlugs[index] = e.target.value.trim().toLowerCase();
+        };
+
+        const removeBtn = document.createElement('button');
+        removeBtn.innerText = '삭제';
+        removeBtn.onclick = () => removeSuperAdminSlug(index);
+
+        li.appendChild(slugInput);
         li.appendChild(removeBtn);
 
         list.appendChild(li);

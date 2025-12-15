@@ -1,4 +1,5 @@
 import { createSessionToken, getBearerToken, verifySessionToken } from "./auth";
+import { resolvePageIdFromSlug } from "./slugs";
 import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
 
 type LoginBody = {
@@ -17,6 +18,8 @@ export async function pageAdminLogin(
   pageId: string,
   headers: HeadersInit
 ) {
+  const resolvedPageId = (await resolvePageIdFromSlug(env, pageId)) ?? pageId;
+
   const body = await parseJsonBody<LoginBody>(req);
   if (!body || typeof body.password !== "string") {
     return errorResponse("유효한 비밀번호를 입력하세요", 400, headers);
@@ -25,15 +28,16 @@ export async function pageAdminLogin(
   const dbRow = await env.DB.prepare(
     "SELECT password_hash FROM page_auth WHERE page_id = ? LIMIT 1"
   )
-    .bind(pageId)
+    .bind(resolvedPageId)
     .first<{ password_hash: string }>();
 
-  const storedPassword = dbRow?.password_hash ?? (await env.PAGE_KV.get(`page_auth:${pageId}`));
+  const storedPassword =
+    dbRow?.password_hash ?? (await env.PAGE_KV.get(`page_auth:${resolvedPageId}`));
   if (!storedPassword || storedPassword !== body.password) {
     return errorResponse("인증에 실패했습니다", 401, headers);
   }
 
-  const session = await createSessionToken(env, "page", pageId);
+  const session = await createSessionToken(env, "page", resolvedPageId);
   return jsonResponse(session, 200, headers);
 }
 
@@ -43,8 +47,10 @@ export async function savePage(
   pageId: string,
   headers: HeadersInit
 ) {
+  const resolvedPageId = (await resolvePageIdFromSlug(env, pageId)) ?? pageId;
+
   const token = getBearerToken(req);
-  const pageTokenValid = await verifySessionToken(env, "page", token, pageId);
+  const pageTokenValid = await verifySessionToken(env, "page", token, resolvedPageId);
   const superTokenValid = await verifySessionToken(env, "super", token);
   if (!pageTokenValid && !superTokenValid) {
     return errorResponse("인증이 필요합니다", 401, headers);
@@ -55,7 +61,7 @@ export async function savePage(
     return errorResponse("잘못된 요청 본문입니다", 400, headers);
   }
 
-  const existingRaw = await env.PAGE_KV.get(`page:${pageId}`);
+  const existingRaw = await env.PAGE_KV.get(`page:${resolvedPageId}`);
   let existingPlan: unknown = null;
   if (existingRaw) {
     try {
@@ -71,13 +77,13 @@ export async function savePage(
     links: Array.isArray(body.links) ? body.links : [],
     plan: body.plan ?? existingPlan ?? null,
   };
-  await env.PAGE_KV.put(`page:${pageId}`, JSON.stringify(pageData));
+  await env.PAGE_KV.put(`page:${resolvedPageId}`, JSON.stringify(pageData));
 
   await env.DB.prepare(
     "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
   )
     .bind(
-      pageId,
+      resolvedPageId,
       (pageData.profile as any)?.name ?? null,
       (pageData.profile as any)?.photoUrl ?? null,
       (pageData.profile as any)?.description ?? null,

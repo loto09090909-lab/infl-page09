@@ -29,6 +29,14 @@
             <input id="pageSlug" type="text" placeholder="슬러그 (고유 이름)" />
         </div>
         <div class="form-row">
+            <label>추가 슬러그 (별칭)</label>
+            <ul id="sa-slug-list" class="link-list"></ul>
+            <div class="inline-inputs">
+                <input id="saSlug" placeholder="추가 슬러그 입력" />
+                <button onclick="addSuperAdminSlug()" type="button">추가</button>
+            </div>
+        </div>
+        <div class="form-row">
             <label>페이지 설명</label>
             <input id="pageDescription" type="text" placeholder="페이지 설명" />
         </div>

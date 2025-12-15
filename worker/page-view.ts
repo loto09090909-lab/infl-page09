@@ -1,3 +1,4 @@
+import { resolvePageIdFromSlug } from "./slugs";
 import { errorResponse, jsonResponse } from "./utils";
 
 type PageMetaRow = {
@@ -13,10 +14,12 @@ export async function getPage(
   pageId: string,
   headers: HeadersInit
 ): Promise<Response> {
+  const resolvedPageId = (await resolvePageIdFromSlug(env, pageId)) ?? pageId;
+
   const dbRow = await env.DB.prepare(
     "SELECT page_id, name, photo_url, description, links FROM page_meta WHERE page_id = ? LIMIT 1"
   )
-    .bind(pageId)
+    .bind(resolvedPageId)
     .first<PageMetaRow>();
 
   if (dbRow) {
@@ -34,7 +37,7 @@ export async function getPage(
     );
   }
 
-  const kvValue = await env.PAGE_KV.get(`page:${pageId}`);
+  const kvValue = await env.PAGE_KV.get(`page:${resolvedPageId}`);
   if (!kvValue) {
     return errorResponse("Page not found", 404, headers);
   }
