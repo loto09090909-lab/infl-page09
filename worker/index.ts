@@ -1,112 +1,88 @@
-import { json, html } from "./utils";  // 기존 유틸리티 함수들
-import { superAdminLogin, createPage, listPages } from "./super-admin";  // 슈퍼 관리자 관련 함수들
-import { pageAdminLogin, savePage } from "./page-admin";  // 페이지 관리자 관련 함수들
+import { getBearerToken, verifySessionToken } from "./auth";
+import { pageAdminLogin, savePage } from "./page-admin";
+import {
+  createPage,
+  deletePage,
+  listPages,
+  superAdminLogin,
+  updatePage,
+} from "./super-admin";
+import { getPage } from "./page-view";
+import { buildCorsHeaders, CorsOptions, errorResponse } from "./utils";
 
 export default {
   async fetch(req: Request, env: any): Promise<Response> {
     const url = new URL(req.url);
     const path = url.pathname;
     const method = req.method;
-
-    // CORS 헤더 추가
-    const headers = {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",  // 모든 도메인에서 접근 가능
-      "Access-Control-Allow-Methods": "GET,POST,OPTIONS",  // 허용된 HTTP 메서드
-      "Access-Control-Allow-Headers": "Content-Type"  // 허용된 헤더
+    const corsOptions: CorsOptions = {
+      allowedOrigins: (env.ALLOWED_ORIGINS ?? "*")
+        .split(",")
+        .map((origin: string) => origin.trim())
+        .filter(Boolean),
     };
+    const corsHeaders = buildCorsHeaders(corsOptions, req.headers.get("Origin"));
 
-    // CORS Preflight 요청 처리 (OPTIONS 요청)
+    // Preflight 처리
     if (method === "OPTIONS") {
-      return new Response(null, { status: 204, headers });
+      return new Response(null, { status: 204, headers: corsHeaders });
     }
 
-    // --- 1. 정적 파일 라우팅 (Static File Routing) ---
-    // 퍼블릭 HTML 파일을 Worker 코드 내에 정의하여 제공
-    if (path === "/index.html") {
-      return htmlResponse("<h1>Welcome to the index page</h1>");
-    }
-    if (path === "/admin.html") {
-      return htmlResponse("<h1>Admin page</h1>");
-    }
-
-    // CSS 파일 서빙
-    if (path.endsWith(".css")) {
-      return cssResponse();
+    if (method === "GET" && path.startsWith("/api/pages/")) {
+      const pageId = path.replace("/api/pages/", "");
+      if (!pageId) {
+        return errorResponse("pageId가 필요합니다", 400, corsHeaders);
+      }
+      return getPage(env, decodeURIComponent(pageId), corsHeaders);
     }
 
-    // JavaScript 파일 서빙
-    if (path.endsWith(".js")) {
-      return jsResponse();
-    }
-
-    // --- 2. API 라우팅 (API Routing) ---
+    // --- 1. 관리자 API ---
     if (method === "POST" && path === "/api/admin/login") {
-      return superAdminLogin(req, env);
+      return superAdminLogin(req, env, corsHeaders);
     }
 
-    if (method === "POST" && path === "/api/admin/pages") {
-      return createPage(req, env);
+    const adminToken = getBearerToken(req);
+    const isAdmin = await verifySessionToken(env, "super", adminToken);
+
+    if (path === "/api/admin/pages" && method === "POST") {
+      if (!isAdmin) return errorResponse("인증이 필요합니다", 401, corsHeaders);
+      return createPage(req, env, corsHeaders);
     }
 
-    if (method === "GET" && path === "/api/admin/pages") {
-      return json(await listPages(env));
+    if (path === "/api/admin/pages" && method === "GET") {
+      if (!isAdmin) return errorResponse("인증이 필요합니다", 401, corsHeaders);
+      return listPages(env, corsHeaders);
     }
 
-    // 페이지 관리자 로그인 및 페이지 수정
-    const pathSegments = path.split("/").filter(s => s.length > 0);
-    
-    if (pathSegments.length >= 3 && pathSegments[0] === "api") {
-      const pageId = pathSegments[2]; // /api/page/PAGE_ID/
-      const action = pathSegments[3]; // /api/page/PAGE_ID/ACTION
+    const adminPageMatch = path.match(/^\/api\/admin\/pages\/(.+)$/);
+    if (adminPageMatch) {
+      const pageId = adminPageMatch[1];
+      if (!isAdmin) return errorResponse("인증이 필요합니다", 401, corsHeaders);
+
+      if (method === "DELETE") {
+        return deletePage(env, pageId, corsHeaders);
+      }
+
+      if (method === "PUT") {
+        return updatePage(req, env, pageId, corsHeaders);
+      }
+    }
+
+    // --- 2. 페이지 관리자 API ---
+    const pathSegments = path.split("/").filter(Boolean);
+    if (pathSegments.length >= 3 && pathSegments[0] === "api" && pathSegments[1] === "page") {
+      const pageId = pathSegments[2];
+      const action = pathSegments[3];
 
       if (method === "POST" && action === "login") {
-         return pageAdminLogin(req, env, pageId);
+        return pageAdminLogin(req, env, pageId, corsHeaders);
       }
 
       if (method === "POST" && action === "save") {
-         return savePage(req, env, pageId);
+        return savePage(req, env, pageId, corsHeaders);
       }
     }
 
-    // --- 3. API 호출이 아닌 경우 404 ---
-    return new Response("Not Found", { status: 404, headers });
-  }
+    return errorResponse("Not Found", 404, corsHeaders);
+  },
 };
-
-// 정적 파일에 대한 응답 함수들
-function htmlResponse(content: string) {
-  return new Response(content, {
-    headers: { "Content-Type": "text/html; charset=UTF-8" },
-  });
-}
-
-function cssResponse() {
-  return new Response(`
-    body { background-color: lightblue; }
-    h1 { color: navy; }
-  `, {
-    headers: { "Content-Type": "text/css; charset=UTF-8" },
-  });
-}
-
-function jsResponse() {
-  return new Response(`
-    console.log('JavaScript is working!');
-  `, {
-    headers: { "Content-Type": "application/javascript; charset=UTF-8" },
-  });
-}
-
-// JSON 응답 처리 함수
-function json(data: any, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",  // 모든 도메인에서 접근 가능
-      "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type"
-    }
-  });
-}

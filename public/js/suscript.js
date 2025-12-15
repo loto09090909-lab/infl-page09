@@ -1,3 +1,5 @@
+const API_BASE = "https://infl-worker.loto09090909.workers.dev";
+
 // 페이지 생성 함수
 async function createPage() {
     const name = document.getElementById('pageName').value;
@@ -17,10 +19,17 @@ async function createPage() {
         plan: "free"  // 기본적으로 무료로 설정
     };
 
-    const res = await fetch("https://infl-worker.loto09090909.workers.dev/api/admin/pages", {
+    const token = sessionStorage.getItem('super_admin_token');
+    if (!token) {
+        alert('슈퍼 관리자 로그인이 필요합니다. 로그인 후 다시 시도하세요.');
+        return;
+    }
+
+    const res = await fetch(`${API_BASE}/api/admin/pages`, {
         method: 'POST',
         headers: {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify(data)
     });
@@ -35,13 +44,21 @@ async function createPage() {
 
 // 페이지 목록 불러오기
 async function loadPageList() {
-    const res = await fetch("https://infl-worker.loto09090909.workers.dev/api/admin/pages");
+    const token = sessionStorage.getItem('super_admin_token');
+    if (!token) {
+        console.warn('슈퍼 관리자 토큰이 없습니다. 로그인 후 목록을 확인하세요.');
+        return;
+    }
+
+    const res = await fetch(`${API_BASE}/api/admin/pages`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+    });
     const pages = await res.json();
 
     const pageList = document.getElementById('pages');
     pageList.innerHTML = pages.map(page => `
         <li>
-            ${page.name} - ${page.pageId}
+            ${page.profile?.name || page.pageId} - ${page.pageId}
             <button onclick="editPage('${page.pageId}')">편집</button>
             <button onclick="deletePage('${page.pageId}')">삭제</button>
         </li>
@@ -50,7 +67,16 @@ async function loadPageList() {
 
 // 페이지 삭제
 async function deletePage(pageId) {
-    const res = await fetch("https://infl-worker.loto09090909.workers.dev/api/admin/pages/${pageId}/delete", { method: 'POST' });
+    const token = sessionStorage.getItem('super_admin_token');
+    if (!token) {
+        alert('슈퍼 관리자 로그인이 필요합니다.');
+        return;
+    }
+
+    const res = await fetch(`${API_BASE}/api/admin/pages/${pageId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+    });
 
     if (res.ok) {
         alert('페이지가 삭제되었습니다.');
@@ -62,14 +88,36 @@ async function deletePage(pageId) {
 
 // 페이지 수정
 async function editPage(pageId) {
-    // 수정할 페이지의 정보를 불러오고 수정 폼에 채워넣는 작업
-    const res = await fetch("https://infl-worker.loto09090909.workers.dev/api/admin/pages/${pageId}");
-    const page = await res.json();
+    const token = sessionStorage.getItem('super_admin_token');
+    if (!token) {
+        alert('슈퍼 관리자 로그인이 필요합니다.');
+        return;
+    }
+
+    const res = await fetch(`${API_BASE}/api/admin/pages`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const pages = await res.json();
+    const page = pages.find(p => p.pageId === pageId);
+
+    if (!page) {
+        alert('해당 페이지 정보를 찾지 못했습니다.');
+        return;
+    }
 
     // 수정된 내용을 입력할 수 있도록 설정하는 부분
-    document.getElementById('pageName').value = page.name;
+    document.getElementById('pageName').value = page.profile?.name || '';
     document.getElementById('pageSlug').value = page.pageId;
-    document.getElementById('pageDescription').value = page.profile.description;
-    document.getElementById('pagePhoto').value = page.profile.photoUrl;
+    document.getElementById('pageDescription').value = page.profile?.description || '';
+    document.getElementById('pagePhoto').value = page.profile?.photoUrl || '';
     document.getElementById('adminPassword').value = "";  // 비밀번호는 수정하지 않음
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+    const token = sessionStorage.getItem('super_admin_token');
+    if (!token) {
+        window.location.href = '/login.html';
+        return;
+    }
+    loadPageList();
+});

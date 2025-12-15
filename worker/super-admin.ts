@@ -1,71 +1,169 @@
-import { json } from "./utils";  // 공통 JSON 유틸리티
+import { createSessionToken } from "./auth";
+import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
 
-// 슈퍼 관리자 로그인 처리
-export async function superAdminLogin(req: Request, env: any): Promise<Response> {
-  const { password } = await req.json();
-  const storedPassword = await env.PAGE_KV.get("super_admin_password");
+type CreatePageBody = {
+  pageId: string;
+  profile?: unknown;
+  adminPassword: string;
+  plan?: unknown;
+};
 
-  if (storedPassword !== password) {
-    return new Response("Unauthorized", { status: 401 });
+type UpdatePageBody = {
+  profile?: unknown;
+  plan?: unknown;
+};
+
+type LoginBody = {
+  username?: string;
+  password?: string;
+};
+
+export async function superAdminLogin(
+  req: Request,
+  env: any,
+  headers: HeadersInit
+): Promise<Response> {
+  const body = await parseJsonBody<LoginBody>(req);
+  if (!body || typeof body.password !== "string") {
+    return errorResponse("아이디와 비밀번호를 모두 입력하세요", 400, headers);
   }
 
-  return new Response("Login successful");
+  const username =
+    typeof body.username === "string" && body.username.trim()
+      ? body.username.trim()
+      : "admin"; // 기본 슈퍼 관리자 호환
+
+  const row = await env.DB.prepare(
+    "SELECT username, password_hash FROM super_admin WHERE username = ? LIMIT 1"
+  )
+    .bind(username)
+    .first<{ username: string; password_hash: string }>();
+
+  if (!row || row.password_hash !== body.password) {
+    return errorResponse("인증에 실패했습니다", 401, headers);
+  }
+
+  const session = await createSessionToken(env, "super", "super-admin");
+  return jsonResponse(session, 200, headers);
 }
 
-// 페이지 생성
-export async function createPage(req: Request, env: any): Promise<Response> {
-  const { pageId, profile, adminPassword, plan } = await req.json();
+export async function createPage(
+  req: Request,
+  env: any,
+  headers: HeadersInit
+): Promise<Response> {
+  const body = await parseJsonBody<CreatePageBody>(req);
+  if (!body || !body.pageId || !body.adminPassword) {
+    return errorResponse("pageId와 adminPassword는 필수입니다", 400, headers);
+  }
 
-  // 페이지 데이터 및 관리자 비밀번호 저장
-  const pageData = { profile, plan };
-  await env.PAGE_KV.put(`page:${pageId}`, JSON.stringify(pageData));  // 페이지 데이터 저장
-  await env.PAGE_KV.put(`page_auth:${pageId}`, adminPassword);  // 관리자 비밀번호 저장
+  const pageData = { profile: body.profile ?? {}, plan: body.plan ?? null };
+  await env.PAGE_KV.put(`page:${body.pageId}`, JSON.stringify(pageData));
+  await env.PAGE_KV.put(`page_auth:${body.pageId}`, body.adminPassword);
 
-  return json({ success: true, message: "Page created successfully" });
+  await env.DB.prepare(
+    "INSERT OR REPLACE INTO page_auth (page_id, password_hash) VALUES (?, ?)"
+  )
+    .bind(body.pageId, body.adminPassword)
+    .run();
+
+  await env.DB.prepare(
+    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
+  )
+    .bind(
+      body.pageId,
+      (body.profile as any)?.name ?? null,
+      (body.profile as any)?.photoUrl ?? null,
+      (body.profile as any)?.description ?? null,
+      JSON.stringify((body as any).links ?? [])
+    )
+    .run();
+
+  return jsonResponse({ success: true, message: "Page created" }, 201, headers);
 }
 
-// 페이지 목록 조회
-export async function listPages(env: any): Promise<Response> {
-  // 페이지 목록을 가져와서 반환
-  const keys = await env.PAGE_KV.list({ prefix: "page:" });
-  const pages = await Promise.all(
-    keys.keys.map(async (key) => {
-      const data = await env.PAGE_KV.get(key.name);
-      return JSON.parse(data!);  // 페이지 데이터를 JSON 형식으로 반환
-    })
-  );
+export async function listPages(env: any, headers: HeadersInit): Promise<Response> {
+  const dbRows = await env.DB.prepare(
+    "SELECT page_id, name, photo_url, description, links FROM page_meta"
+  ).all<{ page_id: string; name: string | null; photo_url: string | null; description: string | null; links: string | null }>();
 
-  return json(pages);  // 페이지 목록 반환
+  const mapped = (dbRows?.results ?? []).map((row) => ({
+    pageId: row.page_id,
+    profile: {
+      name: row.name,
+      photoUrl: row.photo_url,
+      description: row.description,
+    },
+    links: safeParseLinks(row.links),
+  }));
+
+  return jsonResponse(mapped, 200, headers);
 }
 
-// 페이지 삭제
-export async function deletePage(req: Request, env: any, pageId: string): Promise<Response> {
+export async function deletePage(
+  env: any,
+  pageId: string,
+  headers: HeadersInit
+): Promise<Response> {
   const exists = await env.PAGE_KV.get(`page:${pageId}`);
-
-  // 페이지가 존재하지 않으면 404 반환
   if (!exists) {
-    return new Response("Page not found", { status: 404 });
+    return errorResponse("Page not found", 404, headers);
   }
 
-  // 페이지 삭제
   await env.PAGE_KV.delete(`page:${pageId}`);
   await env.PAGE_KV.delete(`page_auth:${pageId}`);
 
-  return json({ success: true, message: "Page deleted successfully" });
+  await env.DB.prepare("DELETE FROM page_auth WHERE page_id = ?")
+    .bind(pageId)
+    .run();
+
+  await env.DB.prepare("DELETE FROM page_meta WHERE page_id = ?")
+    .bind(pageId)
+    .run();
+
+  return jsonResponse({ success: true, message: "Page deleted" }, 200, headers);
 }
 
-// 페이지 수정 (수정 기능)
-export async function updatePage(req: Request, env: any, pageId: string): Promise<Response> {
-  const { profile, plan } = await req.json();
+export async function updatePage(
+  req: Request,
+  env: any,
+  pageId: string,
+  headers: HeadersInit
+): Promise<Response> {
   const existingPage = await env.PAGE_KV.get(`page:${pageId}`);
-
-  // 페이지가 존재하지 않으면 404 반환
   if (!existingPage) {
-    return new Response("Page not found", { status: 404 });
+    return errorResponse("Page not found", 404, headers);
   }
 
-  const updatedPage = { profile, plan };
+  const body = await parseJsonBody<UpdatePageBody>(req);
+  if (!body) {
+    return errorResponse("잘못된 요청 본문입니다", 400, headers);
+  }
+
+  const updatedPage = { profile: body.profile ?? {}, plan: body.plan ?? null };
   await env.PAGE_KV.put(`page:${pageId}`, JSON.stringify(updatedPage));
 
-  return json({ success: true, message: "Page updated successfully" });
+  await env.DB.prepare(
+    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
+  )
+    .bind(
+      pageId,
+      (updatedPage.profile as any)?.name ?? null,
+      (updatedPage.profile as any)?.photoUrl ?? null,
+      (updatedPage.profile as any)?.description ?? null,
+      JSON.stringify((body as any).links ?? [])
+    )
+    .run();
+
+  return jsonResponse({ success: true, message: "Page updated" }, 200, headers);
+}
+
+function safeParseLinks(raw: string | null) {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    return [];
+  }
 }
