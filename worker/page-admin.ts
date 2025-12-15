@@ -8,6 +8,7 @@ type LoginBody = {
 type SavePageBody = {
   profile?: unknown;
   links?: unknown;
+  plan?: unknown;
 };
 
 export async function pageAdminLogin(
@@ -43,8 +44,9 @@ export async function savePage(
   headers: HeadersInit
 ) {
   const token = getBearerToken(req);
-  const tokenValid = await verifySessionToken(env, "page", token, pageId);
-  if (!tokenValid) {
+  const pageTokenValid = await verifySessionToken(env, "page", token, pageId);
+  const superTokenValid = await verifySessionToken(env, "super", token);
+  if (!pageTokenValid && !superTokenValid) {
     return errorResponse("인증이 필요합니다", 401, headers);
   }
 
@@ -53,7 +55,22 @@ export async function savePage(
     return errorResponse("잘못된 요청 본문입니다", 400, headers);
   }
 
-  const pageData = { profile: body.profile ?? {}, links: body.links ?? [] };
+  const existingRaw = await env.PAGE_KV.get(`page:${pageId}`);
+  let existingPlan: unknown = null;
+  if (existingRaw) {
+    try {
+      const parsed = JSON.parse(existingRaw);
+      existingPlan = parsed.plan ?? null;
+    } catch (error) {
+      existingPlan = null;
+    }
+  }
+
+  const pageData = {
+    profile: body.profile ?? {},
+    links: Array.isArray(body.links) ? body.links : [],
+    plan: body.plan ?? existingPlan ?? null,
+  };
   await env.PAGE_KV.put(`page:${pageId}`, JSON.stringify(pageData));
 
   await env.DB.prepare(

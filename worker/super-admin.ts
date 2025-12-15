@@ -6,11 +6,14 @@ type CreatePageBody = {
   profile?: unknown;
   adminPassword: string;
   plan?: unknown;
+  links?: unknown;
 };
 
 type UpdatePageBody = {
   profile?: unknown;
   plan?: unknown;
+  links?: unknown;
+  adminPassword?: string;
 };
 
 type LoginBody = {
@@ -57,7 +60,11 @@ export async function createPage(
     return errorResponse("pageId와 adminPassword는 필수입니다", 400, headers);
   }
 
-  const pageData = { profile: body.profile ?? {}, plan: body.plan ?? null };
+  const pageData = {
+    profile: body.profile ?? {},
+    links: Array.isArray((body as any).links) ? (body as any).links : [],
+    plan: body.plan ?? null,
+  };
   await env.PAGE_KV.put(`page:${body.pageId}`, JSON.stringify(pageData));
   await env.PAGE_KV.put(`page_auth:${body.pageId}`, body.adminPassword);
 
@@ -87,15 +94,30 @@ export async function listPages(env: any, headers: HeadersInit): Promise<Respons
     "SELECT page_id, name, photo_url, description, links FROM page_meta"
   ).all<{ page_id: string; name: string | null; photo_url: string | null; description: string | null; links: string | null }>();
 
-  const mapped = (dbRows?.results ?? []).map((row) => ({
-    pageId: row.page_id,
-    profile: {
-      name: row.name,
-      photoUrl: row.photo_url,
-      description: row.description,
-    },
-    links: safeParseLinks(row.links),
-  }));
+  const mapped = await Promise.all(
+    (dbRows?.results ?? []).map(async (row) => {
+      const kvValue = await env.PAGE_KV.get(`page:${row.page_id}`);
+      let plan: string | null = null;
+      if (kvValue) {
+        try {
+          plan = JSON.parse(kvValue).plan ?? null;
+        } catch (error) {
+          plan = null;
+        }
+      }
+
+      return {
+        pageId: row.page_id,
+        profile: {
+          name: row.name,
+          photoUrl: row.photo_url,
+          description: row.description,
+        },
+        links: safeParseLinks(row.links),
+        plan,
+      };
+    })
+  );
 
   return jsonResponse(mapped, 200, headers);
 }
@@ -140,8 +162,21 @@ export async function updatePage(
     return errorResponse("잘못된 요청 본문입니다", 400, headers);
   }
 
-  const updatedPage = { profile: body.profile ?? {}, plan: body.plan ?? null };
+  const updatedPage = {
+    profile: body.profile ?? {},
+    links: Array.isArray((body as any).links) ? (body as any).links : [],
+    plan: body.plan ?? null,
+  };
   await env.PAGE_KV.put(`page:${pageId}`, JSON.stringify(updatedPage));
+
+  if (body.adminPassword) {
+    await env.PAGE_KV.put(`page_auth:${pageId}`, body.adminPassword);
+    await env.DB.prepare(
+      "INSERT OR REPLACE INTO page_auth (page_id, password_hash) VALUES (?, ?)"
+    )
+      .bind(pageId, body.adminPassword)
+      .run();
+  }
 
   await env.DB.prepare(
     "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
