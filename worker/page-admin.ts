@@ -8,6 +8,7 @@ type LoginBody = {
 type SavePageBody = {
   profile?: unknown;
   links?: unknown;
+  plan?: unknown;
 };
 
 export async function pageAdminLogin(
@@ -21,18 +22,21 @@ export async function pageAdminLogin(
     return errorResponse("유효한 비밀번호를 입력하세요", 400, headers);
   }
 
+  const canonicalPageId = await resolvePageId(env, pageId);
+
   const dbRow = await env.DB.prepare(
     "SELECT password_hash FROM page_auth WHERE page_id = ? LIMIT 1"
   )
-    .bind(pageId)
+    .bind(canonicalPageId)
     .first<{ password_hash: string }>();
 
-  const storedPassword = dbRow?.password_hash ?? (await env.PAGE_KV.get(`page_auth:${pageId}`));
+  const storedPassword =
+    dbRow?.password_hash ?? (await env.PAGE_KV.get(`page_auth:${canonicalPageId}`));
   if (!storedPassword || storedPassword !== body.password) {
     return errorResponse("인증에 실패했습니다", 401, headers);
   }
 
-  const session = await createSessionToken(env, "page", pageId);
+  const session = await createSessionToken(env, "page", canonicalPageId);
   return jsonResponse(session, 200, headers);
 }
 
@@ -43,8 +47,10 @@ export async function savePage(
   headers: HeadersInit
 ) {
   const token = getBearerToken(req);
-  const tokenValid = await verifySessionToken(env, "page", token, pageId);
-  if (!tokenValid) {
+  const canonicalPageId = await resolvePageId(env, pageId);
+  const pageTokenValid = await verifySessionToken(env, "page", token, canonicalPageId);
+  const superTokenValid = await verifySessionToken(env, "super", token);
+  if (!pageTokenValid && !superTokenValid) {
     return errorResponse("인증이 필요합니다", 401, headers);
   }
 
@@ -53,14 +59,29 @@ export async function savePage(
     return errorResponse("잘못된 요청 본문입니다", 400, headers);
   }
 
-  const pageData = { profile: body.profile ?? {}, links: body.links ?? [] };
-  await env.PAGE_KV.put(`page:${pageId}`, JSON.stringify(pageData));
+  const existingRaw = await env.PAGE_KV.get(`page:${canonicalPageId}`);
+  let existingPlan: unknown = null;
+  if (existingRaw) {
+    try {
+      const parsed = JSON.parse(existingRaw);
+      existingPlan = parsed.plan ?? null;
+    } catch (error) {
+      existingPlan = null;
+    }
+  }
+
+  const pageData = {
+    profile: body.profile ?? {},
+    links: Array.isArray(body.links) ? body.links : [],
+    plan: body.plan ?? existingPlan ?? null,
+  };
+  await env.PAGE_KV.put(`page:${canonicalPageId}`, JSON.stringify(pageData));
 
   await env.DB.prepare(
     "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
   )
     .bind(
-      pageId,
+      canonicalPageId,
       (pageData.profile as any)?.name ?? null,
       (pageData.profile as any)?.photoUrl ?? null,
       (pageData.profile as any)?.description ?? null,
@@ -69,4 +90,14 @@ export async function savePage(
     .run();
 
   return jsonResponse({ success: true, message: "Page saved" }, 200, headers);
+}
+
+async function resolvePageId(env: any, incoming: string) {
+  const row = await env.DB.prepare(
+    "SELECT page_id FROM slug_map WHERE display_name = ? LIMIT 1"
+  )
+    .bind(incoming)
+    .first<{ page_id: string }>();
+
+  return row?.page_id ?? incoming;
 }

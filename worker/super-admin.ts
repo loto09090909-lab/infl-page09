@@ -6,11 +6,16 @@ type CreatePageBody = {
   profile?: unknown;
   adminPassword: string;
   plan?: unknown;
+  links?: unknown;
+  slugs?: unknown;
 };
 
 type UpdatePageBody = {
   profile?: unknown;
   plan?: unknown;
+  links?: unknown;
+  adminPassword?: string;
+  slugs?: unknown;
 };
 
 type LoginBody = {
@@ -57,7 +62,22 @@ export async function createPage(
     return errorResponse("pageId와 adminPassword는 필수입니다", 400, headers);
   }
 
-  const pageData = { profile: body.profile ?? {}, plan: body.plan ?? null };
+  const slugs = normalizeSlugs(body.slugs, body.pageId);
+
+  const conflictingSlug = await findConflictingSlug(env, slugs, body.pageId);
+  if (conflictingSlug) {
+    return errorResponse(
+      `이미 다른 페이지에 사용 중인 슬러그입니다: ${conflictingSlug}`,
+      409,
+      headers
+    );
+  }
+
+  const pageData = {
+    profile: body.profile ?? {},
+    links: Array.isArray((body as any).links) ? (body as any).links : [],
+    plan: body.plan ?? null,
+  };
   await env.PAGE_KV.put(`page:${body.pageId}`, JSON.stringify(pageData));
   await env.PAGE_KV.put(`page_auth:${body.pageId}`, body.adminPassword);
 
@@ -79,6 +99,8 @@ export async function createPage(
     )
     .run();
 
+  await replaceSlugMap(env, body.pageId, slugs);
+
   return jsonResponse({ success: true, message: "Page created" }, 201, headers);
 }
 
@@ -87,15 +109,31 @@ export async function listPages(env: any, headers: HeadersInit): Promise<Respons
     "SELECT page_id, name, photo_url, description, links FROM page_meta"
   ).all<{ page_id: string; name: string | null; photo_url: string | null; description: string | null; links: string | null }>();
 
-  const mapped = (dbRows?.results ?? []).map((row) => ({
-    pageId: row.page_id,
-    profile: {
-      name: row.name,
-      photoUrl: row.photo_url,
-      description: row.description,
-    },
-    links: safeParseLinks(row.links),
-  }));
+  const mapped = await Promise.all(
+    (dbRows?.results ?? []).map(async (row) => {
+      const kvValue = await env.PAGE_KV.get(`page:${row.page_id}`);
+      let plan: string | null = null;
+      if (kvValue) {
+        try {
+          plan = JSON.parse(kvValue).plan ?? null;
+        } catch (error) {
+          plan = null;
+        }
+      }
+
+      return {
+        pageId: row.page_id,
+        profile: {
+          name: row.name,
+          photoUrl: row.photo_url,
+          description: row.description,
+        },
+        links: safeParseLinks(row.links),
+        plan,
+        slugs: await getSlugsForPage(env, row.page_id),
+      };
+    })
+  );
 
   return jsonResponse(mapped, 200, headers);
 }
@@ -121,6 +159,10 @@ export async function deletePage(
     .bind(pageId)
     .run();
 
+  await env.DB.prepare("DELETE FROM slug_map WHERE page_id = ?")
+    .bind(pageId)
+    .run();
+
   return jsonResponse({ success: true, message: "Page deleted" }, 200, headers);
 }
 
@@ -140,8 +182,39 @@ export async function updatePage(
     return errorResponse("잘못된 요청 본문입니다", 400, headers);
   }
 
-  const updatedPage = { profile: body.profile ?? {}, plan: body.plan ?? null };
+  let slugs: string[] | null = null;
+  if (body.slugs !== undefined) {
+    slugs = normalizeSlugs(body.slugs, pageId);
+    const conflict = await findConflictingSlug(env, slugs, pageId);
+    if (conflict) {
+      return errorResponse(
+        `이미 다른 페이지에 사용 중인 슬러그입니다: ${conflict}`,
+        409,
+        headers
+      );
+    }
+  } else {
+    const hasExistingSlugMap = await hasSlugMap(env, pageId);
+    if (!hasExistingSlugMap) {
+      slugs = await getSlugsForPage(env, pageId);
+    }
+  }
+
+  const updatedPage = {
+    profile: body.profile ?? {},
+    links: Array.isArray((body as any).links) ? (body as any).links : [],
+    plan: body.plan ?? null,
+  };
   await env.PAGE_KV.put(`page:${pageId}`, JSON.stringify(updatedPage));
+
+  if (body.adminPassword) {
+    await env.PAGE_KV.put(`page_auth:${pageId}`, body.adminPassword);
+    await env.DB.prepare(
+      "INSERT OR REPLACE INTO page_auth (page_id, password_hash) VALUES (?, ?)"
+    )
+      .bind(pageId, body.adminPassword)
+      .run();
+  }
 
   await env.DB.prepare(
     "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
@@ -155,6 +228,10 @@ export async function updatePage(
     )
     .run();
 
+  if (slugs) {
+    await replaceSlugMap(env, pageId, slugs);
+  }
+
   return jsonResponse({ success: true, message: "Page updated" }, 200, headers);
 }
 
@@ -166,4 +243,68 @@ function safeParseLinks(raw: string | null) {
   } catch (error) {
     return [];
   }
+}
+
+function normalizeSlugs(raw: unknown, pageId: string) {
+  const incoming = Array.isArray(raw) ? raw : [];
+  const normalized = incoming
+    .filter((value): value is string => typeof value === "string" && !!value.trim())
+    .map((value) => value.trim());
+
+  if (!normalized.includes(pageId)) {
+    normalized.unshift(pageId);
+  }
+
+  return Array.from(new Set(normalized));
+}
+
+async function findConflictingSlug(env: any, slugs: string[], ownerPageId: string) {
+  for (const slug of slugs) {
+    const row = await env.DB.prepare(
+      "SELECT page_id FROM slug_map WHERE display_name = ? LIMIT 1"
+    )
+      .bind(slug)
+      .first<{ page_id: string }>();
+
+    if (row && row.page_id !== ownerPageId) {
+      return slug;
+    }
+  }
+
+  return null;
+}
+
+async function replaceSlugMap(env: any, pageId: string, slugs: string[]) {
+  await env.DB.prepare("DELETE FROM slug_map WHERE page_id = ?")
+    .bind(pageId)
+    .run();
+
+  for (const slug of slugs) {
+    await env.DB.prepare(
+      "INSERT OR REPLACE INTO slug_map (display_name, page_id) VALUES (?, ?)"
+    )
+      .bind(slug, pageId)
+      .run();
+  }
+}
+
+async function getSlugsForPage(env: any, pageId: string) {
+  const rows = await env.DB.prepare(
+    "SELECT display_name FROM slug_map WHERE page_id = ?"
+  )
+    .bind(pageId)
+    .all<{ display_name: string }>();
+
+  const slugs = (rows?.results ?? []).map((row) => row.display_name).filter(Boolean);
+  return slugs.length ? slugs : [pageId];
+}
+
+async function hasSlugMap(env: any, pageId: string) {
+  const row = await env.DB.prepare(
+    "SELECT display_name FROM slug_map WHERE page_id = ? LIMIT 1"
+  )
+    .bind(pageId)
+    .first();
+
+  return !!row;
 }

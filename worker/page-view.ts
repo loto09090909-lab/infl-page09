@@ -13,10 +13,12 @@ export async function getPage(
   pageId: string,
   headers: HeadersInit
 ): Promise<Response> {
+  const resolvedPageId = await resolvePageId(env, pageId);
+
   const dbRow = await env.DB.prepare(
     "SELECT page_id, name, photo_url, description, links FROM page_meta WHERE page_id = ? LIMIT 1"
   )
-    .bind(pageId)
+    .bind(resolvedPageId)
     .first<PageMetaRow>();
 
   if (dbRow) {
@@ -34,7 +36,7 @@ export async function getPage(
     );
   }
 
-  const kvValue = await env.PAGE_KV.get(`page:${pageId}`);
+  const kvValue = await env.PAGE_KV.get(`page:${resolvedPageId}`);
   if (!kvValue) {
     return errorResponse("Page not found", 404, headers);
   }
@@ -55,4 +57,14 @@ function safeParseLinks(raw: string | null) {
   } catch (err) {
     return [];
   }
+}
+
+async function resolvePageId(env: any, incoming: string) {
+  const row = await env.DB.prepare(
+    "SELECT page_id FROM slug_map WHERE display_name = ? LIMIT 1"
+  )
+    .bind(incoming)
+    .first<{ page_id: string }>();
+
+  return row?.page_id ?? incoming;
 }

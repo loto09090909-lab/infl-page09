@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="api-base" content="https://infl-worker.loto09090909.workers.dev">
     <title>슈퍼 관리자 페이지</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
@@ -18,13 +19,56 @@
     </header>
 
     <section class="page-creation">
-        <h2>페이지 생성</h2>
-        <input id="pageName" type="text" placeholder="페이지 이름" />
-        <input id="pageSlug" type="text" placeholder="슬러그 (고유 이름)" />
-        <input id="pageDescription" type="text" placeholder="페이지 설명" />
-        <input id="pagePhoto" type="text" placeholder="사진 URL" />
-        <input id="adminPassword" type="password" placeholder="관리자 비밀번호" />
-        <button onclick="createPage()">페이지 생성</button>
+        <h2 id="form-title">페이지 생성</h2>
+        <div class="form-row">
+            <label>페이지 이름</label>
+            <input id="pageName" type="text" placeholder="페이지 이름" />
+        </div>
+        <div class="form-row">
+            <label>슬러그 (고유 이름)</label>
+            <input id="pageSlug" type="text" placeholder="슬러그 (고유 이름)" />
+        </div>
+        <div class="form-row">
+            <label>추가 슬러그 (별칭)</label>
+            <ul id="sa-slug-list" class="link-list"></ul>
+            <div class="inline-inputs">
+                <input id="saSlugInput" placeholder="새 슬러그 별칭">
+                <button onclick="addAliasSlug()">별칭 추가</button>
+            </div>
+            <p class="help-text">기본 슬러그 외에 여러 개의 별칭을 등록할 수 있습니다.</p>
+        </div>
+        <div class="form-row">
+            <label>페이지 설명</label>
+            <input id="pageDescription" type="text" placeholder="페이지 설명" />
+        </div>
+        <div class="form-row">
+            <label>사진 URL</label>
+            <input id="pagePhoto" type="text" placeholder="사진 URL" />
+        </div>
+        <div class="form-row">
+            <label>관리자 비밀번호</label>
+            <input id="adminPassword" type="password" placeholder="새 관리자 비밀번호 (수정 시 비워두면 유지)" />
+        </div>
+        <div class="form-row">
+            <label>플랜</label>
+            <select id="plan">
+                <option value="free">free</option>
+                <option value="pro">pro</option>
+            </select>
+        </div>
+        <div class="form-row">
+            <label>링크 관리</label>
+            <ul id="sa-link-list" class="link-list"></ul>
+            <div class="inline-inputs">
+                <input id="saLinkName" placeholder="새 링크 이름">
+                <input id="saLinkUrl" placeholder="새 링크 URL">
+                <button onclick="addSuperAdminLink()">링크 추가</button>
+            </div>
+        </div>
+        <div class="form-actions">
+            <button id="submit-btn" onclick="submitPage()">페이지 생성</button>
+            <button id="cancel-edit-btn" style="display: none;" onclick="resetForm()">수정 취소</button>
+        </div>
     </section>
 
     <section class="page-list">

@@ -1,63 +1,63 @@
-const API_BASE = "https://infl-worker.loto09090909.workers.dev";
+function resolveApiBases() {
+    const bases = [];
+
+    const metaApiBase = document.querySelector('meta[name="api-base"]')?.content?.trim();
+    if (metaApiBase) {
+        bases.push(metaApiBase);
+    }
+
+    if (window.API_BASE) {
+        bases.push(window.API_BASE);
+    }
+
+    const knownWorkerBase = 'https://infl-worker.loto09090909.workers.dev';
+    if (!bases.includes(knownWorkerBase)) {
+        bases.push(knownWorkerBase);
+    }
+
+    if (window.location.hostname.endsWith('pages.dev')) {
+        const guessedWorker = window.location.origin.replace('.pages.dev', '.workers.dev');
+        if (!bases.includes(guessedWorker)) {
+            bases.push(guessedWorker);
+        }
+    }
+
+    bases.push(window.location.origin);
+
+    return bases;
+}
+
+const API_BASES = resolveApiBases();
+
+async function apiFetch(
+    path,
+    options = {},
+    fallbackStatuses = [301, 302, 307, 308, 404, 405]
+) {
+    let lastError;
+
+    for (const base of API_BASES) {
+        try {
+            const res = await fetch(`${base}${path}`, options);
+            if (res.ok) {
+                return res;
+            }
+
+            if (!fallbackStatuses.includes(res.status)) {
+                return res;
+            }
+
+            lastError = res;
+        } catch (err) {
+            lastError = err;
+        }
+    }
+
+    if (lastError instanceof Response) return lastError;
+    throw lastError;
+}
 const hasUserView = document.getElementById("links-list") !== null;
-
-// 관리자 페이지: 페이지 저장
-function savePage() {
-    const name = document.getElementById('name').value;
-    const desc = document.getElementById('desc').value;
-    const photo = document.getElementById('photo').value;
-
-    // API 호출로 페이지 정보 저장
-    fetch(`${API_BASE}/api/pages/save`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            name: name,
-            description: desc,
-            photoUrl: photo
-        })
-    }).then(response => response.json())
-      .then(data => alert('페이지가 저장되었습니다.'))
-      .catch(error => alert('저장 실패: ' + error));
-}
-
-// 관리자 페이지: 링크 추가
-function addLink() {
-    const name = document.getElementById('newLinkName').value;
-    const url = document.getElementById('newLinkUrl').value;
-
-    // API 호출로 새 링크 추가
-    fetch(`${API_BASE}/api/pages/save`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            name: name,
-            url: url
-        })
-    }).then(response => response.json())
-      .then(data => alert('링크가 추가되었습니다.'))
-      .catch(error => alert('링크 추가 실패: ' + error));
-}
-
-// 관리자 페이지: 링크 삭제
-function removeLink(linkName) {
-    // 링크 삭제 로직 (API 호출)
-    alert(linkName + ' 링크가 삭제되었습니다.');
-}
-
-// 관리자 페이지: 광고 설정 저장
-function saveAdsSettings() {
-    const adsEnabled = document.getElementById('ads').checked;
-
-    // 광고 설정을 서버에 저장
-    fetch(`${API_BASE}/api/pages/saveAds`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ adsEnabled: adsEnabled })
-    }).then(response => response.json())
-      .then(data => alert('광고 설정이 저장되었습니다.'))
-      .catch(error => alert('광고 설정 실패: ' + error));
-}
+let adminLinks = [];
 
 // 페이지 데이터 로드
 async function loadPageData(pageId) {
@@ -66,14 +66,13 @@ async function loadPageData(pageId) {
         return;
     }
 
-    // 템플릿 문자열 대신 `pageId`를 바로 넣기
-    const res = await fetch(`${API_BASE}/api/pages/${encodeURIComponent(pageId)}`);
-    
+    const res = await apiFetch(`/api/pages/${encodeURIComponent(pageId)}`);
+
     if (!res.ok) {
         console.error('Failed to fetch page data:', res);
         return;
     }
-    
+
     const data = await res.json();
 
     if (data && data.profile) {
@@ -88,15 +87,19 @@ async function loadPageData(pageId) {
         const descEl = document.querySelector('.profile-description');
         if (descEl && data.profile.description) descEl.innerText = data.profile.description;
 
-        // 링크 동적 삽입
-        const linksList = document.getElementById('links-list');
-        if (linksList && Array.isArray(data.links)) {
-            data.links.forEach(link => {
-                const li = document.createElement('li');
-                li.innerHTML = `<a href="${link.url}" target="_blank">${link.name}</a>`;
-                linksList.appendChild(li);
-            });
+        renderUserLinks(data.links);
+
+        if (Array.isArray(data.links)) {
+            adminLinks = data.links;
+            renderAdminLinks();
         }
+
+        const nameInput = document.getElementById('name');
+        const descInput = document.getElementById('desc');
+        const photoInput = document.getElementById('photo');
+        if (nameInput) nameInput.value = data.profile.name ?? '';
+        if (descInput) descInput.value = data.profile.description ?? '';
+        if (photoInput) photoInput.value = data.profile.photoUrl ?? '';
     } else {
         console.error('Page data not found');
     }
@@ -115,10 +118,10 @@ const looksLikeSlugPage =
     !pathSegments[0].includes('.') &&
     !['admin', 'login', 'super-admin', 'super-admin.html', 'page-admin-login'].includes(pathSegments[0]);
 const isAdminHtml = pathSegments.length === 1 && pathSegments[0].startsWith('admin');
+const derivedPageId = pageIdFromPath || pageIdFromQuery || '';
 
 // 페이지 관리자 대시보드는 토큰과 pageId를 필수로 요구
 if (pageRole === 'page-admin') {
-    const derivedPageId = pageIdFromPath || pageIdFromQuery || '';
     const token = sessionStorage.getItem('page_admin_token');
 
     if (!token) {
@@ -129,7 +132,7 @@ if (pageRole === 'page-admin') {
     }
 }
 
-if (hasUserView) {
+if (hasUserView || pageRole === 'page-admin') {
     if (isUserPage) {
         const pageId = pathSegments[1];
         loadPageData(pageId);
@@ -137,8 +140,10 @@ if (hasUserView) {
         loadPageData(pathSegments[0]);
     } else if (isAdminHtml && pageIdFromQuery) {
         loadPageData(pageIdFromQuery);
+    } else if (pageRole === 'page-admin' && derivedPageId) {
+        loadPageData(derivedPageId);
     } else {
-        console.debug('사용자 페이지가 아니므로 페이지 데이터 로드를 건너뜁니다.');
+        console.debug('사용자 페이지가 아니므로 페이지 데이터를 로드를 건너뜁니다.');
     }
 } else {
     console.debug('사용자 페이지 컨테이너가 없어 페이지 데이터를 요청하지 않습니다.');
@@ -151,6 +156,85 @@ document.addEventListener('DOMContentLoaded', () => {
         pageAdminIdInput.value = pageIdFromPath || pageIdFromQuery;
     }
 });
+
+// 관리자 페이지: 페이지 저장
+async function savePage() {
+    if (!derivedPageId) {
+        alert('페이지 식별자가 없어 저장할 수 없습니다. URL을 확인해주세요.');
+        return;
+    }
+
+    const token = sessionStorage.getItem('page_admin_token');
+    if (!token) {
+        alert('페이지 관리자 로그인이 필요합니다. 다시 로그인 해주세요.');
+        return;
+    }
+
+    const name = document.getElementById('name')?.value?.trim() || '';
+    const desc = document.getElementById('desc')?.value?.trim() || '';
+    const photo = document.getElementById('photo')?.value?.trim() || '';
+
+    if (adminLinks.some(link => !link.name || !link.url)) {
+        alert('모든 링크는 이름과 URL을 모두 입력해야 합니다.');
+        return;
+    }
+
+    const payload = {
+        profile: { name, description: desc, photoUrl: photo },
+        links: adminLinks,
+    };
+
+    const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/save`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+    });
+
+    if (res.ok) {
+        alert('페이지가 저장되었습니다.');
+    } else {
+        const errText = await res.text();
+        alert(`저장 실패: ${errText || res.status}`);
+    }
+}
+
+// 관리자 페이지: 링크 추가
+function addLink() {
+    const nameInput = document.getElementById('newLinkName');
+    const urlInput = document.getElementById('newLinkUrl');
+
+    const name = nameInput?.value?.trim();
+    const url = urlInput?.value?.trim();
+
+    if (!name || !url) {
+        alert('링크 이름과 URL을 모두 입력하세요.');
+        return;
+    }
+
+    adminLinks.push({ name, url });
+    renderAdminLinks();
+
+    if (nameInput) nameInput.value = '';
+    if (urlInput) urlInput.value = '';
+}
+
+// 관리자 페이지: 링크 수정/삭제
+function updateLinkField(index, field, value) {
+    adminLinks[index] = { ...adminLinks[index], [field]: value };
+}
+
+function removeLink(index) {
+    adminLinks.splice(index, 1);
+    renderAdminLinks();
+}
+
+// 관리자 페이지: 광고 설정 저장 (백엔드 미구현 안내)
+function saveAdsSettings() {
+    alert('광고 설정 저장 기능은 아직 백엔드에 준비되지 않았습니다.');
+}
 
 // 로그인 함수
 async function login() {
@@ -165,8 +249,7 @@ async function login() {
         return;
     }
 
-    // 백엔드 API의 절대 경로를 사용하여 요청
-    const res = await fetch(`${API_BASE}/api/admin/login`, {
+    const res = await apiFetch('/api/admin/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password })
@@ -204,7 +287,7 @@ async function pageAdminLogin() {
         return;
     }
 
-    const res = await fetch(`${API_BASE}/api/page/${encodeURIComponent(pageId)}/login`, {
+    const res = await apiFetch(`/api/page/${encodeURIComponent(pageId)}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password })
@@ -223,4 +306,52 @@ async function pageAdminLogin() {
 function logout() {
     document.cookie = "session=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/";  // 세션 쿠키 삭제
     window.location.href = "/login.html";  // 로그인 페이지로 리디렉션
+}
+
+function renderUserLinks(links) {
+    const linksList = document.getElementById('links-list');
+    if (!linksList || !Array.isArray(links)) return;
+
+    linksList.innerHTML = '';
+    links.forEach(link => {
+        const li = document.createElement('li');
+        li.innerHTML = `<a href="${link.url}" target="_blank">${link.name}</a>`;
+        linksList.appendChild(li);
+    });
+}
+
+function renderAdminLinks() {
+    const adminList = document.getElementById('link-list');
+    if (!adminList) return;
+
+    adminList.innerHTML = '';
+    adminLinks.forEach((link, index) => {
+        const li = document.createElement('li');
+        li.className = 'link-row';
+
+        const nameInput = document.createElement('input');
+        nameInput.placeholder = '링크 이름';
+        nameInput.value = link.name || '';
+        nameInput.oninput = (e) => updateLinkField(index, 'name', e.target.value);
+
+        const urlInput = document.createElement('input');
+        urlInput.placeholder = '링크 URL';
+        urlInput.value = link.url || '';
+        urlInput.oninput = (e) => updateLinkField(index, 'url', e.target.value);
+
+        const previewLink = document.createElement('a');
+        previewLink.href = link.url || '#';
+        previewLink.target = '_blank';
+        previewLink.innerText = '미리보기';
+
+        const removeBtn = document.createElement('button');
+        removeBtn.innerText = '삭제';
+        removeBtn.onclick = () => removeLink(index);
+
+        li.appendChild(nameInput);
+        li.appendChild(urlInput);
+        li.appendChild(previewLink);
+        li.appendChild(removeBtn);
+        adminList.appendChild(li);
+    });
 }
