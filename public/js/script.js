@@ -57,7 +57,45 @@ async function apiFetch(
     throw lastError;
 }
 const hasUserView = document.getElementById("links-list") !== null;
+let userViewReady = hasUserView;
 let adminLinks = [];
+
+function ensureUserViewContainer() {
+    if (userViewReady) return;
+
+    const main = document.querySelector('main') || document.body;
+
+    const header = document.createElement('header');
+    const title = document.createElement('h1');
+    title.innerText = '페이지를 불러오는 중...';
+    header.appendChild(title);
+
+    const profileSection = document.createElement('section');
+    profileSection.className = 'profile';
+    const img = document.createElement('img');
+    img.className = 'profile-photo';
+    img.alt = '프로필 사진';
+    const desc = document.createElement('p');
+    desc.className = 'profile-description';
+    profileSection.appendChild(img);
+    profileSection.appendChild(desc);
+
+    const linksSection = document.createElement('section');
+    linksSection.className = 'links';
+    const linksHeader = document.createElement('h3');
+    linksHeader.innerText = '링크';
+    const linksUl = document.createElement('ul');
+    linksUl.id = 'links-list';
+    linksSection.appendChild(linksHeader);
+    linksSection.appendChild(linksUl);
+
+    main.innerHTML = '';
+    main.appendChild(header);
+    main.appendChild(profileSection);
+    main.appendChild(linksSection);
+
+    userViewReady = true;
+}
 
 // 페이지 데이터 로드
 async function loadPageData(pageId) {
@@ -120,6 +158,10 @@ const looksLikeSlugPage =
 const isAdminHtml = pathSegments.length === 1 && pathSegments[0].startsWith('admin');
 const derivedPageId = pageIdFromPath || pageIdFromQuery || '';
 
+if (looksLikeSlugPage && !userViewReady && !pageRole) {
+    ensureUserViewContainer();
+}
+
 // 페이지 관리자 대시보드는 토큰과 pageId를 필수로 요구
 if (pageRole === 'page-admin') {
     const token = sessionStorage.getItem('page_admin_token');
@@ -132,7 +174,7 @@ if (pageRole === 'page-admin') {
     }
 }
 
-if (hasUserView || pageRole === 'page-admin') {
+if (userViewReady || pageRole === 'page-admin') {
     if (isUserPage) {
         const pageId = pathSegments[1];
         loadPageData(pageId);
