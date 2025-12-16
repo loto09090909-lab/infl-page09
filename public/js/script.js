@@ -121,17 +121,27 @@ function createCustomIcon(url, alt = "") {
 function ensureUserViewContainer() {
     if (userViewReady) return;
 
-    const main = document.querySelector('main') || document.body;
+    document.body.classList.add('user-view');
+
+    const host = document.querySelector('main') || document.body;
+    host.innerHTML = '';
+
+    const shell = document.createElement('main');
+    shell.className = 'user-shell';
+
+    const card = document.createElement('section');
+    card.className = 'user-card';
 
     const header = document.createElement('header');
+    header.className = 'user-header';
     const title = document.createElement('h1');
     title.innerText = '페이지를 불러오는 중...';
     header.appendChild(title);
 
-    const profileSection = document.createElement('section');
-    profileSection.className = 'profile';
+    const profileSection = document.createElement('div');
+    profileSection.className = 'profile user-profile';
     const img = document.createElement('img');
-    img.className = 'profile-photo';
+    img.className = 'profile-photo user-avatar';
     img.alt = '프로필 사진';
     const desc = document.createElement('p');
     desc.className = 'profile-description';
@@ -139,18 +149,26 @@ function ensureUserViewContainer() {
     profileSection.appendChild(desc);
 
     const linksSection = document.createElement('section');
-    linksSection.className = 'links';
+    linksSection.className = 'links user-links';
     const linksHeader = document.createElement('h3');
     linksHeader.innerText = '링크';
     const linksUl = document.createElement('ul');
     linksUl.id = 'links-list';
+    linksUl.className = 'link-stack';
     linksSection.appendChild(linksHeader);
     linksSection.appendChild(linksUl);
 
-    main.innerHTML = '';
-    main.appendChild(header);
-    main.appendChild(profileSection);
-    main.appendChild(linksSection);
+    const footer = document.createElement('footer');
+    footer.className = 'user-footer';
+    footer.innerHTML = '<p>&copy; 2025 인플루언서 페이지</p>';
+
+    card.appendChild(header);
+    card.appendChild(profileSection);
+    card.appendChild(linksSection);
+    card.appendChild(footer);
+
+    shell.appendChild(card);
+    host.appendChild(shell);
 
     userViewReady = true;
 }
@@ -238,7 +256,13 @@ const looksLikeSlugPage =
     !pathSegments[0].includes('.') &&
     !['admin', 'login', 'super-admin', 'super-admin.html', 'page-admin-login'].includes(pathSegments[0]);
 const isAdminHtml = pathSegments.length === 1 && pathSegments[0].startsWith('admin');
+const isUserHtml = window.location.pathname.endsWith('/user.html');
+const isPublicView = !pageRole && (isUserPage || looksLikeSlugPage || isUserHtml);
 const derivedPageId = pageIdFromPath || pageIdFromQuery || '';
+
+if (isPublicView) {
+    document.body.classList.add('user-view');
+}
 
 if (pageRole === 'page-admin' && derivedPageId) {
     updatePageContext(derivedPageId);
@@ -502,11 +526,14 @@ function updateAdminLink(index, field, value) {
 
         if (field === 'handle') {
             const handle = value;
+            const computedUrl = /^https?:\/\//i.test(handle)
+                ? handle
+                : buildPlatformUrl(preset, handle);
             adminLinks[index] = {
                 ...target,
                 handle,
                 platformId: preset.id,
-                url: buildPlatformUrl(preset, handle),
+                url: computedUrl,
             };
             renderAdminLinks();
             return;
@@ -614,6 +641,7 @@ function renderUserLinks(links) {
     const linksList = document.getElementById('links-list');
     if (!linksList || !Array.isArray(links)) return;
 
+    linksList.classList.add('link-stack');
     linksList.innerHTML = '';
     links.forEach(link => {
         const li = document.createElement('li');
@@ -650,6 +678,9 @@ function renderAdminLinks() {
 
         attachDragHandlers(li, index, 'admin-links');
 
+        const header = document.createElement('div');
+        header.className = 'link-row-header';
+
         const reorder = document.createElement('div');
         reorder.className = 'reorder-buttons';
         const upBtn = document.createElement('button');
@@ -663,86 +694,98 @@ function renderAdminLinks() {
         reorder.appendChild(upBtn);
         reorder.appendChild(downBtn);
 
+        const platformInfo = inferPlatformFromLink(link);
+
+        const meta = document.createElement('div');
+        meta.className = 'link-row-meta';
+
+        const iconEl = platformInfo?.preset
+            ? createLinkIcon(platformInfo.preset)
+            : createCustomIcon(link.iconUrl, link.name || '아이콘') || (() => {
+                const fallback = document.createElement('span');
+                fallback.className = 'link-icon platform-icon-fallback';
+                fallback.innerText = '🔗';
+                return fallback;
+            })();
+
+        if (iconEl) meta.appendChild(iconEl);
+
+        const metaLabel = document.createElement('span');
+        metaLabel.innerText = platformInfo?.preset?.label || link.name || '링크';
+        meta.appendChild(metaLabel);
+
+        header.appendChild(reorder);
+        header.appendChild(meta);
+
+        const fields = document.createElement('div');
+        fields.className = 'link-row-fields';
+
         const nameInput = document.createElement('input');
         nameInput.placeholder = '링크 이름';
         nameInput.value = link.name || '';
         nameInput.oninput = (e) => updateAdminLink(index, 'name', e.target.value);
-
-        const platformInfo = inferPlatformFromLink(link);
+        fields.appendChild(nameInput);
 
         if (platformInfo) {
-            const prefixLabel = document.createElement('div');
-            prefixLabel.className = 'platform-label';
-            const iconEl = createLinkIcon(platformInfo.preset) || document.createElement('span');
-            iconEl.classList.add('platform-icon');
-            const labelEl = document.createElement('span');
-            labelEl.innerText = platformInfo.preset.label;
-            prefixLabel.appendChild(iconEl);
-            prefixLabel.appendChild(labelEl);
-
             const handleInput = document.createElement('input');
-            handleInput.placeholder = platformInfo.preset.placeholder || '고유 아이디';
-            const currentHandle = link.handle || platformInfo.handle || '';
+            handleInput.placeholder = platformInfo.preset.placeholder || '링크 URL 또는 아이디';
+            const currentHandle = link.handle || platformInfo.handle || link.url || '';
             handleInput.value = currentHandle;
             handleInput.oninput = (e) => updateAdminLink(index, 'handle', e.target.value);
-
-            const previewLink = document.createElement('a');
-            previewLink.href = link.url || '#';
-            previewLink.target = '_blank';
-            previewLink.innerText = '미리보기';
-
-            const removeBtn = document.createElement('button');
-            removeBtn.innerText = '삭제';
-            removeBtn.onclick = () => removeLink(index);
 
             adminLinks[index] = {
                 ...link,
                 platformId: platformInfo.preset.id,
                 handle: currentHandle,
-                url: buildPlatformUrl(platformInfo.preset, currentHandle),
+                url: /^https?:\/\//i.test(currentHandle)
+                    ? currentHandle
+                    : buildPlatformUrl(platformInfo.preset, currentHandle),
             };
 
-            li.appendChild(reorder);
-            li.appendChild(prefixLabel);
-            li.appendChild(nameInput);
-            li.appendChild(handleInput);
-            li.appendChild(previewLink);
-            li.appendChild(removeBtn);
-            adminList.appendChild(li);
-            return;
+            fields.appendChild(handleInput);
+        } else {
+            const urlInput = document.createElement('input');
+            urlInput.placeholder = '링크 URL';
+            urlInput.value = link.url || '';
+            urlInput.oninput = (e) => updateAdminLink(index, 'url', e.target.value);
+
+            const iconInput = document.createElement('input');
+            iconInput.placeholder = '아이콘 URL (선택)';
+            iconInput.value = link.iconUrl || '';
+            iconInput.oninput = (e) => updateAdminLink(index, 'iconUrl', e.target.value);
+
+            fields.appendChild(urlInput);
+            fields.appendChild(iconInput);
         }
 
-        const urlInput = document.createElement('input');
-        urlInput.placeholder = '링크 URL';
-        urlInput.value = link.url || '';
-        urlInput.oninput = (e) => updateAdminLink(index, 'url', e.target.value);
-
-        const iconInput = document.createElement('input');
-        iconInput.placeholder = '아이콘 URL (선택)';
-        iconInput.value = link.iconUrl || '';
-        iconInput.oninput = (e) => updateAdminLink(index, 'iconUrl', e.target.value);
-
-        const iconPreview = createCustomIcon(link.iconUrl, link.name || '아이콘');
-        if (iconPreview) {
-            iconPreview.classList.add('custom-icon-preview');
-        }
+        const actions = document.createElement('div');
+        actions.className = 'link-row-actions';
 
         const previewLink = document.createElement('a');
         previewLink.href = link.url || '#';
         previewLink.target = '_blank';
+        previewLink.rel = 'noopener';
         previewLink.innerText = '미리보기';
 
+        const saveBtn = document.createElement('button');
+        saveBtn.type = 'button';
+        saveBtn.className = 'pill-button secondary';
+        saveBtn.innerText = '저장';
+        saveBtn.onclick = () => savePage();
+
         const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'pill-button danger';
         removeBtn.innerText = '삭제';
         removeBtn.onclick = () => removeLink(index);
 
-        li.appendChild(reorder);
-        li.appendChild(nameInput);
-        li.appendChild(urlInput);
-        li.appendChild(iconInput);
-        if (iconPreview) li.appendChild(iconPreview);
-        li.appendChild(previewLink);
-        li.appendChild(removeBtn);
+        actions.appendChild(previewLink);
+        actions.appendChild(saveBtn);
+        actions.appendChild(removeBtn);
+
+        li.appendChild(header);
+        li.appendChild(fields);
+        li.appendChild(actions);
         adminList.appendChild(li);
     });
 }

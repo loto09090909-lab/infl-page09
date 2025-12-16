@@ -7,26 +7,30 @@
     <title>{{PAGE_NAME}}의 프로필</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
-<body>
-    <header>
-        <h1>{{PAGE_NAME}}의 프로필</h1>
-    </header>
+<body class="user-view">
+    <main class="user-shell">
+        <section class="user-card">
+            <header class="user-header">
+                <h1>{{PAGE_NAME}}의 프로필</h1>
+            </header>
 
-    <section class="profile">
-        <img src="{{PAGE_PHOTO_URL}}" alt="{{PAGE_NAME}}" class="profile-photo">
-        <p>{{PAGE_DESCRIPTION}}</p>
-    </section>
+            <div class="profile user-profile">
+                <img src="{{PAGE_PHOTO_URL}}" alt="{{PAGE_NAME}}" class="profile-photo user-avatar">
+                <p class="profile-description">{{PAGE_DESCRIPTION}}</p>
+            </div>
 
-    <section class="links">
-        <h3>링크</h3>
-        <ul id="links-list">
-            <!-- Links will be dynamically inserted here -->
-        </ul>
-    </section>
+            <section class="links user-links">
+                <h3>링크</h3>
+                <ul id="links-list" class="link-stack">
+                    <!-- Links will be dynamically inserted here -->
+                </ul>
+            </section>
 
-    <footer>
-        <p>&copy; 2025 인플루언서 페이지</p>
-    </footer>
+            <footer class="user-footer">
+                <p>&copy; 2025 인플루언서 페이지</p>
+            </footer>
+        </section>
+    </main>
 
     <script src="js/platforms.js"></script>
     <script src="js/script.js"></script>
