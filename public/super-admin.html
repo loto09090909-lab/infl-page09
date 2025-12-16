@@ -58,11 +58,25 @@
         </div>
         <div class="form-row">
             <label>링크 관리</label>
-            <ul id="sa-link-list" class="link-list"></ul>
-            <div class="inline-inputs">
-                <input id="saLinkName" placeholder="새 링크 이름">
-                <input id="saLinkUrl" placeholder="새 링크 URL">
-                <button onclick="addSuperAdminLink()">링크 추가</button>
+            <div class="platform-link-box">
+                <p class="help-text">아이콘을 눌러 플랫폼을 선택한 뒤, 고유 아이디와 표시 이름을 입력하세요.</p>
+                <div id="platform-selector" class="platform-selector"></div>
+                <div class="platform-inputs">
+                    <div class="platform-prefix" id="platform-prefix">https://www.youtube.com/</div>
+                    <input id="saPlatformHandle" placeholder="고유 아이디" />
+                    <input id="saPlatformName" placeholder="링크 이름" />
+                    <button onclick="addPlatformLink()">플랫폼 링크 추가</button>
+                </div>
+            </div>
+            <ul id="sa-platform-list" class="link-list"></ul>
+            <div class="custom-link-box">
+                <p class="help-text">기타 플랫폼은 기존처럼 전체 URL을 입력하세요.</p>
+                <ul id="sa-link-list" class="link-list"></ul>
+                <div class="inline-inputs">
+                    <input id="saLinkName" placeholder="새 링크 이름">
+                    <input id="saLinkUrl" placeholder="새 링크 URL">
+                    <button onclick="addSuperAdminLink()">링크 추가</button>
+                </div>
             </div>
         </div>
         <div class="form-actions">
@@ -82,6 +96,7 @@
         <p>&copy; 2025 인플루언서 페이지 관리 시스템</p>
     </footer>
 
+    <script src="js/platforms.js"></script>
     <script src="js/suscript.js"></script>
 </body>
 </html>

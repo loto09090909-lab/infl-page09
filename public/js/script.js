@@ -56,6 +56,47 @@ async function apiFetch(
     if (lastError instanceof Response) return lastError;
     throw lastError;
 }
+
+const platformHelpers = window.PlatformHelpers || {};
+const PLATFORM_PRESETS = platformHelpers.PLATFORM_PRESETS || [];
+const getPlatformPreset = platformHelpers.getPlatformPreset || ((platformId) => PLATFORM_PRESETS.find((preset) => preset.id === platformId));
+const inferPlatformFromLink = platformHelpers.inferPlatformFromLink || function (link) {
+    for (const preset of PLATFORM_PRESETS) {
+        if (link.platformId === preset.id) {
+            return { preset, handle: link.handle || link.url?.replace(preset.baseUrl, '') || '' };
+        }
+
+        if (typeof link.url === 'string' && link.url.startsWith(preset.baseUrl)) {
+            return { preset, handle: link.url.slice(preset.baseUrl.length) };
+        }
+    }
+
+    return null;
+};
+
+function createLinkIcon(preset) {
+    if (!preset) return null;
+
+    if (!preset.iconPath) {
+        const fallback = document.createElement('span');
+        fallback.className = 'link-icon platform-icon-fallback';
+        fallback.innerText = preset.emoji || '🔗';
+        return fallback;
+    }
+
+    const icon = document.createElement('img');
+    icon.className = 'link-icon';
+    icon.src = preset.iconPath;
+    icon.alt = preset.label || '';
+    icon.onerror = () => {
+        const fallback = document.createElement('span');
+        fallback.className = 'link-icon platform-icon-fallback';
+        fallback.innerText = preset.emoji || '🔗';
+        icon.replaceWith(fallback);
+    };
+
+    return icon;
+}
 const hasUserView = document.getElementById("links-list") !== null;
 let userViewReady = hasUserView;
 let adminLinks = [];
@@ -357,7 +398,22 @@ function renderUserLinks(links) {
     linksList.innerHTML = '';
     links.forEach(link => {
         const li = document.createElement('li');
-        li.innerHTML = `<a href="${link.url}" target="_blank">${link.name}</a>`;
+        const anchor = document.createElement('a');
+        anchor.href = link.url || '#';
+        anchor.target = '_blank';
+        anchor.rel = 'noopener';
+        anchor.className = 'link-with-icon';
+
+        const platformInfo = inferPlatformFromLink(link) || (link.platformId ? { preset: getPlatformPreset(link.platformId) } : null);
+        const iconEl = platformInfo?.preset ? createLinkIcon(platformInfo.preset) : null;
+
+        if (iconEl) anchor.appendChild(iconEl);
+
+        const label = document.createElement('span');
+        label.innerText = link.name || link.url;
+        anchor.appendChild(label);
+
+        li.appendChild(anchor);
         linksList.appendChild(li);
     });
 }

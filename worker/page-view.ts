@@ -1,3 +1,4 @@
+import { resolvePageId } from "./slug";
 import { errorResponse, jsonResponse } from "./utils";
 
 type PageMetaRow = {
@@ -59,12 +60,3 @@ function safeParseLinks(raw: string | null) {
   }
 }
 
-async function resolvePageId(env: any, incoming: string) {
-  const row = await env.DB.prepare(
-    "SELECT page_id FROM slug_map WHERE display_name = ? LIMIT 1"
-  )
-    .bind(incoming)
-    .first<{ page_id: string }>();
-
-  return row?.page_id ?? incoming;
-}
