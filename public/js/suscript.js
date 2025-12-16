@@ -20,6 +20,21 @@ function slugify(value) {
     return encodedFallback;
 }
 
+const PLATFORM_PRESETS = [
+    { id: 'youtube', label: '유튜브', baseUrl: 'https://www.youtube.com/', icon: '▶️', placeholder: 'channel/@handle 또는 watch?v=' },
+    { id: 'soop', label: '숲', baseUrl: 'https://www.sooplive.co.kr/station/', icon: '🌲', placeholder: '방송국 ID' },
+    { id: 'instagram', label: '인스타', baseUrl: 'https://www.instagram.com/', icon: '📸', placeholder: '@없이 계정 ID' },
+    { id: 'chzzk', label: '치지직', baseUrl: 'https://chzzk.naver.com/', icon: '🎮', placeholder: '채널 ID' },
+    { id: 'naver-cafe', label: '네이버 카페', baseUrl: 'https://cafe.naver.com/', icon: '☕', placeholder: '카페 경로' },
+    { id: 'naver-blog', label: '네이버 블로그', baseUrl: 'https://blog.naver.com/', icon: '📝', placeholder: '블로그 ID' },
+    { id: 'facebook', label: '페이스북', baseUrl: 'https://www.facebook.com/', icon: '📘', placeholder: '페이지/프로필 ID' },
+    { id: 'tiktok', label: '틱톡', baseUrl: 'https://www.tiktok.com/', icon: '🎵', placeholder: '@없이 사용자 ID' },
+    { id: 'twitch', label: '트위치', baseUrl: 'https://www.twitch.tv/', icon: '🟣', placeholder: '채널 ID' },
+    { id: 'threads', label: '스레드', baseUrl: 'https://www.threads.com/', icon: '🧵', placeholder: '@없이 사용자 ID' },
+    { id: 'x', label: 'X', baseUrl: 'https://x.com/', icon: '✖️', placeholder: '@없이 사용자 ID' },
+    { id: 'dcinside', label: '디시인사이드', baseUrl: 'https://gall.dcinside.com/', icon: '💬', placeholder: '갤러리 경로' },
+];
+
 function resolveApiBases() {
     const bases = [];
 
@@ -81,10 +96,54 @@ async function apiFetch(
 let editingPageId = null;
 let managedLinks = [];
 let aliasSlugs = [];
+let selectedPlatformId = PLATFORM_PRESETS[0]?.id || '';
 
 function setFormTitle(titleText) {
     const titleEl = document.getElementById('form-title');
     if (titleEl) titleEl.innerText = titleText;
+}
+
+function getPlatformPreset(platformId) {
+    return PLATFORM_PRESETS.find((preset) => preset.id === platformId);
+}
+
+function buildPlatformUrl(preset, handle) {
+    const cleanHandle = (handle || '').trim().replace(/^\/+/, '');
+    return cleanHandle ? `${preset.baseUrl}${cleanHandle}` : '';
+}
+
+function inferPlatformFromLink(link) {
+    for (const preset of PLATFORM_PRESETS) {
+        if (link.platformId === preset.id) {
+            return { preset, handle: link.handle || link.url?.replace(preset.baseUrl, '') || '' };
+        }
+
+        if (typeof link.url === 'string' && link.url.startsWith(preset.baseUrl)) {
+            return { preset, handle: link.url.slice(preset.baseUrl.length) };
+        }
+    }
+
+    return null;
+}
+
+function setPlatformSelection(platformId) {
+    selectedPlatformId = platformId;
+    renderPlatformSelector();
+    updatePlatformPrefix();
+}
+
+function updatePlatformPrefix() {
+    const preset = getPlatformPreset(selectedPlatformId) || PLATFORM_PRESETS[0];
+    const prefixEl = document.getElementById('platform-prefix');
+    const handleInput = document.getElementById('saPlatformHandle');
+
+    if (prefixEl) {
+        prefixEl.innerText = preset?.baseUrl || '';
+    }
+
+    if (handleInput) {
+        handleInput.placeholder = preset?.placeholder || '고유 아이디';
+    }
 }
 
 function resetForm() {
@@ -97,6 +156,11 @@ function resetForm() {
     document.getElementById('pagePhoto').value = '';
     document.getElementById('adminPassword').value = '';
     document.getElementById('plan').value = 'free';
+    selectedPlatformId = PLATFORM_PRESETS[0]?.id || '';
+    document.getElementById('saPlatformHandle').value = '';
+    document.getElementById('saPlatformName').value = '';
+    updatePlatformPrefix();
+    renderPlatformSelector();
     renderSuperAdminLinks();
     aliasSlugs = [];
     renderAliasSlugs();
@@ -277,6 +341,11 @@ async function editPage(pageId) {
   document.getElementById('pagePhoto').value = page.profile?.photoUrl || '';
   document.getElementById('adminPassword').value = '';
   document.getElementById('plan').value = page.plan || 'free';
+  selectedPlatformId = PLATFORM_PRESETS[0]?.id || '';
+  document.getElementById('saPlatformHandle').value = '';
+  document.getElementById('saPlatformName').value = '';
+  renderPlatformSelector();
+  updatePlatformPrefix();
   managedLinks = Array.isArray(page.links) ? [...page.links] : [];
   renderSuperAdminLinks();
 
@@ -300,6 +369,8 @@ document.addEventListener('DOMContentLoaded', () => {
         window.location.href = '/login.html';
         return;
     }
+    renderPlatformSelector();
+    updatePlatformPrefix();
     setupSlugInputs();
     resetForm();
     loadPageList();
@@ -324,8 +395,54 @@ function addSuperAdminLink() {
     if (urlInput) urlInput.value = '';
 }
 
+function addPlatformLink() {
+    const handleInput = document.getElementById('saPlatformHandle');
+    const nameInput = document.getElementById('saPlatformName');
+    const preset = getPlatformPreset(selectedPlatformId) || PLATFORM_PRESETS[0];
+
+    const handle = handleInput?.value?.trim();
+    const name = nameInput?.value?.trim();
+
+    if (!preset) {
+        alert('플랫폼을 선택할 수 없습니다.');
+        return;
+    }
+
+    if (!handle || !name) {
+        alert('플랫폼 링크의 고유 아이디와 이름을 모두 입력하세요.');
+        return;
+    }
+
+    const url = buildPlatformUrl(preset, handle);
+
+    managedLinks.push({ name, url, platformId: preset.id, handle });
+    renderSuperAdminLinks();
+
+    if (handleInput) handleInput.value = '';
+    if (nameInput) nameInput.value = '';
+}
+
 function updateSuperAdminLink(index, field, value) {
-    managedLinks[index] = { ...managedLinks[index], [field]: value };
+    const target = managedLinks[index];
+    if (!target) return;
+
+    const platformInfo = inferPlatformFromLink(target);
+
+    if (platformInfo) {
+        const { preset } = platformInfo;
+        if (field === 'handle') {
+            const handle = value;
+            managedLinks[index] = {
+                ...target,
+                handle,
+                platformId: preset.id,
+                url: buildPlatformUrl(preset, handle),
+            };
+            return;
+        }
+    }
+
+    managedLinks[index] = { ...target, [field]: value };
 }
 
 function removeSuperAdminLink(index) {
@@ -334,12 +451,16 @@ function removeSuperAdminLink(index) {
 }
 
 function renderSuperAdminLinks() {
-  const list = document.getElementById('sa-link-list');
-  if (!list) return;
-
-    list.innerHTML = '';
+  const platformList = document.getElementById('sa-platform-list');
+  const customList = document.getElementById('sa-link-list');
+  if (platformList) platformList.innerHTML = '';
+  if (customList) customList.innerHTML = '';
 
     managedLinks.forEach((link, index) => {
+        const platformInfo = inferPlatformFromLink(link);
+        const targetList = platformInfo ? platformList : customList;
+        if (!targetList) return;
+
         const li = document.createElement('li');
         li.className = 'link-row';
 
@@ -347,6 +468,37 @@ function renderSuperAdminLinks() {
         nameInput.placeholder = '링크 이름';
         nameInput.value = link.name || '';
         nameInput.oninput = (e) => updateSuperAdminLink(index, 'name', e.target.value);
+
+        if (platformInfo) {
+            const handleInput = document.createElement('input');
+            handleInput.placeholder = platformInfo.preset.placeholder || '고유 아이디';
+            const currentHandle = link.handle || platformInfo.handle || '';
+            handleInput.value = currentHandle;
+            handleInput.oninput = (e) => updateSuperAdminLink(index, 'handle', e.target.value);
+
+            const prefixLabel = document.createElement('div');
+            prefixLabel.className = 'platform-label';
+            prefixLabel.innerText = `${platformInfo.preset.icon || ''} ${platformInfo.preset.label}`.trim();
+
+            const removeBtn = document.createElement('button');
+            removeBtn.innerText = '삭제';
+            removeBtn.onclick = () => removeSuperAdminLink(index);
+
+            li.appendChild(prefixLabel);
+            li.appendChild(nameInput);
+            li.appendChild(handleInput);
+            li.appendChild(removeBtn);
+
+            managedLinks[index] = {
+                ...link,
+                platformId: platformInfo.preset.id,
+                handle: currentHandle,
+                url: buildPlatformUrl(platformInfo.preset, currentHandle),
+            };
+
+            targetList.appendChild(li);
+            return;
+        }
 
         const urlInput = document.createElement('input');
         urlInput.placeholder = '링크 URL';
@@ -361,8 +513,26 @@ function renderSuperAdminLinks() {
         li.appendChild(urlInput);
         li.appendChild(removeBtn);
 
-    list.appendChild(li);
+    targetList.appendChild(li);
   });
+}
+
+function renderPlatformSelector() {
+    const selector = document.getElementById('platform-selector');
+    if (!selector) return;
+
+    selector.innerHTML = '';
+
+    PLATFORM_PRESETS.forEach((preset) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `platform-button${preset.id === selectedPlatformId ? ' active' : ''}`;
+        button.title = preset.label;
+        button.innerText = preset.icon || preset.label;
+        button.onclick = () => setPlatformSelection(preset.id);
+
+        selector.appendChild(button);
+    });
 }
 
 function addAliasSlug() {
