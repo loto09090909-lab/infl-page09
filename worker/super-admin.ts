@@ -105,10 +105,56 @@ export async function createPage(
   return jsonResponse({ success: true, message: "Page created" }, 201, headers);
 }
 
-export async function listPages(env: any, headers: HeadersInit): Promise<Response> {
-  const dbRows = await env.DB.prepare(
-    "SELECT page_id, name, photo_url, description, links FROM page_meta"
-  ).all<{ page_id: string; name: string | null; photo_url: string | null; description: string | null; links: string | null }>();
+export async function listPages(
+  req: Request,
+  env: any,
+  headers: HeadersInit
+): Promise<Response> {
+  const url = new URL(req.url);
+  const page = Math.max(1, Number(url.searchParams.get("page")) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number(url.searchParams.get("pageSize")) || 30));
+  const search = (url.searchParams.get("search") || "").trim();
+
+  const hasSearch = !!search;
+  const likeSearch = `%${search}%`;
+
+  const baseQuery =
+    "FROM page_meta pm " +
+    (hasSearch ? "LEFT JOIN slug_map sm ON pm.page_id = sm.page_id " : "") +
+    (hasSearch
+      ? "WHERE pm.page_id LIKE ? OR pm.name LIKE ? OR sm.display_name LIKE ?"
+      : "");
+
+  const countParams = hasSearch ? [likeSearch, likeSearch, likeSearch] : [];
+  let countStmt = env.DB.prepare(
+    `SELECT COUNT(DISTINCT pm.page_id) AS total ${baseQuery}`
+  );
+  if (countParams.length) {
+    countStmt = countStmt.bind(...countParams);
+  }
+  const countRow = await countStmt.first<{ total: number }>();
+
+  const total = Number(countRow?.total || 0);
+  const offset = (page - 1) * pageSize;
+
+  const dataParams = hasSearch
+    ? [likeSearch, likeSearch, likeSearch, pageSize, offset]
+    : [pageSize, offset];
+
+  let dataStmt = env.DB.prepare(
+    `SELECT DISTINCT pm.page_id, pm.name, pm.photo_url, pm.description, pm.links ${baseQuery} ORDER BY pm.page_id LIMIT ? OFFSET ?`
+  );
+  if (dataParams.length) {
+    dataStmt = dataStmt.bind(...dataParams);
+  }
+
+  const dbRows = await dataStmt.all<{
+    page_id: string;
+    name: string | null;
+    photo_url: string | null;
+    description: string | null;
+    links: string | null;
+  }>();
 
   const mapped = await Promise.all(
     (dbRows?.results ?? []).map(async (row) => {
@@ -136,7 +182,65 @@ export async function listPages(env: any, headers: HeadersInit): Promise<Respons
     })
   );
 
-  return jsonResponse(mapped, 200, headers);
+  return jsonResponse(
+    {
+      items: mapped,
+      total,
+      page,
+      pageSize,
+    },
+    200,
+    headers
+  );
+}
+
+export async function getAdminPage(
+  env: any,
+  pageId: string,
+  headers: HeadersInit
+): Promise<Response> {
+  const canonicalPageId = await resolvePageId(env, pageId);
+  const row = await env.DB.prepare(
+    "SELECT page_id, name, photo_url, description, links FROM page_meta WHERE page_id = ? LIMIT 1"
+  )
+    .bind(canonicalPageId)
+    .first<{
+      page_id: string;
+      name: string | null;
+      photo_url: string | null;
+      description: string | null;
+      links: string | null;
+    }>();
+
+  if (!row) {
+    return errorResponse("Page not found", 404, headers);
+  }
+
+  const kvValue = await env.PAGE_KV.get(`page:${row.page_id}`);
+  let plan: string | null = null;
+  if (kvValue) {
+    try {
+      plan = JSON.parse(kvValue).plan ?? null;
+    } catch (error) {
+      plan = null;
+    }
+  }
+
+  return jsonResponse(
+    {
+      pageId: row.page_id,
+      profile: {
+        name: row.name,
+        photoUrl: row.photo_url,
+        description: row.description,
+      },
+      links: safeParseLinks(row.links),
+      plan,
+      slugs: await getSlugsForPage(env, row.page_id),
+    },
+    200,
+    headers
+  );
 }
 
 export async function deletePage(

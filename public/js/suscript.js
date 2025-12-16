@@ -127,6 +127,18 @@ let editingPageId = null;
 let managedLinks = [];
 let aliasSlugs = [];
 let selectedPlatformId = PLATFORM_PRESETS[0]?.id || '';
+let pageListState = { page: 1, pageSize: 30, total: 0, search: '' };
+
+function createCustomLinkIcon(url, alt = '') {
+    if (!url) return null;
+
+    const iconEl = document.createElement('img');
+    iconEl.src = url;
+    iconEl.alt = alt;
+    iconEl.className = 'custom-icon-preview';
+    iconEl.onerror = () => iconEl.remove();
+    return iconEl;
+}
 
 function setFormTitle(titleText) {
     const titleEl = document.getElementById('form-title');
@@ -166,6 +178,8 @@ function resetForm() {
     selectedPlatformId = PLATFORM_PRESETS[0]?.id || '';
     document.getElementById('saPlatformHandle').value = '';
     document.getElementById('saPlatformName').value = '';
+    const customIconInput = document.getElementById('saLinkIcon');
+    if (customIconInput) customIconInput.value = '';
     updatePlatformPrefix();
     renderPlatformSelector();
     renderSuperAdminLinks();
@@ -258,15 +272,24 @@ async function submitPage() {
     }
 }
 
-// 페이지 목록 불러오기
-async function loadPageList() {
+// 페이지 목록 불러오기 (검색/페이지네이션 지원)
+async function loadPageList(page = pageListState.page) {
     const token = sessionStorage.getItem('super_admin_token');
     if (!token) {
         console.warn('슈퍼 관리자 토큰이 없습니다. 로그인 후 목록을 확인하세요.');
         return;
     }
 
-    const res = await apiFetch('/api/admin/pages', {
+    const params = new URLSearchParams({
+        page: String(page),
+        pageSize: String(pageListState.pageSize),
+    });
+
+    if (pageListState.search.trim()) {
+        params.set('search', pageListState.search.trim());
+    }
+
+    const res = await apiFetch(`/api/admin/pages?${params.toString()}`, {
         headers: { 'Authorization': `Bearer ${token}` }
     });
 
@@ -276,9 +299,23 @@ async function loadPageList() {
         return;
     }
 
-    const pages = await res.json();
+    const payload = await res.json();
+    const pages = Array.isArray(payload.items) ? payload.items : [];
+    pageListState = {
+        ...pageListState,
+        page: payload.page || page,
+        pageSize: payload.pageSize || pageListState.pageSize,
+        total: payload.total || 0,
+    };
 
+    renderPageList(pages);
+    renderPagination();
+}
+
+function renderPageList(pages) {
   const pageList = document.getElementById('pages');
+  if (!pageList) return;
+
   pageList.innerHTML = pages.map(page => {
     const slugList = Array.isArray(page.slugs) && page.slugs.length ? page.slugs : [page.pageId];
     const primarySlug = slugList[0];
@@ -297,6 +334,29 @@ async function loadPageList() {
         </li>
     `;
   }).join('');
+}
+
+function renderPagination() {
+  const pageInfo = document.getElementById('page-info');
+  const prevBtn = document.getElementById('prev-page');
+  const nextBtn = document.getElementById('next-page');
+
+  const totalPages = Math.max(1, Math.ceil((pageListState.total || 0) / pageListState.pageSize));
+  const currentPage = Math.min(pageListState.page, totalPages);
+
+  if (pageInfo) {
+    pageInfo.innerText = `${currentPage} / ${totalPages} 페이지 (총 ${pageListState.total}개)`;
+  }
+
+  if (prevBtn) {
+    prevBtn.disabled = currentPage <= 1;
+    prevBtn.onclick = () => loadPageList(currentPage - 1);
+  }
+
+  if (nextBtn) {
+    nextBtn.disabled = currentPage >= totalPages;
+    nextBtn.onclick = () => loadPageList(currentPage + 1);
+  }
 }
 
 // 페이지 삭제
@@ -329,11 +389,17 @@ async function editPage(pageId) {
         return;
     }
 
-  const res = await apiFetch('/api/admin/pages', {
+  const res = await apiFetch(`/api/admin/pages/${encodeURIComponent(pageId)}`, {
     headers: { 'Authorization': `Bearer ${token}` }
   });
-  const pages = await res.json();
-  const page = pages.find(p => p.pageId === pageId);
+
+  if (!res.ok) {
+    const errText = await res.text();
+    alert(`페이지 정보를 불러오지 못했습니다: ${errText || res.status}`);
+    return;
+  }
+
+  const page = await res.json();
 
     if (!page) {
         alert('해당 페이지 정보를 찾지 못했습니다.');
@@ -381,25 +447,36 @@ document.addEventListener('DOMContentLoaded', () => {
     setupSlugInputs();
     resetForm();
     loadPageList();
+
+    const searchInput = document.getElementById('page-search');
+    if (searchInput) {
+        searchInput.addEventListener('input', (e) => {
+            pageListState = { ...pageListState, search: e.target.value || '', page: 1 };
+            loadPageList(1);
+        });
+    }
 });
 
 function addSuperAdminLink() {
     const nameInput = document.getElementById('saLinkName');
     const urlInput = document.getElementById('saLinkUrl');
+    const iconInput = document.getElementById('saLinkIcon');
 
     const name = nameInput?.value?.trim();
     const url = urlInput?.value?.trim();
+    const iconUrl = iconInput?.value?.trim();
 
     if (!name || !url) {
         alert('링크 이름과 URL을 모두 입력하세요.');
         return;
     }
 
-    managedLinks.push({ name, url });
+    managedLinks.push({ name, url, iconUrl });
     renderSuperAdminLinks();
 
     if (nameInput) nameInput.value = '';
     if (urlInput) urlInput.value = '';
+    if (iconInput) iconInput.value = '';
 }
 
 function addPlatformLink() {
@@ -457,19 +534,38 @@ function removeSuperAdminLink(index) {
     renderSuperAdminLinks();
 }
 
+function moveSuperAdminLink(index, direction) {
+  const target = index + direction;
+  if (target < 0 || target >= managedLinks.length) return;
+
+  const [item] = managedLinks.splice(index, 1);
+  managedLinks.splice(target, 0, item);
+  renderSuperAdminLinks();
+}
+
 function renderSuperAdminLinks() {
-  const platformList = document.getElementById('sa-platform-list');
-  const customList = document.getElementById('sa-link-list');
-  if (platformList) platformList.innerHTML = '';
-  if (customList) customList.innerHTML = '';
+  const list = document.getElementById('sa-link-list');
+  if (!list) return;
+
+  list.innerHTML = '';
 
     managedLinks.forEach((link, index) => {
         const platformInfo = inferPlatformFromLink(link);
-        const targetList = platformInfo ? platformList : customList;
-        if (!targetList) return;
-
         const li = document.createElement('li');
         li.className = 'link-row';
+
+        const reorder = document.createElement('div');
+        reorder.className = 'reorder-buttons';
+        const upBtn = document.createElement('button');
+        upBtn.type = 'button';
+        upBtn.innerText = '▲';
+        upBtn.onclick = () => moveSuperAdminLink(index, -1);
+        const downBtn = document.createElement('button');
+        downBtn.type = 'button';
+        downBtn.innerText = '▼';
+        downBtn.onclick = () => moveSuperAdminLink(index, 1);
+        reorder.appendChild(upBtn);
+        reorder.appendChild(downBtn);
 
         const nameInput = document.createElement('input');
         nameInput.placeholder = '링크 이름';
@@ -495,6 +591,7 @@ function renderSuperAdminLinks() {
             removeBtn.innerText = '삭제';
             removeBtn.onclick = () => removeSuperAdminLink(index);
 
+            li.appendChild(reorder);
             li.appendChild(prefixLabel);
             li.appendChild(nameInput);
             li.appendChild(handleInput);
@@ -507,7 +604,7 @@ function renderSuperAdminLinks() {
                 url: buildPlatformUrl(platformInfo.preset, currentHandle),
             };
 
-            targetList.appendChild(li);
+            list.appendChild(li);
             return;
         }
 
@@ -516,15 +613,25 @@ function renderSuperAdminLinks() {
         urlInput.value = link.url || '';
         urlInput.oninput = (e) => updateSuperAdminLink(index, 'url', e.target.value);
 
+        const iconInput = document.createElement('input');
+        iconInput.placeholder = '아이콘 URL (선택)';
+        iconInput.value = link.iconUrl || '';
+        iconInput.oninput = (e) => updateSuperAdminLink(index, 'iconUrl', e.target.value);
+
+        const iconPreview = createCustomLinkIcon(link.iconUrl, link.name || '아이콘');
+
         const removeBtn = document.createElement('button');
         removeBtn.innerText = '삭제';
         removeBtn.onclick = () => removeSuperAdminLink(index);
 
+        li.appendChild(reorder);
         li.appendChild(nameInput);
         li.appendChild(urlInput);
+        li.appendChild(iconInput);
+        if (iconPreview) li.appendChild(iconPreview);
         li.appendChild(removeBtn);
 
-    targetList.appendChild(li);
+    list.appendChild(li);
   });
 }
 

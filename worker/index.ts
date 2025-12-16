@@ -3,6 +3,7 @@ import { pageAdminLogin, savePage } from "./page-admin";
 import {
   createPage,
   deletePage,
+  getAdminPage,
   listPages,
   superAdminLogin,
   updatePage,
@@ -51,13 +52,17 @@ export default {
 
     if (path === "/api/admin/pages" && method === "GET") {
       if (!isAdmin) return errorResponse("인증이 필요합니다", 401, corsHeaders);
-      return listPages(env, corsHeaders);
+      return listPages(req, env, corsHeaders);
     }
 
     const adminPageMatch = path.match(/^\/api\/admin\/pages\/(.+)$/);
     if (adminPageMatch) {
       const pageId = adminPageMatch[1];
       if (!isAdmin) return errorResponse("인증이 필요합니다", 401, corsHeaders);
+
+      if (method === "GET") {
+        return getAdminPage(env, decodeURIComponent(pageId), corsHeaders);
+      }
 
       if (method === "DELETE") {
         return deletePage(env, pageId, corsHeaders);

@@ -154,3 +154,62 @@ button:hover {
     height: 18px;
     object-fit: contain;
 }
+
+.link-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0;
+    justify-content: center;
+}
+
+.reorder-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.reorder-buttons button {
+    padding: 4px 6px;
+    font-size: 12px;
+    background-color: #eee;
+    color: #333;
+}
+
+.inline-inputs input,
+.link-row input {
+    min-width: 140px;
+}
+
+.link-list-title {
+    margin-top: 10px;
+    margin-bottom: 4px;
+    color: #333;
+}
+
+.custom-icon-preview {
+    width: 24px;
+    height: 24px;
+    object-fit: contain;
+    border-radius: 4px;
+}
+
+.page-list-controls {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 8px;
+}
+
+.pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.pagination button[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+}

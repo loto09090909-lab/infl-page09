@@ -68,16 +68,17 @@
                     <button onclick="addPlatformLink()">플랫폼 링크 추가</button>
                 </div>
             </div>
-            <ul id="sa-platform-list" class="link-list"></ul>
             <div class="custom-link-box">
-                <p class="help-text">기타 플랫폼은 기존처럼 전체 URL을 입력하세요.</p>
-                <ul id="sa-link-list" class="link-list"></ul>
+                <p class="help-text">기타 플랫폼은 전체 URL과 필요하다면 아이콘 이미지를 입력하세요.</p>
                 <div class="inline-inputs">
                     <input id="saLinkName" placeholder="새 링크 이름">
                     <input id="saLinkUrl" placeholder="새 링크 URL">
+                    <input id="saLinkIcon" placeholder="아이콘 URL (선택)">
                     <button onclick="addSuperAdminLink()">링크 추가</button>
                 </div>
             </div>
+            <h4 class="link-list-title">추가된 링크 (순서 변경 가능)</h4>
+            <ul id="sa-link-list" class="link-list"></ul>
         </div>
         <div class="form-actions">
             <button id="submit-btn" onclick="submitPage()">페이지 생성</button>
@@ -87,9 +88,17 @@
 
     <section class="page-list">
         <h2>페이지 목록</h2>
+        <div class="page-list-controls">
+            <input id="page-search" type="search" placeholder="페이지 이름, 슬러그 검색" />
+        </div>
         <ul id="pages">
             <!-- 동적으로 페이지 목록을 표시 -->
         </ul>
+        <div class="pagination">
+            <button id="prev-page" type="button">이전</button>
+            <span id="page-info"></span>
+            <button id="next-page" type="button">다음</button>
+        </div>
     </section>
 
     <footer>

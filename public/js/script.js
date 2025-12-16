@@ -101,6 +101,17 @@ const hasUserView = document.getElementById("links-list") !== null;
 let userViewReady = hasUserView;
 let adminLinks = [];
 
+function createCustomIcon(url, alt = "") {
+    if (!url) return null;
+
+    const icon = document.createElement('img');
+    icon.className = 'link-icon';
+    icon.src = url;
+    icon.alt = alt;
+    icon.onerror = () => icon.remove();
+    return icon;
+}
+
 function ensureUserViewContainer() {
     if (userViewReady) return;
 
@@ -288,20 +299,23 @@ async function savePage() {
 function addLink() {
     const nameInput = document.getElementById('newLinkName');
     const urlInput = document.getElementById('newLinkUrl');
+    const iconInput = document.getElementById('newLinkIcon');
 
     const name = nameInput?.value?.trim();
     const url = urlInput?.value?.trim();
+    const iconUrl = iconInput?.value?.trim();
 
     if (!name || !url) {
         alert('링크 이름과 URL을 모두 입력하세요.');
         return;
     }
 
-    adminLinks.push({ name, url });
+    adminLinks.push({ name, url, iconUrl });
     renderAdminLinks();
 
     if (nameInput) nameInput.value = '';
     if (urlInput) urlInput.value = '';
+    if (iconInput) iconInput.value = '';
 }
 
 // 관리자 페이지: 링크 수정/삭제
@@ -311,6 +325,15 @@ function updateLinkField(index, field, value) {
 
 function removeLink(index) {
     adminLinks.splice(index, 1);
+    renderAdminLinks();
+}
+
+function moveLink(index, direction) {
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= adminLinks.length) return;
+
+    const [item] = adminLinks.splice(index, 1);
+    adminLinks.splice(targetIndex, 0, item);
     renderAdminLinks();
 }
 
@@ -405,7 +428,9 @@ function renderUserLinks(links) {
         anchor.className = 'link-with-icon';
 
         const platformInfo = inferPlatformFromLink(link) || (link.platformId ? { preset: getPlatformPreset(link.platformId) } : null);
-        const iconEl = platformInfo?.preset ? createLinkIcon(platformInfo.preset) : null;
+        const iconEl = platformInfo?.preset
+            ? createLinkIcon(platformInfo.preset)
+            : createCustomIcon(link.iconUrl, link.name || link.url);
 
         if (iconEl) anchor.appendChild(iconEl);
 
@@ -427,6 +452,19 @@ function renderAdminLinks() {
         const li = document.createElement('li');
         li.className = 'link-row';
 
+        const reorder = document.createElement('div');
+        reorder.className = 'reorder-buttons';
+        const upBtn = document.createElement('button');
+        upBtn.type = 'button';
+        upBtn.innerText = '▲';
+        upBtn.onclick = () => moveLink(index, -1);
+        const downBtn = document.createElement('button');
+        downBtn.type = 'button';
+        downBtn.innerText = '▼';
+        downBtn.onclick = () => moveLink(index, 1);
+        reorder.appendChild(upBtn);
+        reorder.appendChild(downBtn);
+
         const nameInput = document.createElement('input');
         nameInput.placeholder = '링크 이름';
         nameInput.value = link.name || '';
@@ -437,6 +475,16 @@ function renderAdminLinks() {
         urlInput.value = link.url || '';
         urlInput.oninput = (e) => updateLinkField(index, 'url', e.target.value);
 
+        const iconInput = document.createElement('input');
+        iconInput.placeholder = '아이콘 URL (선택)';
+        iconInput.value = link.iconUrl || '';
+        iconInput.oninput = (e) => updateLinkField(index, 'iconUrl', e.target.value);
+
+        const iconPreview = createCustomIcon(link.iconUrl, link.name || '아이콘');
+        if (iconPreview) {
+            iconPreview.classList.add('custom-icon-preview');
+        }
+
         const previewLink = document.createElement('a');
         previewLink.href = link.url || '#';
         previewLink.target = '_blank';
@@ -446,8 +494,11 @@ function renderAdminLinks() {
         removeBtn.innerText = '삭제';
         removeBtn.onclick = () => removeLink(index);
 
+        li.appendChild(reorder);
         li.appendChild(nameInput);
         li.appendChild(urlInput);
+        li.appendChild(iconInput);
+        if (iconPreview) li.appendChild(iconPreview);
         li.appendChild(previewLink);
         li.appendChild(removeBtn);
         adminList.appendChild(li);
