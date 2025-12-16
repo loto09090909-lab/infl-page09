@@ -1,5 +1,5 @@
 import { createSessionToken } from "./auth";
-import { slugify } from "./slug";
+import { resolvePageId, slugify } from "./slug";
 import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
 
 type CreatePageBody = {
@@ -144,24 +144,26 @@ export async function deletePage(
   pageId: string,
   headers: HeadersInit
 ): Promise<Response> {
-  const exists = await env.PAGE_KV.get(`page:${pageId}`);
+  const canonicalPageId = await resolvePageId(env, pageId);
+
+  const exists = await env.PAGE_KV.get(`page:${canonicalPageId}`);
   if (!exists) {
     return errorResponse("Page not found", 404, headers);
   }
 
-  await env.PAGE_KV.delete(`page:${pageId}`);
-  await env.PAGE_KV.delete(`page_auth:${pageId}`);
+  await env.PAGE_KV.delete(`page:${canonicalPageId}`);
+  await env.PAGE_KV.delete(`page_auth:${canonicalPageId}`);
 
   await env.DB.prepare("DELETE FROM page_auth WHERE page_id = ?")
-    .bind(pageId)
+    .bind(canonicalPageId)
     .run();
 
   await env.DB.prepare("DELETE FROM page_meta WHERE page_id = ?")
-    .bind(pageId)
+    .bind(canonicalPageId)
     .run();
 
   await env.DB.prepare("DELETE FROM slug_map WHERE page_id = ?")
-    .bind(pageId)
+    .bind(canonicalPageId)
     .run();
 
   return jsonResponse({ success: true, message: "Page deleted" }, 200, headers);
@@ -173,7 +175,9 @@ export async function updatePage(
   pageId: string,
   headers: HeadersInit
 ): Promise<Response> {
-  const existingPage = await env.PAGE_KV.get(`page:${pageId}`);
+  const canonicalPageId = await resolvePageId(env, pageId);
+
+  const existingPage = await env.PAGE_KV.get(`page:${canonicalPageId}`);
   if (!existingPage) {
     return errorResponse("Page not found", 404, headers);
   }
@@ -185,8 +189,8 @@ export async function updatePage(
 
   let slugs: string[] | null = null;
   if (body.slugs !== undefined) {
-    slugs = normalizeSlugs(body.slugs, pageId);
-    const conflict = await findConflictingSlug(env, slugs, pageId);
+    slugs = normalizeSlugs(body.slugs, canonicalPageId);
+    const conflict = await findConflictingSlug(env, slugs, canonicalPageId);
     if (conflict) {
       return errorResponse(
         `이미 다른 페이지에 사용 중인 슬러그입니다: ${conflict}`,
@@ -195,9 +199,9 @@ export async function updatePage(
       );
     }
   } else {
-    const hasExistingSlugMap = await hasSlugMap(env, pageId);
+    const hasExistingSlugMap = await hasSlugMap(env, canonicalPageId);
     if (!hasExistingSlugMap) {
-      slugs = await getSlugsForPage(env, pageId);
+      slugs = await getSlugsForPage(env, canonicalPageId);
     }
   }
 
@@ -206,14 +210,14 @@ export async function updatePage(
     links: Array.isArray((body as any).links) ? (body as any).links : [],
     plan: body.plan ?? null,
   };
-  await env.PAGE_KV.put(`page:${pageId}`, JSON.stringify(updatedPage));
+  await env.PAGE_KV.put(`page:${canonicalPageId}`, JSON.stringify(updatedPage));
 
   if (body.adminPassword) {
-    await env.PAGE_KV.put(`page_auth:${pageId}`, body.adminPassword);
+    await env.PAGE_KV.put(`page_auth:${canonicalPageId}`, body.adminPassword);
     await env.DB.prepare(
       "INSERT OR REPLACE INTO page_auth (page_id, password_hash) VALUES (?, ?)"
     )
-      .bind(pageId, body.adminPassword)
+      .bind(canonicalPageId, body.adminPassword)
       .run();
   }
 
@@ -221,16 +225,16 @@ export async function updatePage(
     "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
   )
     .bind(
-      pageId,
+      canonicalPageId,
       (updatedPage.profile as any)?.name ?? null,
       (updatedPage.profile as any)?.photoUrl ?? null,
       (updatedPage.profile as any)?.description ?? null,
       JSON.stringify((body as any).links ?? [])
-    )
+  )
     .run();
 
   if (slugs) {
-    await replaceSlugMap(env, pageId, slugs);
+    await replaceSlugMap(env, canonicalPageId, slugs);
   }
 
   return jsonResponse({ success: true, message: "Page updated" }, 200, headers);

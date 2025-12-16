@@ -1,5 +1,5 @@
 import { createSessionToken, getBearerToken, verifySessionToken } from "./auth";
-import { slugify } from "./slug";
+import { resolvePageId, slugify } from "./slug";
 import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
 
 type LoginBody = {
@@ -93,35 +93,3 @@ export async function savePage(
   return jsonResponse({ success: true, message: "Page saved" }, 200, headers);
 }
 
-async function resolvePageId(env: any, incoming: string) {
-  const decodedIncoming = safeDecodeURIComponent(incoming);
-  const slugified = slugify(decodedIncoming);
-
-  if (slugified) {
-    const slugRow = await env.DB.prepare(
-      "SELECT page_id FROM slug_map WHERE display_name = ? LIMIT 1"
-    )
-      .bind(slugified)
-      .first<{ page_id: string }>();
-
-    if (slugRow?.page_id) {
-      return slugRow.page_id;
-    }
-  }
-
-  const row = await env.DB.prepare(
-    "SELECT page_id FROM slug_map WHERE display_name = ? LIMIT 1"
-  )
-    .bind(decodedIncoming)
-    .first<{ page_id: string }>();
-
-  return row?.page_id ?? decodedIncoming;
-}
-
-function safeDecodeURIComponent(value: string) {
-  try {
-    return decodeURIComponent(value);
-  } catch (error) {
-    return value;
-  }
-}
