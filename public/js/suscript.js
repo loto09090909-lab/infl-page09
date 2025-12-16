@@ -91,18 +91,18 @@ function resetForm() {
     editingPageId = null;
     managedLinks = [];
     document.getElementById('pageName').value = '';
-  document.getElementById('pageSlug').value = '';
-  document.getElementById('pageSlug').removeAttribute('disabled');
-  document.getElementById('pageDescription').value = '';
-  document.getElementById('pagePhoto').value = '';
-  document.getElementById('adminPassword').value = '';
-  document.getElementById('plan').value = 'free';
-  renderSuperAdminLinks();
-  aliasSlugs = [];
-  renderAliasSlugs();
-  setFormTitle('페이지 생성');
-  const submitBtn = document.getElementById('submit-btn');
-  if (submitBtn) submitBtn.innerText = '페이지 생성';
+    document.getElementById('pageSlug').value = '';
+    document.getElementById('pageSlug').removeAttribute('disabled');
+    document.getElementById('pageDescription').value = '';
+    document.getElementById('pagePhoto').value = '';
+    document.getElementById('adminPassword').value = '';
+    document.getElementById('plan').value = 'free';
+    renderSuperAdminLinks();
+    aliasSlugs = [];
+    renderAliasSlugs();
+    setFormTitle('페이지 생성');
+    const submitBtn = document.getElementById('submit-btn');
+    if (submitBtn) submitBtn.innerText = '페이지 생성';
     const cancelBtn = document.getElementById('cancel-edit-btn');
     if (cancelBtn) cancelBtn.style.display = 'none';
 }
@@ -110,13 +110,14 @@ function resetForm() {
 // 페이지 생성/수정 함수
 async function submitPage() {
     const name = document.getElementById('pageName').value.trim();
-    const slug = slugify(document.getElementById('pageSlug').value.trim());
+    const rawSlug = document.getElementById('pageSlug').value.trim();
+    const normalizedSlug = slugify(rawSlug);
     const description = document.getElementById('pageDescription').value.trim();
     const photoUrl = document.getElementById('pagePhoto').value.trim();
     const adminPassword = document.getElementById('adminPassword').value;
     const plan = document.getElementById('plan').value || 'free';
 
-    if (!editingPageId && (!slug || !adminPassword)) {
+    if (!editingPageId && ((!rawSlug && !normalizedSlug) || !adminPassword)) {
         alert('슬러그와 관리자 비밀번호는 필수 입력입니다.');
         return;
     }
@@ -126,10 +127,19 @@ async function submitPage() {
     return;
   }
 
-  const slugs = [slug, ...aliasSlugs.map((value) => value?.trim?.())].filter(Boolean);
+  const slugs = [
+    rawSlug,
+    normalizedSlug,
+    ...aliasSlugs.flatMap((value) => {
+      const trimmed = value?.trim?.() || "";
+      if (!trimmed) return [];
+      const slugified = slugify(trimmed);
+      return [trimmed, slugified].filter(Boolean);
+    }),
+  ].filter(Boolean);
 
     const data = {
-        pageId: slug,
+        pageId: rawSlug || normalizedSlug,
         profile: {
             name: name,
             description: description,
@@ -141,7 +151,7 @@ async function submitPage() {
     slugs
   };
 
-    const targetPageId = editingPageId || slug;
+    const targetPageId = editingPageId || rawSlug || normalizedSlug;
     if (!targetPageId) {
         alert('페이지 식별자를 입력하세요.');
         return;
@@ -273,7 +283,7 @@ async function editPage(pageId) {
   const slugList = Array.isArray(page.slugs) ? page.slugs : [page.pageId];
   aliasSlugs = slugList
     .filter((slug) => slug !== page.pageId)
-    .map((value) => slugify(String(value)))
+    .map((value) => (typeof value === 'string' ? value.trim() : ''))
     .filter(Boolean);
   renderAliasSlugs();
   setFormTitle(`페이지 수정: ${page.pageId}`);
@@ -364,15 +374,11 @@ function addAliasSlug() {
     return;
   }
 
-  const mainSlug = slugify(document.getElementById('pageSlug')?.value?.trim() || '');
-  const slugValue = slugify(value);
+  const mainSlug = document.getElementById('pageSlug')?.value?.trim() || '';
+  const normalizedMainSlug = slugify(mainSlug);
+  const slugValue = value;
 
-  if (!slugValue) {
-    alert('유효한 슬러그를 입력하세요.');
-    return;
-  }
-
-  if (mainSlug && slugValue === mainSlug) {
+  if (normalizedMainSlug && slugify(slugValue) === normalizedMainSlug) {
     alert('기본 슬러그와 동일한 값은 별칭으로 추가할 수 없습니다.');
     return;
   }
@@ -407,9 +413,7 @@ function renderAliasSlugs() {
     slugInput.placeholder = '추가 슬러그';
     slugInput.value = slug;
     slugInput.oninput = (e) => {
-      const slugValue = slugify(e.target.value);
-      aliasSlugs[index] = slugValue;
-      e.target.value = slugValue;
+      aliasSlugs[index] = e.target.value;
     };
 
     const removeBtn = document.createElement('button');
@@ -424,20 +428,5 @@ function renderAliasSlugs() {
 
 function setupSlugInputs() {
   const mainSlugInput = document.getElementById('pageSlug');
-  if (mainSlugInput) {
-    mainSlugInput.addEventListener('input', (event) => {
-      const target = event.target;
-      const slugValue = slugify(target.value || '');
-      target.value = slugValue;
-    });
-  }
-
-  const aliasSlugInput = document.getElementById('saSlugInput');
-  if (aliasSlugInput) {
-    aliasSlugInput.addEventListener('input', (event) => {
-      const target = event.target;
-      const slugValue = slugify(target.value || '');
-      target.value = slugValue;
-    });
-  }
+  if (!mainSlugInput) return;
 }

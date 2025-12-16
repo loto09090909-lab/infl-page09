@@ -248,10 +248,23 @@ function safeParseLinks(raw: string | null) {
 
 function normalizeSlugs(raw: unknown, pageId: string) {
   const incoming = Array.isArray(raw) ? raw : [];
-  const normalized = incoming
-    .filter((value): value is string => typeof value === "string" && !!value.trim())
-    .map((value) => slugify(value.trim()))
-    .filter(Boolean);
+  const normalized: string[] = [];
+
+  for (const value of incoming) {
+    if (typeof value !== "string") continue;
+
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+
+    const slugified = slugify(trimmed);
+    if (slugified) {
+      normalized.push(slugified);
+    }
+
+    if (!normalized.includes(trimmed)) {
+      normalized.push(trimmed);
+    }
+  }
 
   const baseSlug = slugify(pageId) || pageId.trim();
 
