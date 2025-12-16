@@ -166,6 +166,7 @@ async function loadPageData(pageId) {
     const data = await res.json();
 
     if (data && data.profile) {
+        updatePageContext(pageId, data.profile);
         document.title = data.profile.name;
 
         const titleEl = document.querySelector('h1');
@@ -195,6 +196,29 @@ async function loadPageData(pageId) {
     }
 }
 
+function updatePageContext(pageId, profile = {}) {
+    const badge = document.getElementById('current-page-id');
+    if (badge) {
+        badge.innerText = pageId || '-';
+    }
+
+    const publicLink = document.getElementById('public-link');
+    if (publicLink) {
+        if (pageId) {
+            publicLink.href = `/${encodeURIComponent(pageId)}`;
+            publicLink.style.visibility = 'visible';
+        } else {
+            publicLink.href = '#';
+            publicLink.style.visibility = 'hidden';
+        }
+    }
+
+    const adminPageTitle = document.querySelector('.page-hero h1');
+    if (adminPageTitle && profile?.name) {
+        adminPageTitle.innerText = `${profile.name} 페이지 관리`;
+    }
+}
+
 // URL에서 pageId (슬러그) 추출
 const pathSegments = window.location.pathname.split('/').filter(Boolean);
 const searchParams = new URLSearchParams(window.location.search);
@@ -209,6 +233,10 @@ const looksLikeSlugPage =
     !['admin', 'login', 'super-admin', 'super-admin.html', 'page-admin-login'].includes(pathSegments[0]);
 const isAdminHtml = pathSegments.length === 1 && pathSegments[0].startsWith('admin');
 const derivedPageId = pageIdFromPath || pageIdFromQuery || '';
+
+if (pageRole === 'page-admin' && derivedPageId) {
+    updatePageContext(derivedPageId);
+}
 
 if (looksLikeSlugPage && !userViewReady && !pageRole) {
     ensureUserViewContainer();

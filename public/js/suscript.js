@@ -316,6 +316,11 @@ function renderPageList(pages) {
   const pageList = document.getElementById('pages');
   if (!pageList) return;
 
+  if (!pages.length) {
+    pageList.innerHTML = '<li>검색 결과가 없습니다. 새로운 페이지를 생성하거나 검색어를 바꿔보세요.</li>';
+    return;
+  }
+
   pageList.innerHTML = pages.map(page => {
     const slugList = Array.isArray(page.slugs) && page.slugs.length ? page.slugs : [page.pageId];
     const primarySlug = slugList[0];
