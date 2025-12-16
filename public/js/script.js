@@ -60,6 +60,10 @@ async function apiFetch(
 const platformHelpers = window.PlatformHelpers || {};
 const PLATFORM_PRESETS = platformHelpers.PLATFORM_PRESETS || [];
 const getPlatformPreset = platformHelpers.getPlatformPreset || ((platformId) => PLATFORM_PRESETS.find((preset) => preset.id === platformId));
+const buildPlatformUrl = platformHelpers.buildPlatformUrl || function (preset, handle) {
+    const cleanHandle = (handle || '').trim().replace(/^\/+/, '');
+    return preset && cleanHandle ? `${preset.baseUrl}${cleanHandle}` : '';
+};
 const inferPlatformFromLink = platformHelpers.inferPlatformFromLink || function (link) {
     for (const preset of PLATFORM_PRESETS) {
         if (link.platformId === preset.id) {
@@ -100,6 +104,8 @@ function createLinkIcon(preset) {
 const hasUserView = document.getElementById("links-list") !== null;
 let userViewReady = hasUserView;
 let adminLinks = [];
+let selectedPlatformId = PLATFORM_PRESETS[0]?.id || '';
+let dragState = null;
 
 function createCustomIcon(url, alt = "") {
     if (!url) return null;
@@ -277,6 +283,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (pageAdminIdInput && (pageIdFromPath || pageIdFromQuery)) {
         pageAdminIdInput.value = pageIdFromPath || pageIdFromQuery;
     }
+
+    if (document.body?.dataset?.pageRole === 'page-admin') {
+        renderPlatformSelector();
+        updatePlatformPrefix();
+    }
 });
 
 // 관리자 페이지: 페이지 저장
@@ -323,11 +334,106 @@ async function savePage() {
     }
 }
 
+function reorderList(list, from, to) {
+    if (from === to || from < 0 || to < 0 || from >= list.length || to >= list.length) return;
+
+    const [item] = list.splice(from, 1);
+    list.splice(to, 0, item);
+}
+
+function attachDragHandlers(li, index, listType) {
+    li.draggable = true;
+    li.dataset.index = String(index);
+
+    li.addEventListener('dragstart', (e) => {
+        dragState = { listType, from: index };
+        li.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+    });
+
+    li.addEventListener('dragend', () => {
+        li.classList.remove('dragging');
+        li.classList.remove('drag-over');
+        dragState = null;
+    });
+
+    li.addEventListener('dragover', (e) => {
+        if (!dragState || dragState.listType !== listType) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+    });
+
+    li.addEventListener('dragenter', () => {
+        if (dragState && dragState.listType === listType && dragState.from !== index) {
+            li.classList.add('drag-over');
+        }
+    });
+
+    li.addEventListener('dragleave', () => {
+        li.classList.remove('drag-over');
+    });
+
+    li.addEventListener('drop', (e) => {
+        if (!dragState || dragState.listType !== listType) return;
+        e.preventDefault();
+        const targetIndex = index;
+        if (dragState.from !== targetIndex) {
+            if (listType === 'admin-links') {
+                moveLink(dragState.from, targetIndex - dragState.from);
+            }
+        }
+        li.classList.remove('drag-over');
+    });
+}
+
+function setPlatformSelection(platformId) {
+    selectedPlatformId = platformId;
+    renderPlatformSelector();
+    updatePlatformPrefix();
+}
+
+function updatePlatformPrefix() {
+    const prefixEl = document.getElementById('platform-prefix');
+    const handleInput = document.getElementById('platformHandle');
+    const preset = getPlatformPreset(selectedPlatformId) || PLATFORM_PRESETS[0];
+
+    if (prefixEl) {
+        prefixEl.innerText = preset?.baseUrl || '';
+    }
+
+    if (handleInput) {
+        handleInput.placeholder = preset?.placeholder || '채널/프로필 ID';
+    }
+}
+
+function renderPlatformSelector() {
+    const selector = document.getElementById('platform-selector');
+    if (!selector) return;
+
+    selector.innerHTML = '';
+
+    PLATFORM_PRESETS.forEach((preset) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `platform-button${preset.id === selectedPlatformId ? ' active' : ''}`;
+        button.title = preset.label;
+        const iconEl = createLinkIcon(preset) || document.createElement('span');
+        iconEl.classList.add('platform-icon');
+        const labelEl = document.createElement('span');
+        labelEl.className = 'platform-button-label';
+        labelEl.innerText = preset.label;
+        button.appendChild(iconEl);
+        button.appendChild(labelEl);
+        button.onclick = () => setPlatformSelection(preset.id);
+        selector.appendChild(button);
+    });
+}
+
 // 관리자 페이지: 링크 추가
-function addLink() {
-    const nameInput = document.getElementById('newLinkName');
-    const urlInput = document.getElementById('newLinkUrl');
-    const iconInput = document.getElementById('newLinkIcon');
+function addCustomLink() {
+    const nameInput = document.getElementById('customLinkName');
+    const urlInput = document.getElementById('customLinkUrl');
+    const iconInput = document.getElementById('customLinkIcon');
 
     const name = nameInput?.value?.trim();
     const url = urlInput?.value?.trim();
@@ -346,9 +452,67 @@ function addLink() {
     if (iconInput) iconInput.value = '';
 }
 
+function addPlatformLink() {
+    const handleInput = document.getElementById('platformHandle');
+    const nameInput = document.getElementById('platformLinkName');
+    const preset = getPlatformPreset(selectedPlatformId) || PLATFORM_PRESETS[0];
+
+    const handle = handleInput?.value?.trim();
+    const name = nameInput?.value?.trim();
+
+    if (!preset) {
+        alert('플랫폼을 선택할 수 없습니다.');
+        return;
+    }
+
+    if (!handle || !name) {
+        alert('플랫폼 링크의 고유 아이디와 이름을 모두 입력하세요.');
+        return;
+    }
+
+    const url = buildPlatformUrl(preset, handle);
+
+    adminLinks.push({ name, url, platformId: preset.id, handle });
+    renderAdminLinks();
+
+    if (handleInput) handleInput.value = '';
+    if (nameInput) nameInput.value = '';
+}
+
+function addLink() {
+    return addCustomLink();
+}
+
 // 관리자 페이지: 링크 수정/삭제
-function updateLinkField(index, field, value) {
-    adminLinks[index] = { ...adminLinks[index], [field]: value };
+function updateAdminLink(index, field, value) {
+    const target = adminLinks[index];
+    if (!target) return;
+
+    const platformInfo = inferPlatformFromLink(target);
+
+    if (platformInfo) {
+        const { preset } = platformInfo;
+
+        if (field === 'handle') {
+            const handle = value;
+            adminLinks[index] = {
+                ...target,
+                handle,
+                platformId: preset.id,
+                url: buildPlatformUrl(preset, handle),
+            };
+            renderAdminLinks();
+            return;
+        }
+
+        if (field === 'url') {
+            adminLinks[index] = { ...target, url: value, platformId: undefined, handle: undefined };
+            renderAdminLinks();
+            return;
+        }
+    }
+
+    adminLinks[index] = { ...target, [field]: value };
 }
 
 function removeLink(index) {
@@ -357,11 +521,8 @@ function removeLink(index) {
 }
 
 function moveLink(index, direction) {
-    const targetIndex = index + direction;
-    if (targetIndex < 0 || targetIndex >= adminLinks.length) return;
-
-    const [item] = adminLinks.splice(index, 1);
-    adminLinks.splice(targetIndex, 0, item);
+    const targetIndex = typeof direction === 'number' ? index + direction : direction;
+    reorderList(adminLinks, index, targetIndex);
     renderAdminLinks();
 }
 
@@ -480,6 +641,8 @@ function renderAdminLinks() {
         const li = document.createElement('li');
         li.className = 'link-row';
 
+        attachDragHandlers(li, index, 'admin-links');
+
         const reorder = document.createElement('div');
         reorder.className = 'reorder-buttons';
         const upBtn = document.createElement('button');
@@ -496,17 +659,61 @@ function renderAdminLinks() {
         const nameInput = document.createElement('input');
         nameInput.placeholder = '링크 이름';
         nameInput.value = link.name || '';
-        nameInput.oninput = (e) => updateLinkField(index, 'name', e.target.value);
+        nameInput.oninput = (e) => updateAdminLink(index, 'name', e.target.value);
+
+        const platformInfo = inferPlatformFromLink(link);
+
+        if (platformInfo) {
+            const prefixLabel = document.createElement('div');
+            prefixLabel.className = 'platform-label';
+            const iconEl = createLinkIcon(platformInfo.preset) || document.createElement('span');
+            iconEl.classList.add('platform-icon');
+            const labelEl = document.createElement('span');
+            labelEl.innerText = platformInfo.preset.label;
+            prefixLabel.appendChild(iconEl);
+            prefixLabel.appendChild(labelEl);
+
+            const handleInput = document.createElement('input');
+            handleInput.placeholder = platformInfo.preset.placeholder || '고유 아이디';
+            const currentHandle = link.handle || platformInfo.handle || '';
+            handleInput.value = currentHandle;
+            handleInput.oninput = (e) => updateAdminLink(index, 'handle', e.target.value);
+
+            const previewLink = document.createElement('a');
+            previewLink.href = link.url || '#';
+            previewLink.target = '_blank';
+            previewLink.innerText = '미리보기';
+
+            const removeBtn = document.createElement('button');
+            removeBtn.innerText = '삭제';
+            removeBtn.onclick = () => removeLink(index);
+
+            adminLinks[index] = {
+                ...link,
+                platformId: platformInfo.preset.id,
+                handle: currentHandle,
+                url: buildPlatformUrl(platformInfo.preset, currentHandle),
+            };
+
+            li.appendChild(reorder);
+            li.appendChild(prefixLabel);
+            li.appendChild(nameInput);
+            li.appendChild(handleInput);
+            li.appendChild(previewLink);
+            li.appendChild(removeBtn);
+            adminList.appendChild(li);
+            return;
+        }
 
         const urlInput = document.createElement('input');
         urlInput.placeholder = '링크 URL';
         urlInput.value = link.url || '';
-        urlInput.oninput = (e) => updateLinkField(index, 'url', e.target.value);
+        urlInput.oninput = (e) => updateAdminLink(index, 'url', e.target.value);
 
         const iconInput = document.createElement('input');
         iconInput.placeholder = '아이콘 URL (선택)';
         iconInput.value = link.iconUrl || '';
-        iconInput.oninput = (e) => updateLinkField(index, 'iconUrl', e.target.value);
+        iconInput.oninput = (e) => updateAdminLink(index, 'iconUrl', e.target.value);
 
         const iconPreview = createCustomIcon(link.iconUrl, link.name || '아이콘');
         if (iconPreview) {

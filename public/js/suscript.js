@@ -128,6 +128,7 @@ let managedLinks = [];
 let aliasSlugs = [];
 let selectedPlatformId = PLATFORM_PRESETS[0]?.id || '';
 let pageListState = { page: 1, pageSize: 30, total: 0, search: '' };
+let dragState = null;
 
 function createCustomLinkIcon(url, alt = '') {
     if (!url) return null;
@@ -325,10 +326,11 @@ function renderPageList(pages) {
     const slugList = Array.isArray(page.slugs) && page.slugs.length ? page.slugs : [page.pageId];
     const primarySlug = slugList[0];
     const slugLabel = slugList.join(', ');
+    const slugTitle = slugLabel ? `슬러그: ${slugLabel}` : '';
     return `
         <li>
             <div class="page-meta">
-                <strong>${page.profile?.name || page.pageId}</strong> (${slugLabel})
+                <strong title="${slugTitle}">${page.profile?.name || page.pageId}</strong>
                 <span class="plan-badge">플랜: ${page.plan || 'free'}</span>
             </div>
             <div class="page-actions">
@@ -462,6 +464,58 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
+function reorderList(list, from, to) {
+    if (from === to || from < 0 || to < 0 || from >= list.length || to >= list.length) return;
+
+    const [item] = list.splice(from, 1);
+    list.splice(to, 0, item);
+}
+
+function attachDragHandlers(li, index, listType) {
+    li.draggable = true;
+    li.dataset.index = String(index);
+
+    li.addEventListener('dragstart', (e) => {
+        dragState = { listType, from: index };
+        li.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+    });
+
+    li.addEventListener('dragend', () => {
+        li.classList.remove('dragging');
+        li.classList.remove('drag-over');
+        dragState = null;
+    });
+
+    li.addEventListener('dragover', (e) => {
+        if (!dragState || dragState.listType !== listType) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+    });
+
+    li.addEventListener('dragenter', () => {
+        if (dragState && dragState.listType === listType && dragState.from !== index) {
+            li.classList.add('drag-over');
+        }
+    });
+
+    li.addEventListener('dragleave', () => {
+        li.classList.remove('drag-over');
+    });
+
+    li.addEventListener('drop', (e) => {
+        if (!dragState || dragState.listType !== listType) return;
+        e.preventDefault();
+        const targetIndex = index;
+        if (dragState.from !== targetIndex) {
+            if (listType === 'super-admin-links') {
+                moveSuperAdminLink(dragState.from, targetIndex - dragState.from);
+            }
+        }
+        li.classList.remove('drag-over');
+    });
+}
+
 function addSuperAdminLink() {
     const nameInput = document.getElementById('saLinkName');
     const urlInput = document.getElementById('saLinkUrl');
@@ -540,11 +594,8 @@ function removeSuperAdminLink(index) {
 }
 
 function moveSuperAdminLink(index, direction) {
-  const target = index + direction;
-  if (target < 0 || target >= managedLinks.length) return;
-
-  const [item] = managedLinks.splice(index, 1);
-  managedLinks.splice(target, 0, item);
+  const target = typeof direction === 'number' ? index + direction : direction;
+  reorderList(managedLinks, index, target);
   renderSuperAdminLinks();
 }
 
@@ -558,6 +609,8 @@ function renderSuperAdminLinks() {
         const platformInfo = inferPlatformFromLink(link);
         const li = document.createElement('li');
         li.className = 'link-row';
+
+        attachDragHandlers(li, index, 'super-admin-links');
 
         const reorder = document.createElement('div');
         reorder.className = 'reorder-buttons';

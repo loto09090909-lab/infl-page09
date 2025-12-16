@@ -45,13 +45,28 @@
                 <div>
                     <p class="eyebrow">링크</p>
                     <h3>링크 관리</h3>
-                    <p class="help-text">▲▼ 버튼으로 순서를 조정하고, 필요하면 아이콘 URL을 넣어보세요. 입력한 순서대로 사용자 페이지에 노출됩니다.</p>
+                    <p class="help-text">플랫폼을 선택해 기본 주소를 불러오고, ▲▼ 버튼 또는 드래그로 순서를 조정하세요.</p>
                 </div>
+            </div>
+
+            <div class="platform-link-box">
+                <p class="help-text">자주 쓰는 채널은 플랫폼을 선택하고 고유 아이디만 입력하면 됩니다.</p>
+                <div id="platform-selector" class="platform-selector"></div>
+                <div class="platform-inputs">
+                    <div id="platform-prefix" class="platform-prefix"></div>
+                    <input id="platformHandle" placeholder="채널/프로필 ID">
+                    <input id="platformLinkName" placeholder="표시할 이름">
+                    <button onclick="addPlatformLink()">플랫폼 링크 추가</button>
+                </div>
+            </div>
+
+            <div class="custom-link-box">
+                <p class="help-text">기타 링크는 전체 URL을 입력하고 필요하면 아이콘 이미지를 넣어주세요.</p>
                 <div class="inline-inputs">
-                    <input id="newLinkName" placeholder="새 링크 이름">
-                    <input id="newLinkUrl" placeholder="새 링크 URL">
-                    <input id="newLinkIcon" placeholder="아이콘 이미지 URL (선택)">
-                    <button class="primary" onclick="addLink()">링크 추가</button>
+                    <input id="customLinkName" placeholder="새 링크 이름">
+                    <input id="customLinkUrl" placeholder="새 링크 URL">
+                    <input id="customLinkIcon" placeholder="아이콘 이미지 URL (선택)">
+                    <button class="primary" onclick="addCustomLink()">링크 추가</button>
                 </div>
             </div>
             <ul id="link-list" class="link-list">
