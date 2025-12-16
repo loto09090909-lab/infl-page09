@@ -24,6 +24,96 @@ type LoginBody = {
   password?: string;
 };
 
+type NormalizedCreatePage = {
+  pageId: string;
+  profile: Record<string, unknown>;
+  adminPassword: string;
+  plan: unknown;
+  links: unknown[];
+  slugs: string[];
+};
+
+type BulkCreateBody = {
+  pages?: CreatePageBody[];
+};
+
+class CreatePageError extends Error {
+  status: number;
+
+  constructor(message: string, status = 400) {
+    super(message);
+    this.status = status;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeCreatePageBody(
+  body: CreatePageBody | null
+): NormalizedCreatePage {
+  if (!body || typeof body.pageId !== "string" || !body.pageId.trim()) {
+    throw new CreatePageError("pageId와 adminPassword는 필수입니다", 400);
+  }
+
+  if (typeof body.adminPassword !== "string" || !body.adminPassword.trim()) {
+    throw new CreatePageError("pageId와 adminPassword는 필수입니다", 400);
+  }
+
+  const pageId = body.pageId.trim();
+  const profile = isRecord(body.profile) ? body.profile : {};
+  const links = Array.isArray((body as any).links) ? (body as any).links : [];
+
+  return {
+    pageId,
+    profile,
+    adminPassword: body.adminPassword,
+    plan: body.plan ?? null,
+    links,
+    slugs: normalizeSlugs(body.slugs, pageId),
+  };
+}
+
+async function persistCreatePage(env: any, data: NormalizedCreatePage) {
+  const conflictingSlug = await findConflictingSlug(env, data.slugs, data.pageId);
+  if (conflictingSlug) {
+    throw new CreatePageError(
+      `이미 다른 페이지에 사용 중인 슬러그입니다: ${conflictingSlug}`,
+      409
+    );
+  }
+
+  const pageData = {
+    profile: data.profile ?? {},
+    links: Array.isArray(data.links) ? data.links : [],
+    plan: data.plan ?? null,
+  };
+
+  await env.PAGE_KV.put(`page:${data.pageId}`, JSON.stringify(pageData));
+  await env.PAGE_KV.put(`page_auth:${data.pageId}`, data.adminPassword);
+
+  await env.DB.prepare(
+    "INSERT OR REPLACE INTO page_auth (page_id, password_hash) VALUES (?, ?)"
+  )
+    .bind(data.pageId, data.adminPassword)
+    .run();
+
+  await env.DB.prepare(
+    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
+  )
+    .bind(
+      data.pageId,
+      (data.profile as any)?.name ?? null,
+      (data.profile as any)?.photoUrl ?? null,
+      (data.profile as any)?.description ?? null,
+      JSON.stringify((data as any).links ?? [])
+    )
+    .run();
+
+  await replaceSlugMap(env, data.pageId, data.slugs);
+}
+
 export async function superAdminLogin(
   req: Request,
   env: any,
@@ -58,51 +148,75 @@ export async function createPage(
   env: any,
   headers: HeadersInit
 ): Promise<Response> {
-  const body = await parseJsonBody<CreatePageBody>(req);
-  if (!body || !body.pageId || !body.adminPassword) {
-    return errorResponse("pageId와 adminPassword는 필수입니다", 400, headers);
+  try {
+    const body = await parseJsonBody<CreatePageBody>(req);
+    const normalized = normalizeCreatePageBody(body);
+    await persistCreatePage(env, normalized);
+    return jsonResponse({ success: true, message: "Page created" }, 201, headers);
+  } catch (error) {
+    if (error instanceof CreatePageError) {
+      return errorResponse(error.message, error.status, headers);
+    }
+    throw error;
   }
+}
 
-  const slugs = normalizeSlugs(body.slugs, body.pageId);
-
-  const conflictingSlug = await findConflictingSlug(env, slugs, body.pageId);
-  if (conflictingSlug) {
+export async function bulkCreatePages(
+  req: Request,
+  env: any,
+  headers: HeadersInit
+): Promise<Response> {
+  const body = await parseJsonBody<BulkCreateBody>(req);
+  if (!body || !Array.isArray(body.pages) || !body.pages.length) {
     return errorResponse(
-      `이미 다른 페이지에 사용 중인 슬러그입니다: ${conflictingSlug}`,
-      409,
+      "업로드할 페이지 데이터가 없습니다. pages 배열을 확인하세요.",
+      400,
       headers
     );
   }
 
-  const pageData = {
-    profile: body.profile ?? {},
-    links: Array.isArray((body as any).links) ? (body as any).links : [],
-    plan: body.plan ?? null,
-  };
-  await env.PAGE_KV.put(`page:${body.pageId}`, JSON.stringify(pageData));
-  await env.PAGE_KV.put(`page_auth:${body.pageId}`, body.adminPassword);
+  const results: { pageId: string; success: boolean; message: string; status: number }[] = [];
 
-  await env.DB.prepare(
-    "INSERT OR REPLACE INTO page_auth (page_id, password_hash) VALUES (?, ?)"
-  )
-    .bind(body.pageId, body.adminPassword)
-    .run();
+  for (const raw of body.pages) {
+    let normalized: NormalizedCreatePage;
+    try {
+      normalized = normalizeCreatePageBody(raw as any);
+      await persistCreatePage(env, normalized);
+      results.push({
+        pageId: normalized.pageId,
+        success: true,
+        message: "created",
+        status: 201,
+      });
+    } catch (error) {
+      const status = error instanceof CreatePageError ? error.status : 500;
+      const message = error instanceof CreatePageError ? error.message : "알 수 없는 오류";
+      const pageId = (raw as any)?.pageId || "(미지정)";
+      results.push({
+        pageId: String(pageId),
+        success: false,
+        message,
+        status,
+      });
+    }
+  }
 
-  await env.DB.prepare(
-    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
-  )
-    .bind(
-      body.pageId,
-      (body.profile as any)?.name ?? null,
-      (body.profile as any)?.photoUrl ?? null,
-      (body.profile as any)?.description ?? null,
-      JSON.stringify((body as any).links ?? [])
-    )
-    .run();
+  const successCount = results.filter((item) => item.success).length;
+  const failedCount = results.length - successCount;
+  const status = failedCount && successCount ? 207 : failedCount ? 400 : 201;
 
-  await replaceSlugMap(env, body.pageId, slugs);
-
-  return jsonResponse({ success: true, message: "Page created" }, 201, headers);
+  return jsonResponse(
+    {
+      summary: {
+        total: results.length,
+        success: successCount,
+        failed: failedCount,
+      },
+      results,
+    },
+    status,
+    headers
+  );
 }
 
 export async function listPages(

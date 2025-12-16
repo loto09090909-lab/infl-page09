@@ -129,6 +129,8 @@ let aliasSlugs = [];
 let selectedPlatformId = PLATFORM_PRESETS[0]?.id || '';
 let pageListState = { page: 1, pageSize: 30, total: 0, search: '' };
 let dragState = null;
+let bulkUploadPages = [];
+let bulkPreviewMeta = { filename: '', totalRows: 0, skipped: 0 };
 
 function createCustomLinkIcon(url, alt = '') {
     if (!url) return null;
@@ -454,6 +456,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupSlugInputs();
     resetForm();
     loadPageList();
+    setupBulkUpload();
 
     const searchInput = document.getElementById('page-search');
     if (searchInput) {
@@ -463,6 +466,258 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 });
+
+function setupBulkUpload() {
+  const fileInput = document.getElementById('bulk-file-input');
+  if (fileInput) {
+    fileInput.addEventListener('change', handleBulkFileInput);
+  }
+
+  updateBulkUploadButtons();
+}
+
+function updateBulkUploadButtons() {
+  const uploadBtn = document.getElementById('bulk-upload-btn');
+  if (uploadBtn) {
+    uploadBtn.disabled = !bulkUploadPages.length;
+  }
+}
+
+async function handleBulkFileInput(event) {
+  const file = event.target?.files?.[0];
+  const previewEl = document.getElementById('bulk-preview');
+
+  if (!file) {
+    bulkUploadPages = [];
+    bulkPreviewMeta = { filename: '', totalRows: 0, skipped: 0 };
+    renderBulkPreview();
+    updateBulkUploadButtons();
+    return;
+  }
+
+  if (previewEl) {
+    previewEl.innerText = '파일을 읽는 중입니다...';
+  }
+
+  try {
+    const rows = await readBulkWorkbook(file);
+    const normalized = rows
+      .map((row, idx) => normalizeBulkRow(row, idx + 1))
+      .filter(Boolean);
+
+    bulkUploadPages = normalized;
+    bulkPreviewMeta = {
+      filename: file.name,
+      totalRows: rows.length,
+      skipped: rows.length - normalized.length,
+    };
+    renderBulkPreview();
+  } catch (error) {
+    bulkUploadPages = [];
+    bulkPreviewMeta = { filename: file.name, totalRows: 0, skipped: 0 };
+    if (previewEl) {
+      previewEl.innerText = `업로드 실패: ${error?.message || error}`;
+    }
+  }
+
+  updateBulkUploadButtons();
+}
+
+async function readBulkWorkbook(file) {
+  const buffer = await file.arrayBuffer();
+  if (typeof XLSX !== 'undefined' && typeof XLSX.read === 'function') {
+    const workbook = XLSX.read(buffer, { type: 'array' });
+    const firstSheetName = workbook.SheetNames?.[0];
+    if (!firstSheetName) return [];
+    const sheet = workbook.Sheets[firstSheetName];
+    const json = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    return Array.isArray(json) ? json : [];
+  }
+
+  const text = new TextDecoder().decode(buffer);
+  return parseCsvRows(text);
+}
+
+function parseCsvRows(text) {
+  const lines = text.split(/\r?\n/).filter((line) => line.trim());
+  if (!lines.length) return [];
+
+  const headers = lines[0].split(',').map((value) => value.trim());
+  const rows = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const parts = lines[i].split(',');
+    const row = {};
+    headers.forEach((header, idx) => {
+      row[header] = parts[idx] ?? '';
+    });
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+function normalizeBulkRow(row, rowNumber) {
+  if (!row || typeof row !== 'object') return null;
+
+  const pageId = selectCellValue(row, ['pageId', 'page_id', 'slug', '슬러그', '페이지ID']);
+  const adminPassword = selectCellValue(row, ['adminPassword', 'password', 'admin_password', '관리자비밀번호']);
+
+  if (!pageId || !adminPassword) {
+    console.warn(`행 ${rowNumber}: pageId 또는 관리자 비밀번호가 없어 건너뜁니다.`);
+    return null;
+  }
+
+  const name = selectCellValue(row, ['name', '제목', '페이지이름']);
+  const description = selectCellValue(row, ['description', '설명']);
+  const photoUrl = selectCellValue(row, ['photoUrl', 'photo_url', '사진', '사진URL']);
+  const plan = selectCellValue(row, ['plan', '요금제']);
+  const slugCell = row.slugs ?? row['슬러그들'] ?? row['slugs[]'];
+  const linksCell = row.links ?? row['링크'] ?? row['links[]'];
+
+  return {
+    pageId: String(pageId).trim(),
+    adminPassword: String(adminPassword).trim(),
+    profile: { name: name || '', description: description || '', photoUrl: photoUrl || '' },
+    plan: plan || null,
+    slugs: parseSlugCell(slugCell),
+    links: parseLinksCell(linksCell),
+  };
+}
+
+function selectCellValue(row, keys) {
+  for (const key of keys) {
+    if (row[key] !== undefined && row[key] !== null && String(row[key]).trim()) {
+      return row[key];
+    }
+  }
+  return '';
+}
+
+function parseSlugCell(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value.map((v) => (typeof v === 'string' ? v.trim() : '')).filter(Boolean);
+  }
+
+  if (typeof value === 'string') {
+    return value
+      .split(/[,\n]/)
+      .map((v) => v.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+}
+
+function parseLinksCell(value) {
+  if (!value) return [];
+
+  if (Array.isArray(value)) {
+    return value.filter((item) => item && item.name && item.url);
+  }
+
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) {
+        return parsed.filter((item) => item && item.name && item.url);
+      }
+    } catch (err) {
+      // fallback to manual parsing
+    }
+
+    return value
+      .split(/\n|;/)
+      .map((chunk) => chunk.trim())
+      .filter(Boolean)
+      .map((chunk) => {
+        const [name, url, iconUrl] = chunk.split('|').map((part) => part.trim());
+        if (!name || !url) return null;
+        return { name, url, iconUrl };
+      })
+      .filter(Boolean);
+  }
+
+  return [];
+}
+
+function renderBulkPreview() {
+  const previewEl = document.getElementById('bulk-preview');
+  if (!previewEl) return;
+
+  if (!bulkUploadPages.length) {
+    previewEl.innerText = '엑셀 파일을 선택하면 업로드 대상이 미리보기로 표시됩니다.';
+    return;
+  }
+
+  const { filename, totalRows, skipped } = bulkPreviewMeta;
+  const sample = bulkUploadPages.slice(0, 5);
+
+  let html = `<strong>${filename || '선택한 파일'}</strong>에서 ${totalRows}개 행을 읽었습니다. `;
+  html += `<span class="eyebrow">${bulkUploadPages.length}개 생성 준비</span>`;
+  if (skipped) {
+    html += ` · ${skipped}개 행은 필수 정보(pageId/비밀번호) 누락으로 건너뜀`;
+  }
+
+  html += '<table><thead><tr><th>#</th><th>pageId</th><th>링크 수</th><th>추가 슬러그</th><th>요금제</th></tr></thead><tbody>';
+  sample.forEach((page, idx) => {
+    html += `<tr><td>${idx + 1}</td><td>${page.pageId}</td><td>${page.links?.length || 0}</td><td>${page.slugs?.length || 0}</td><td>${page.plan || '-'} </td></tr>`;
+  });
+  html += '</tbody></table>';
+
+  if (bulkUploadPages.length > sample.length) {
+    html += `<p class="help-text">추가로 ${bulkUploadPages.length - sample.length}개 행이 더 있습니다.</p>`;
+  }
+
+  previewEl.innerHTML = html;
+}
+
+function resetBulkUpload() {
+  bulkUploadPages = [];
+  bulkPreviewMeta = { filename: '', totalRows: 0, skipped: 0 };
+  const fileInput = document.getElementById('bulk-file-input');
+  if (fileInput) {
+    fileInput.value = '';
+  }
+  renderBulkPreview();
+  updateBulkUploadButtons();
+}
+
+async function submitBulkUpload() {
+  if (!bulkUploadPages.length) {
+    alert('업로드할 데이터가 없습니다. 엑셀 파일을 먼저 선택하세요.');
+    return;
+  }
+
+  const token = sessionStorage.getItem('super_admin_token');
+  if (!token) {
+    alert('슈퍼 관리자 로그인이 필요합니다.');
+    return;
+  }
+
+  const res = await apiFetch('/api/admin/pages/import', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify({ pages: bulkUploadPages }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    alert(`업로드 실패: ${errText || res.status}`);
+    return;
+  }
+
+  const result = await res.json();
+  const summary = result?.summary;
+
+  alert(`업로드 완료: ${summary?.success || 0}개 성공, ${summary?.failed || 0}개 실패`);
+  resetBulkUpload();
+  loadPageList();
+}
 
 function reorderList(list, from, to) {
     if (from === to || from < 0 || to < 0 || from >= list.length || to >= list.length) return;
@@ -478,12 +733,15 @@ function attachDragHandlers(li, index, listType) {
     li.addEventListener('dragstart', (e) => {
         dragState = { listType, from: index };
         li.classList.add('dragging');
+        li.parentElement?.classList.add('drag-active');
         e.dataTransfer.effectAllowed = 'move';
     });
 
     li.addEventListener('dragend', () => {
         li.classList.remove('dragging');
         li.classList.remove('drag-over');
+        li.dataset.direction = '';
+        li.parentElement?.classList.remove('drag-active');
         dragState = null;
     });
 
@@ -495,12 +753,14 @@ function attachDragHandlers(li, index, listType) {
 
     li.addEventListener('dragenter', () => {
         if (dragState && dragState.listType === listType && dragState.from !== index) {
+            li.dataset.direction = dragState.from < index ? 'down' : 'up';
             li.classList.add('drag-over');
         }
     });
 
     li.addEventListener('dragleave', () => {
         li.classList.remove('drag-over');
+        li.dataset.direction = '';
     });
 
     li.addEventListener('drop', (e) => {
@@ -513,6 +773,8 @@ function attachDragHandlers(li, index, listType) {
             }
         }
         li.classList.remove('drag-over');
+        li.dataset.direction = '';
+        li.parentElement?.classList.remove('drag-active');
     });
 }
 

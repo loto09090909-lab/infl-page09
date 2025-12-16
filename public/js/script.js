@@ -348,12 +348,15 @@ function attachDragHandlers(li, index, listType) {
     li.addEventListener('dragstart', (e) => {
         dragState = { listType, from: index };
         li.classList.add('dragging');
+        li.parentElement?.classList.add('drag-active');
         e.dataTransfer.effectAllowed = 'move';
     });
 
     li.addEventListener('dragend', () => {
         li.classList.remove('dragging');
         li.classList.remove('drag-over');
+        li.dataset.direction = '';
+        li.parentElement?.classList.remove('drag-active');
         dragState = null;
     });
 
@@ -365,12 +368,14 @@ function attachDragHandlers(li, index, listType) {
 
     li.addEventListener('dragenter', () => {
         if (dragState && dragState.listType === listType && dragState.from !== index) {
+            li.dataset.direction = dragState.from < index ? 'down' : 'up';
             li.classList.add('drag-over');
         }
     });
 
     li.addEventListener('dragleave', () => {
         li.classList.remove('drag-over');
+        li.dataset.direction = '';
     });
 
     li.addEventListener('drop', (e) => {
@@ -383,6 +388,8 @@ function attachDragHandlers(li, index, listType) {
             }
         }
         li.classList.remove('drag-over');
+        li.dataset.direction = '';
+        li.parentElement?.classList.remove('drag-active');
     });
 }
 

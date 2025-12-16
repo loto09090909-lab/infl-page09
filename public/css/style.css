@@ -294,18 +294,40 @@ button:hover,
     gap: 8px;
     margin: 8px 0;
     justify-content: center;
+    transition: transform 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease, border-color 0.18s ease;
+}
+
+.link-list.drag-active .link-row,
+#link-list.drag-active .link-row,
+#sa-link-list.drag-active .link-row {
+    transition: transform 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease, border-color 0.18s ease;
 }
 
 .link-row.dragging {
-    opacity: 0.65;
+    opacity: 0.72;
     border-color: #c4d4ff;
     background: #eef2ff;
+    box-shadow: 0 12px 20px rgba(76, 124, 248, 0.12);
+    transform: scale(1.01);
+}
+
+.link-row.dragging .reorder-buttons {
+    opacity: 0.5;
 }
 
 .link-row.drag-over {
     border-style: dashed;
     border-color: #22c55e;
     background: #f0fdf4;
+    box-shadow: 0 10px 18px rgba(34, 197, 94, 0.08);
+}
+
+.link-row.drag-over[data-direction="down"] {
+    transform: translateY(10px);
+}
+
+.link-row.drag-over[data-direction="up"] {
+    transform: translateY(-10px);
 }
 
 .reorder-buttons {
@@ -396,6 +418,48 @@ ul#sa-slug-list {
 
 .page-list .card.page-form {
     grid-column: span 1;
+}
+
+.import-card {
+    grid-column: span 2;
+}
+
+.bulk-upload-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    margin: 10px 0;
+}
+
+.bulk-upload-controls input[type="file"] {
+    padding: 8px;
+}
+
+.bulk-preview {
+    border: 1px dashed #cbd5e1;
+    background: #f8fafc;
+    border-radius: 12px;
+    padding: 12px;
+    margin-top: 8px;
+}
+
+.bulk-preview table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 8px;
+    font-size: 14px;
+}
+
+.bulk-preview th,
+.bulk-preview td {
+    border-bottom: 1px solid #e5e7eb;
+    padding: 6px;
+    text-align: left;
+}
+
+.bulk-preview tr:last-child td {
+    border-bottom: none;
 }
 
 #pages li {

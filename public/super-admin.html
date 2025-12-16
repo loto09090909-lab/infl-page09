@@ -83,6 +83,22 @@
             </div>
         </section>
 
+        <section class="card import-card">
+            <div class="card-header">
+                <div>
+                    <p class="eyebrow">대량 업로드</p>
+                    <h2>엑셀로 여러 페이지를 한 번에 생성</h2>
+                    <p class="help-text">pageId, 관리자 비밀번호, 이름/설명/사진, 요금제(plan), 슬러그, 링크( JSON 배열 또는 \"이름|URL|아이콘\" 목록) 열을 포함한 엑셀/CSV 파일을 업로드하세요.</p>
+                </div>
+            </div>
+            <div class="bulk-upload-controls">
+                <input id="bulk-file-input" type="file" accept=".xlsx,.xls,.csv" />
+                <button id="bulk-upload-btn" type="button" disabled onclick="submitBulkUpload()">선택한 파일로 업로드</button>
+                <button id="bulk-reset-btn" type="button" class="ghost" onclick="resetBulkUpload()">초기화</button>
+            </div>
+            <div id="bulk-preview" class="bulk-preview help-text">엑셀 파일을 선택하면 업로드 대상이 미리보기로 표시됩니다.</div>
+        </section>
+
         <section class="card page-listing">
             <div class="card-header">
                 <div>
@@ -105,6 +121,7 @@
         </section>
     </main>
 
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="js/platforms.js"></script>
     <script src="js/suscript.js"></script>
 </body>

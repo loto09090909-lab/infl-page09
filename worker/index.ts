@@ -2,6 +2,7 @@ import { getBearerToken, verifySessionToken } from "./auth";
 import { pageAdminLogin, savePage } from "./page-admin";
 import {
   createPage,
+  bulkCreatePages,
   deletePage,
   getAdminPage,
   listPages,
@@ -44,6 +45,11 @@ export default {
 
     const adminToken = getBearerToken(req);
     const isAdmin = await verifySessionToken(env, "super", adminToken);
+
+    if (path === "/api/admin/pages/import" && method === "POST") {
+      if (!isAdmin) return errorResponse("인증이 필요합니다", 401, corsHeaders);
+      return bulkCreatePages(req, env, corsHeaders);
+    }
 
     if (path === "/api/admin/pages" && method === "POST") {
       if (!isAdmin) return errorResponse("인증이 필요합니다", 401, corsHeaders);
