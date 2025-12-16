@@ -1,4 +1,5 @@
 import { createSessionToken } from "./auth";
+import { slugify } from "./slug";
 import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
 
 type CreatePageBody = {
@@ -249,10 +250,18 @@ function normalizeSlugs(raw: unknown, pageId: string) {
   const incoming = Array.isArray(raw) ? raw : [];
   const normalized = incoming
     .filter((value): value is string => typeof value === "string" && !!value.trim())
-    .map((value) => value.trim());
+    .map((value) => slugify(value.trim()))
+    .filter(Boolean);
 
-  if (!normalized.includes(pageId)) {
-    normalized.unshift(pageId);
+  const baseSlug = slugify(pageId) || pageId.trim();
+
+  if (baseSlug) {
+    normalized.unshift(baseSlug);
+  }
+
+  const rawPageId = pageId.trim();
+  if (rawPageId && !normalized.includes(rawPageId)) {
+    normalized.push(rawPageId);
   }
 
   return Array.from(new Set(normalized));
