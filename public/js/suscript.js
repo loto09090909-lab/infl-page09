@@ -1,3 +1,70 @@
+function slugify(value) {
+    const normalized = value.normalize('NFKD').toLowerCase();
+
+    const separated = normalized
+        .replace(/[\s\p{P}\p{S}_]+/gu, '-')
+        .replace(/-+/g, '-');
+
+    const cleaned = separated.replace(/[^a-z0-9-]/g, '');
+    const collapsed = cleaned.replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+
+    if (collapsed) {
+        return collapsed;
+    }
+
+    const encodedFallback = encodeURIComponent(normalized)
+        .replace(/%/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-+|-+$/g, '');
+
+    return encodedFallback;
+}
+
+const platformHelpers = window.PlatformHelpers || {};
+const PLATFORM_PRESETS = platformHelpers.PLATFORM_PRESETS || [];
+const getPlatformPreset = platformHelpers.getPlatformPreset || ((platformId) => PLATFORM_PRESETS.find((preset) => preset.id === platformId));
+const buildPlatformUrl = platformHelpers.buildPlatformUrl || function (preset, handle) {
+    const cleanHandle = (handle || '').trim().replace(/^\/+/, '');
+    return cleanHandle ? `${preset.baseUrl}${cleanHandle}` : '';
+};
+const inferPlatformFromLink = platformHelpers.inferPlatformFromLink || function (link) {
+    for (const preset of PLATFORM_PRESETS) {
+        if (link.platformId === preset.id) {
+            return { preset, handle: link.handle || link.url?.replace(preset.baseUrl, '') || '' };
+        }
+
+        if (typeof link.url === 'string' && link.url.startsWith(preset.baseUrl)) {
+            return { preset, handle: link.url.slice(preset.baseUrl.length) };
+        }
+    }
+
+    return null;
+};
+
+function createPlatformIcon(preset, className = 'platform-icon') {
+    if (!preset) return null;
+
+    if (!preset.iconPath) {
+        const fallbackIcon = document.createElement('span');
+        fallbackIcon.className = `${className} platform-icon-fallback`;
+        fallbackIcon.innerText = preset.emoji || '🔗';
+        return fallbackIcon;
+    }
+
+    const iconEl = document.createElement('img');
+    iconEl.src = preset.iconPath || '';
+    iconEl.alt = preset.label || '';
+    iconEl.className = className;
+    iconEl.onerror = () => {
+        const fallback = document.createElement('span');
+        fallback.className = `${className} platform-icon-fallback`;
+        fallback.innerText = preset.emoji || '🔗';
+        iconEl.replaceWith(fallback);
+    };
+
+    return iconEl;
+}
+
 function resolveApiBases() {
     const bases = [];
 
@@ -59,28 +126,54 @@ async function apiFetch(
 let editingPageId = null;
 let managedLinks = [];
 let aliasSlugs = [];
+let selectedPlatformId = PLATFORM_PRESETS[0]?.id || '';
 
 function setFormTitle(titleText) {
     const titleEl = document.getElementById('form-title');
     if (titleEl) titleEl.innerText = titleText;
 }
 
+function setPlatformSelection(platformId) {
+    selectedPlatformId = platformId;
+    renderPlatformSelector();
+    updatePlatformPrefix();
+}
+
+function updatePlatformPrefix() {
+    const preset = getPlatformPreset(selectedPlatformId) || PLATFORM_PRESETS[0];
+    const prefixEl = document.getElementById('platform-prefix');
+    const handleInput = document.getElementById('saPlatformHandle');
+
+    if (prefixEl) {
+        prefixEl.innerText = preset?.baseUrl || '';
+    }
+
+    if (handleInput) {
+        handleInput.placeholder = preset?.placeholder || '고유 아이디';
+    }
+}
+
 function resetForm() {
     editingPageId = null;
     managedLinks = [];
     document.getElementById('pageName').value = '';
-  document.getElementById('pageSlug').value = '';
-  document.getElementById('pageSlug').removeAttribute('disabled');
-  document.getElementById('pageDescription').value = '';
-  document.getElementById('pagePhoto').value = '';
-  document.getElementById('adminPassword').value = '';
-  document.getElementById('plan').value = 'free';
-  renderSuperAdminLinks();
-  aliasSlugs = [];
-  renderAliasSlugs();
-  setFormTitle('페이지 생성');
-  const submitBtn = document.getElementById('submit-btn');
-  if (submitBtn) submitBtn.innerText = '페이지 생성';
+    document.getElementById('pageSlug').value = '';
+    document.getElementById('pageSlug').removeAttribute('disabled');
+    document.getElementById('pageDescription').value = '';
+    document.getElementById('pagePhoto').value = '';
+    document.getElementById('adminPassword').value = '';
+    document.getElementById('plan').value = 'free';
+    selectedPlatformId = PLATFORM_PRESETS[0]?.id || '';
+    document.getElementById('saPlatformHandle').value = '';
+    document.getElementById('saPlatformName').value = '';
+    updatePlatformPrefix();
+    renderPlatformSelector();
+    renderSuperAdminLinks();
+    aliasSlugs = [];
+    renderAliasSlugs();
+    setFormTitle('페이지 생성');
+    const submitBtn = document.getElementById('submit-btn');
+    if (submitBtn) submitBtn.innerText = '페이지 생성';
     const cancelBtn = document.getElementById('cancel-edit-btn');
     if (cancelBtn) cancelBtn.style.display = 'none';
 }
@@ -88,13 +181,14 @@ function resetForm() {
 // 페이지 생성/수정 함수
 async function submitPage() {
     const name = document.getElementById('pageName').value.trim();
-    const slug = document.getElementById('pageSlug').value.trim();
+    const rawSlug = document.getElementById('pageSlug').value.trim();
+    const normalizedSlug = slugify(rawSlug);
     const description = document.getElementById('pageDescription').value.trim();
     const photoUrl = document.getElementById('pagePhoto').value.trim();
     const adminPassword = document.getElementById('adminPassword').value;
     const plan = document.getElementById('plan').value || 'free';
 
-    if (!editingPageId && (!slug || !adminPassword)) {
+    if (!editingPageId && ((!rawSlug && !normalizedSlug) || !adminPassword)) {
         alert('슬러그와 관리자 비밀번호는 필수 입력입니다.');
         return;
     }
@@ -104,10 +198,19 @@ async function submitPage() {
     return;
   }
 
-  const slugs = [slug, ...aliasSlugs.map((value) => value?.trim?.())].filter(Boolean);
+  const slugs = [
+    rawSlug,
+    normalizedSlug,
+    ...aliasSlugs.flatMap((value) => {
+      const trimmed = value?.trim?.() || "";
+      if (!trimmed) return [];
+      const slugified = slugify(trimmed);
+      return [trimmed, slugified].filter(Boolean);
+    }),
+  ].filter(Boolean);
 
     const data = {
-        pageId: slug,
+        pageId: rawSlug || normalizedSlug,
         profile: {
             name: name,
             description: description,
@@ -119,7 +222,7 @@ async function submitPage() {
     slugs
   };
 
-    const targetPageId = editingPageId || slug;
+    const targetPageId = editingPageId || rawSlug || normalizedSlug;
     if (!targetPageId) {
         alert('페이지 식별자를 입력하세요.');
         return;
@@ -245,11 +348,19 @@ async function editPage(pageId) {
   document.getElementById('pagePhoto').value = page.profile?.photoUrl || '';
   document.getElementById('adminPassword').value = '';
   document.getElementById('plan').value = page.plan || 'free';
+  selectedPlatformId = PLATFORM_PRESETS[0]?.id || '';
+  document.getElementById('saPlatformHandle').value = '';
+  document.getElementById('saPlatformName').value = '';
+  renderPlatformSelector();
+  updatePlatformPrefix();
   managedLinks = Array.isArray(page.links) ? [...page.links] : [];
   renderSuperAdminLinks();
 
   const slugList = Array.isArray(page.slugs) ? page.slugs : [page.pageId];
-  aliasSlugs = slugList.filter((slug) => slug !== page.pageId);
+  aliasSlugs = slugList
+    .filter((slug) => slug !== page.pageId)
+    .map((value) => (typeof value === 'string' ? value.trim() : ''))
+    .filter(Boolean);
   renderAliasSlugs();
   setFormTitle(`페이지 수정: ${page.pageId}`);
 
@@ -265,6 +376,9 @@ document.addEventListener('DOMContentLoaded', () => {
         window.location.href = '/login.html';
         return;
     }
+    renderPlatformSelector();
+    updatePlatformPrefix();
+    setupSlugInputs();
     resetForm();
     loadPageList();
 });
@@ -288,8 +402,54 @@ function addSuperAdminLink() {
     if (urlInput) urlInput.value = '';
 }
 
+function addPlatformLink() {
+    const handleInput = document.getElementById('saPlatformHandle');
+    const nameInput = document.getElementById('saPlatformName');
+    const preset = getPlatformPreset(selectedPlatformId) || PLATFORM_PRESETS[0];
+
+    const handle = handleInput?.value?.trim();
+    const name = nameInput?.value?.trim();
+
+    if (!preset) {
+        alert('플랫폼을 선택할 수 없습니다.');
+        return;
+    }
+
+    if (!handle || !name) {
+        alert('플랫폼 링크의 고유 아이디와 이름을 모두 입력하세요.');
+        return;
+    }
+
+    const url = buildPlatformUrl(preset, handle);
+
+    managedLinks.push({ name, url, platformId: preset.id, handle });
+    renderSuperAdminLinks();
+
+    if (handleInput) handleInput.value = '';
+    if (nameInput) nameInput.value = '';
+}
+
 function updateSuperAdminLink(index, field, value) {
-    managedLinks[index] = { ...managedLinks[index], [field]: value };
+    const target = managedLinks[index];
+    if (!target) return;
+
+    const platformInfo = inferPlatformFromLink(target);
+
+    if (platformInfo) {
+        const { preset } = platformInfo;
+        if (field === 'handle') {
+            const handle = value;
+            managedLinks[index] = {
+                ...target,
+                handle,
+                platformId: preset.id,
+                url: buildPlatformUrl(preset, handle),
+            };
+            return;
+        }
+    }
+
+    managedLinks[index] = { ...target, [field]: value };
 }
 
 function removeSuperAdminLink(index) {
@@ -298,12 +458,16 @@ function removeSuperAdminLink(index) {
 }
 
 function renderSuperAdminLinks() {
-  const list = document.getElementById('sa-link-list');
-  if (!list) return;
-
-    list.innerHTML = '';
+  const platformList = document.getElementById('sa-platform-list');
+  const customList = document.getElementById('sa-link-list');
+  if (platformList) platformList.innerHTML = '';
+  if (customList) customList.innerHTML = '';
 
     managedLinks.forEach((link, index) => {
+        const platformInfo = inferPlatformFromLink(link);
+        const targetList = platformInfo ? platformList : customList;
+        if (!targetList) return;
+
         const li = document.createElement('li');
         li.className = 'link-row';
 
@@ -311,6 +475,41 @@ function renderSuperAdminLinks() {
         nameInput.placeholder = '링크 이름';
         nameInput.value = link.name || '';
         nameInput.oninput = (e) => updateSuperAdminLink(index, 'name', e.target.value);
+
+        if (platformInfo) {
+            const handleInput = document.createElement('input');
+            handleInput.placeholder = platformInfo.preset.placeholder || '고유 아이디';
+            const currentHandle = link.handle || platformInfo.handle || '';
+            handleInput.value = currentHandle;
+            handleInput.oninput = (e) => updateSuperAdminLink(index, 'handle', e.target.value);
+
+            const prefixLabel = document.createElement('div');
+            prefixLabel.className = 'platform-label';
+            const iconEl = createPlatformIcon(platformInfo.preset, 'platform-icon-small');
+            if (iconEl) prefixLabel.appendChild(iconEl);
+            const labelText = document.createElement('span');
+            labelText.innerText = platformInfo.preset.label;
+            prefixLabel.appendChild(labelText);
+
+            const removeBtn = document.createElement('button');
+            removeBtn.innerText = '삭제';
+            removeBtn.onclick = () => removeSuperAdminLink(index);
+
+            li.appendChild(prefixLabel);
+            li.appendChild(nameInput);
+            li.appendChild(handleInput);
+            li.appendChild(removeBtn);
+
+            managedLinks[index] = {
+                ...link,
+                platformId: platformInfo.preset.id,
+                handle: currentHandle,
+                url: buildPlatformUrl(platformInfo.preset, currentHandle),
+            };
+
+            targetList.appendChild(li);
+            return;
+        }
 
         const urlInput = document.createElement('input');
         urlInput.placeholder = '링크 URL';
@@ -325,8 +524,31 @@ function renderSuperAdminLinks() {
         li.appendChild(urlInput);
         li.appendChild(removeBtn);
 
-    list.appendChild(li);
+    targetList.appendChild(li);
   });
+}
+
+function renderPlatformSelector() {
+    const selector = document.getElementById('platform-selector');
+    if (!selector) return;
+
+    selector.innerHTML = '';
+
+    PLATFORM_PRESETS.forEach((preset) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `platform-button${preset.id === selectedPlatformId ? ' active' : ''}`;
+        button.title = preset.label;
+        const iconEl = createPlatformIcon(preset);
+        const labelEl = document.createElement('span');
+        labelEl.className = 'platform-button-label';
+        labelEl.innerText = preset.label;
+        if (iconEl) button.appendChild(iconEl);
+        button.appendChild(labelEl);
+        button.onclick = () => setPlatformSelection(preset.id);
+
+        selector.appendChild(button);
+    });
 }
 
 function addAliasSlug() {
@@ -338,18 +560,21 @@ function addAliasSlug() {
     return;
   }
 
-  const mainSlug = document.getElementById('pageSlug')?.value?.trim();
-  if (mainSlug && value === mainSlug) {
+  const mainSlug = document.getElementById('pageSlug')?.value?.trim() || '';
+  const normalizedMainSlug = slugify(mainSlug);
+  const slugValue = value;
+
+  if (normalizedMainSlug && slugify(slugValue) === normalizedMainSlug) {
     alert('기본 슬러그와 동일한 값은 별칭으로 추가할 수 없습니다.');
     return;
   }
 
-  if (aliasSlugs.includes(value)) {
+  if (aliasSlugs.includes(slugValue)) {
     alert('이미 추가된 슬러그입니다.');
     return;
   }
 
-  aliasSlugs.push(value);
+  aliasSlugs.push(slugValue);
   renderAliasSlugs();
 
   if (input) input.value = '';
@@ -385,4 +610,9 @@ function renderAliasSlugs() {
     li.appendChild(removeBtn);
     list.appendChild(li);
   });
+}
+
+function setupSlugInputs() {
+  const mainSlugInput = document.getElementById('pageSlug');
+  if (!mainSlugInput) return;
 }

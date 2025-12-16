@@ -1,4 +1,5 @@
 import { createSessionToken, getBearerToken, verifySessionToken } from "./auth";
+import { resolvePageId, slugify } from "./slug";
 import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
 
 type LoginBody = {
@@ -92,12 +93,3 @@ export async function savePage(
   return jsonResponse({ success: true, message: "Page saved" }, 200, headers);
 }
 
-async function resolvePageId(env: any, incoming: string) {
-  const row = await env.DB.prepare(
-    "SELECT page_id FROM slug_map WHERE display_name = ? LIMIT 1"
-  )
-    .bind(incoming)
-    .first<{ page_id: string }>();
-
-  return row?.page_id ?? incoming;
-}
