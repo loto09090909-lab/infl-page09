@@ -607,7 +607,7 @@ async function pageAdminLogin() {
 // 로그아웃 함수
 function logout() {
     document.cookie = "session=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/";  // 세션 쿠키 삭제
-    window.location.href = "/login.html";  // 로그인 페이지로 리디렉션
+    window.location.href = "/page-admin-login.html";  // 로그인 페이지로 리디렉션
 }
 
 function renderUserLinks(links) {
