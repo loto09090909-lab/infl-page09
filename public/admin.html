@@ -157,6 +157,21 @@
             <div id="contact-schema-list" class="contact-schema-list"></div>
         </section>
 
+        <section class="card contact-card" id="contact-inbox-card">
+            <div class="card-header">
+                <div>
+                    <p class="eyebrow">문의 내역</p>
+                    <h3>최근 컨택트 제출</h3>
+                    <p class="help-text">사용자가 제출한 문의 내용을 최신순으로 확인합니다.</p>
+                </div>
+                <div class="card-actions">
+                    <button type="button" class="ghost" onclick="fetchContactSubmissions()">새로고침</button>
+                </div>
+            </div>
+            <div id="contact-submission-status" class="status-banner" style="display: none;"></div>
+            <ul id="contact-submission-list" class="contact-submission-list"></ul>
+        </section>
+
         <section class="card preview-card">
             <div class="card-header">
                 <div>

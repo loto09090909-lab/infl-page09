@@ -48,9 +48,7 @@ export async function getPage(
         },
         links: safeParseLinks(dbRow.links),
         plan: kvParsed?.plan ?? null,
-        contactSchema: includePrivate
-          ? kvParsed?.contactSchema ?? []
-          : undefined,
+        contactSchema: kvParsed?.contactSchema ?? [],
         privateLinks: includePrivate ? kvParsed?.privateLinks ?? [] : undefined,
         slugs: includePrivate
           ? kvParsed?.slugs ?? (await getSlugsForPage(env, resolvedPageId))
@@ -76,7 +74,7 @@ export async function getPage(
         ...parsed,
         links: publicLinks,
         privateLinks: includePrivate ? parsed.privateLinks ?? [] : undefined,
-        contactSchema: includePrivate ? parsed.contactSchema ?? [] : undefined,
+        contactSchema: parsed.contactSchema ?? [],
         slugs: includePrivate
           ? parsed.slugs ?? (await getSlugsForPage(env, resolvedPageId))
           : undefined,

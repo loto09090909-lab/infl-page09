@@ -41,6 +41,15 @@ export default {
       return getPage(req, env, decodeURIComponent(pageId), corsHeaders);
     }
 
+    if (method === "POST" && path.startsWith("/api/pages/") && path.endsWith("/contact")) {
+      const pageId = decodeURIComponent(path.replace(/\/api\/pages\//, "").replace(/\/contact$/, ""));
+      if (!pageId) {
+        return errorResponse("pageId가 필요합니다", 400, corsHeaders);
+      }
+      const { submitContact } = await import("./contact");
+      return submitContact(req, env, pageId, corsHeaders);
+    }
+
     if (method === "GET" && path === "/api/health") {
       return jsonResponse(
         { ok: true, time: new Date().toISOString() },
@@ -153,6 +162,11 @@ export default {
 
       if (method === "POST" && action === "save") {
         return savePage(req, env, pageId, corsHeaders);
+      }
+
+      if (method === "GET" && action === "contact-submissions") {
+        const { listContactSubmissions } = await import("./contact");
+        return listContactSubmissions(req, env, pageId, corsHeaders);
       }
     }
 

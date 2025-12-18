@@ -396,7 +396,10 @@ let selectedPlatformId = PLATFORM_PRESETS[0]?.id || '';
 let dragState = null;
 let adminSlugs = [];
 let adminContactSchema = [];
+let publicContactSchema = [];
+let currentPageId = '';
 let pagePlan = 'free';
+let contactSubmissions = [];
 
 const MAX_CONTACT_FIELDS = 50;
 
@@ -484,6 +487,47 @@ function ensureUserViewContainer() {
     linksSection.appendChild(linksHeader);
     linksSection.appendChild(linksUl);
 
+    const contactSection = document.createElement('section');
+    contactSection.className = 'contact user-contact';
+    contactSection.id = 'user-contact-section';
+    const contactHeader = document.createElement('h3');
+    contactHeader.innerText = '문의하기';
+    contactSection.appendChild(contactHeader);
+
+    const contactHelp = document.createElement('p');
+    contactHelp.className = 'help-text';
+    contactHelp.id = 'user-contact-help';
+    contactHelp.innerText = '페이지 관리자에게 직접 문의 메시지를 남길 수 있습니다.';
+    contactSection.appendChild(contactHelp);
+
+    const contactForm = document.createElement('form');
+    contactForm.id = 'user-contact-form';
+    contactForm.className = 'contact-form';
+    contactForm.addEventListener('submit', submitContactForm);
+
+    const contactFields = document.createElement('div');
+    contactFields.id = 'user-contact-fields';
+    contactFields.className = 'contact-field-stack';
+    contactForm.appendChild(contactFields);
+
+    const contactActions = document.createElement('div');
+    contactActions.className = 'contact-actions';
+    const submitBtn = document.createElement('button');
+    submitBtn.type = 'submit';
+    submitBtn.className = 'primary';
+    submitBtn.innerText = '문의 보내기';
+    submitBtn.id = 'user-contact-submit';
+    contactActions.appendChild(submitBtn);
+    contactForm.appendChild(contactActions);
+
+    const contactStatusBox = document.createElement('div');
+    contactStatusBox.id = 'user-contact-status';
+    contactStatusBox.className = 'status-banner';
+    contactStatusBox.style.display = 'none';
+    contactForm.appendChild(contactStatusBox);
+
+    contactSection.appendChild(contactForm);
+
     const footer = document.createElement('footer');
     footer.className = 'user-footer';
     footer.innerHTML = '<p>&copy; 2025 인플루언서 페이지</p>';
@@ -491,6 +535,7 @@ function ensureUserViewContainer() {
     card.appendChild(header);
     card.appendChild(profileSection);
     card.appendChild(linksSection);
+    card.appendChild(contactSection);
     card.appendChild(footer);
 
     shell.appendChild(card);
@@ -524,6 +569,8 @@ async function loadPageData(pageId, options = {}) {
 
     const data = await res.json();
 
+    currentPageId = pageId;
+
     if (data && data.profile) {
         updatePageContext(pageId, data.profile);
         document.title = data.profile.name;
@@ -543,6 +590,8 @@ async function loadPageData(pageId, options = {}) {
             : [];
 
         renderUserLinks(publicLinks);
+        publicContactSchema = Array.isArray(data.contactSchema) ? data.contactSchema : [];
+        renderPublicContactForm();
 
         if (includeAdmin) {
             const normalizeLink = (link, isPrivate = false) => ({
@@ -568,6 +617,7 @@ async function loadPageData(pageId, options = {}) {
             renderPrivacySummary();
             renderUsage();
             renderOnboardingBanner();
+            fetchContactSubmissions();
         }
 
         const nameInput = document.getElementById('name');
@@ -1277,6 +1327,143 @@ function renderUserLinks(links) {
     });
 }
 
+function setContactStatus(message, tone = 'info') {
+    const statusEl = document.getElementById('user-contact-status');
+    if (!statusEl) return;
+    if (!message) {
+        statusEl.style.display = 'none';
+        statusEl.innerText = '';
+        return;
+    }
+
+    statusEl.style.display = 'block';
+    statusEl.className = `status-banner ${tone}`;
+    statusEl.innerText = message;
+}
+
+function renderPublicContactForm() {
+    const section = document.getElementById('user-contact-section');
+    const fieldsHost = document.getElementById('user-contact-fields');
+    const help = document.getElementById('user-contact-help');
+    const submitBtn = document.getElementById('user-contact-submit');
+    const form = document.getElementById('user-contact-form');
+
+    if (!section || !fieldsHost || !help || !submitBtn || !form) return;
+
+    fieldsHost.innerHTML = '';
+
+    if (!publicContactSchema.length) {
+        help.innerText = '관리자가 컨택트 필드를 설정하지 않았습니다.';
+        form.style.display = 'none';
+        return;
+    }
+
+    form.style.display = 'block';
+    help.innerText = '아래 항목을 입력해 페이지 관리자에게 문의를 전달하세요.';
+
+    publicContactSchema.forEach((field, idx) => {
+        const wrapper = document.createElement('label');
+        wrapper.className = 'contact-field';
+        wrapper.htmlFor = `user-contact-${idx}`;
+
+        const title = document.createElement('span');
+        title.className = 'contact-label';
+        title.innerText = field.label;
+        wrapper.appendChild(title);
+
+        const input = document.createElement('input');
+        input.id = `user-contact-${idx}`;
+        input.name = field.label;
+        input.type = field.type || 'text';
+        input.placeholder = field.placeholder || '';
+        input.maxLength = 2000;
+
+        wrapper.appendChild(input);
+        fieldsHost.appendChild(wrapper);
+    });
+
+    setContactStatus('');
+    submitBtn.disabled = false;
+}
+
+async function submitContactForm(event) {
+    event.preventDefault();
+    const form = event.target;
+    const submitBtn = document.getElementById('user-contact-submit');
+    if (!form || !currentPageId || !publicContactSchema.length) {
+        setContactStatus('제출할 컨택트 폼이 없습니다.', 'warning');
+        return;
+    }
+
+    const answers = publicContactSchema.map((field, idx) => {
+        const input = document.getElementById(`user-contact-${idx}`);
+        return { label: field.label, value: input?.value?.trim() || '' };
+    });
+
+    try {
+        submitBtn.disabled = true;
+        setContactStatus('문의 내용을 전송하는 중입니다...', 'info');
+
+        const res = await apiFetch(`/api/pages/${encodeURIComponent(currentPageId)}/contact`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ answers }),
+        }, [400, 404, 422]);
+
+        if (!res.ok) {
+            const msg = await res.text();
+            throw new Error(msg || `저장 실패 (${res.status})`);
+        }
+
+        setContactStatus('문의가 접수되었습니다. 관리자가 확인할 때까지 기다려주세요.', 'success');
+        form.reset();
+    } catch (error) {
+        console.error('컨택트 제출 실패', error);
+        setContactStatus(error?.message || '문의 전송에 실패했습니다.', 'error');
+    } finally {
+        submitBtn.disabled = false;
+    }
+}
+
+async function fetchContactSubmissions() {
+    const status = document.getElementById('contact-submission-status');
+    if (!derivedPageId || !status) {
+        return;
+    }
+
+    const token = sessionStorage.getItem('page_admin_token');
+    if (!token) {
+        status.style.display = 'block';
+        status.className = 'status-banner warning';
+        status.innerText = '로그인 후 문의 내역을 확인할 수 있습니다.';
+        return;
+    }
+
+    status.style.display = 'block';
+    status.className = 'status-banner info';
+    status.innerText = '문의 내역을 불러오는 중입니다...';
+
+    try {
+        const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/contact-submissions`, {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${token}` },
+        }, [401, 403, 404]);
+
+        if (!res.ok) {
+            const msg = await res.text();
+            throw new Error(msg || `불러오기 실패 (${res.status})`);
+        }
+
+        const payload = await res.json().catch(() => null);
+        contactSubmissions = Array.isArray(payload?.submissions) ? payload.submissions : [];
+        renderContactSubmissions();
+    } catch (error) {
+        status.style.display = 'block';
+        status.className = 'status-banner error';
+        status.innerText = error?.message || '문의 내역을 불러오지 못했습니다.';
+    }
+}
+
 function renderAdminLinks() {
     const adminList = document.getElementById('link-list');
     if (!adminList) return;
@@ -1594,6 +1781,57 @@ function renderContactSchema() {
         row.appendChild(removeBtn);
 
         list.appendChild(row);
+    });
+}
+
+function renderContactSubmissions() {
+    const list = document.getElementById('contact-submission-list');
+    const status = document.getElementById('contact-submission-status');
+    if (!list || !status) return;
+
+    list.innerHTML = '';
+
+    if (!contactSubmissions.length) {
+        status.style.display = 'block';
+        status.className = 'status-banner info';
+        status.innerText = '아직 제출된 문의가 없습니다.';
+        return;
+    }
+
+    status.style.display = 'none';
+
+    contactSubmissions.forEach((submission) => {
+        const item = document.createElement('li');
+        item.className = 'contact-submission';
+
+        const header = document.createElement('header');
+        const time = document.createElement('span');
+        time.innerText = new Date(submission.submittedAt).toLocaleString();
+        const meta = document.createElement('span');
+        meta.innerText = submission.ip ? `IP: ${submission.ip}` : '';
+        header.appendChild(time);
+        header.appendChild(meta);
+
+        item.appendChild(header);
+
+        (submission.answers || []).forEach((answer) => {
+            const row = document.createElement('div');
+            row.className = 'contact-answer';
+
+            const label = document.createElement('div');
+            label.className = 'label';
+            label.innerText = answer.label;
+
+            const value = document.createElement('div');
+            value.className = 'value';
+            value.innerText = answer.value;
+
+            row.appendChild(label);
+            row.appendChild(value);
+            item.appendChild(row);
+        });
+
+        list.appendChild(item);
     });
 }
 
