@@ -1,5 +1,5 @@
 import { getBearerToken, verifySessionToken } from "./auth";
-import { pageAdminLogin, savePage } from "./page-admin";
+import { pageAdminLogin, savePage, verifyPageSession } from "./page-admin";
 import {
   createPage,
   bulkCreatePages,
@@ -125,6 +125,10 @@ export default {
 
       if (method === "POST" && action === "login") {
         return pageAdminLogin(req, env, pageId, corsHeaders);
+      }
+
+      if (method === "GET" && action === "session") {
+        return verifyPageSession(req, env, pageId, corsHeaders);
       }
 
       if (method === "POST" && action === "save") {

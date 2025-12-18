@@ -105,6 +105,21 @@ function isHttpUrl(value) {
     }
 }
 
+function setPageLoginStatus(message, tone = 'info') {
+    const statusEl = document.getElementById('page-login-status');
+    if (!statusEl) return;
+
+    if (!message) {
+        statusEl.style.display = 'none';
+        statusEl.textContent = '';
+        return;
+    }
+
+    statusEl.textContent = message;
+    statusEl.className = `status-banner ${tone}`;
+    statusEl.style.display = 'block';
+}
+
 function createLinkIcon(preset) {
     if (!preset) return null;
 
@@ -370,6 +385,39 @@ if (isPublicView) {
     document.body.classList.add('user-view');
 }
 
+async function ensurePageSession() {
+    if (pageRole !== 'page-admin' || !derivedPageId) return;
+
+    const token = sessionStorage.getItem('page_admin_token');
+    if (!token) {
+        const redirectTarget = `/page-admin-login.html?pageId=${encodeURIComponent(derivedPageId)}`;
+        window.location.href = redirectTarget;
+        return;
+    }
+
+    try {
+        const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/session`, {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${token}` },
+        }, [401, 403, 404]);
+
+        if (!res.ok) {
+            sessionStorage.removeItem('page_admin_token');
+            const message = await res.text();
+            setPageLoginStatus(`세션이 만료되었습니다: ${message || res.status}`, 'error');
+            window.location.href = `/page-admin-login.html?pageId=${encodeURIComponent(derivedPageId)}`;
+            return;
+        }
+
+        const payload = await res.json().catch(() => null);
+        if (payload?.pageId && payload.pageId !== derivedPageId) {
+            updatePageContext(payload.pageId);
+        }
+    } catch (error) {
+        console.error('세션 확인 중 오류', error);
+    }
+}
+
 if (pageRole === 'page-admin' && derivedPageId) {
     updatePageContext(derivedPageId);
 }
@@ -388,6 +436,8 @@ if (pageRole === 'page-admin') {
             : '/page-admin-login.html';
         window.location.href = redirectTarget;
     }
+
+    ensurePageSession();
 }
 
 if (userViewReady || pageRole === 'page-admin') {
@@ -849,20 +899,24 @@ async function pageAdminLogin() {
         pathSegments.length >= 2 && pathSegments[1] === 'admin' ? pathSegments[0] : '';
     const pageId = pageIdFromPath || pageIdFromInput;
 
+    setPageLoginStatus('', 'info');
+
     if (!pageId || pageId === 'admin') {
-        alert('페이지 식별자가 없어 로그인할 수 없습니다. URL에 /{pageId}/admin 형식으로 접속하거나 페이지 ID를 입력하세요.');
+        setPageLoginStatus('페이지 식별자가 없어 로그인할 수 없습니다. URL에 /{pageId}/admin 형식으로 접속하거나 페이지 ID를 입력하세요.', 'error');
         return;
     }
 
     if (!email) {
-        alert('관리자 이메일을 입력하세요.');
+        setPageLoginStatus('관리자 이메일을 입력하세요.', 'error');
         return;
     }
 
     if (!password) {
-        alert('비밀번호를 입력하세요.');
+        setPageLoginStatus('비밀번호를 입력하세요.', 'error');
         return;
     }
+
+    setPageLoginStatus('로그인 중입니다...', 'info');
 
     const res = await apiFetch(`/api/page/${encodeURIComponent(pageId)}/login`, {
         method: 'POST',
@@ -873,10 +927,11 @@ async function pageAdminLogin() {
     if (res.ok) {
         const session = await res.json();
         sessionStorage.setItem('page_admin_token', session.token);
+        setPageLoginStatus('로그인에 성공했습니다. 잠시 후 이동합니다.', 'success');
         window.location.href = `/admin.html?pageId=${encodeURIComponent(pageId)}`;
     } else {
         const message = await res.text();
-        alert(`로그인 실패: ${message || res.status}`);
+        setPageLoginStatus(`로그인 실패: ${message || res.status}`, 'error');
     }
 }
 

@@ -180,6 +180,33 @@ export async function pageAdminLogin(
   return jsonResponse(session, 200, headers);
 }
 
+export async function verifyPageSession(
+  req: Request,
+  env: any,
+  pageId: string,
+  headers: HeadersInit
+) {
+  const token = getBearerToken(req);
+  const canonicalPageId = await resolvePageId(env, pageId);
+
+  const pageTokenValid = await verifySessionToken(env, "page", token, canonicalPageId);
+  const superTokenValid = await verifySessionToken(env, "super", token);
+
+  if (!pageTokenValid && !superTokenValid) {
+    return errorResponse("페이지 관리자 인증이 필요합니다", 401, headers);
+  }
+
+  return jsonResponse(
+    {
+      ok: true,
+      role: superTokenValid ? "super" : "page",
+      pageId: canonicalPageId,
+    },
+    200,
+    headers
+  );
+}
+
 export async function savePage(
   req: Request,
   env: any,
