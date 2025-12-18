@@ -27,6 +27,115 @@ type SavePageBody = {
   slugs?: unknown;
 };
 
+const MAX_LINKS = 100;
+
+function sanitizeString(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, maxLength) : undefined;
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch (error) {
+    return false;
+  }
+}
+
+function validateProfile(profile: unknown) {
+  if (profile === undefined) return { profile: undefined };
+  if (!profile || typeof profile !== "object") {
+    return { error: "profile은 객체여야 합니다" };
+  }
+
+  const name = sanitizeString((profile as any).name, 120);
+  const description = sanitizeString((profile as any).description, 500);
+  const photoUrl = sanitizeString((profile as any).photoUrl, 500);
+
+  if (photoUrl && !isHttpUrl(photoUrl)) {
+    return { error: "photoUrl은 http(s) URL이어야 합니다" };
+  }
+
+  return {
+    profile: {
+      ...(name ? { name } : {}),
+      ...(description ? { description } : {}),
+      ...(photoUrl ? { photoUrl } : {}),
+    },
+  };
+}
+
+function validateContactSchema(raw: unknown) {
+  if (raw === undefined) return { schema: undefined };
+  if (!Array.isArray(raw)) return { error: "contactSchema는 배열이어야 합니다" };
+  if (raw.length > 50) return { error: "contactSchema 항목이 너무 많습니다" };
+
+  const schema = raw
+    .map((field) => {
+      if (!field || typeof field !== "object") return null;
+      const label = sanitizeString((field as any).label, 120);
+      const type = sanitizeString((field as any).type, 30);
+      const placeholder = sanitizeString((field as any).placeholder, 200);
+      if (!label || !type) return null;
+      return {
+        label,
+        type,
+        ...(placeholder ? { placeholder } : {}),
+      };
+    })
+    .filter(Boolean);
+
+  return { schema };
+}
+
+function validateLinks(rawLinks: unknown) {
+  if (rawLinks === undefined) return { publicLinks: [], privateLinks: [] };
+  if (!Array.isArray(rawLinks)) {
+    return { error: "links는 배열이어야 합니다" };
+  }
+
+  if (rawLinks.length > MAX_LINKS) {
+    return { error: "링크가 너무 많습니다" };
+  }
+
+  const publicLinks: any[] = [];
+  const privateLinks: any[] = [];
+
+  for (const rawLink of rawLinks) {
+    if (!rawLink || typeof rawLink !== "object") continue;
+    const title = sanitizeString((rawLink as any).title, 120);
+    const url = sanitizeString((rawLink as any).url, 1000);
+    const iconUrl = sanitizeString((rawLink as any).iconUrl, 500);
+    const platformId = sanitizeString((rawLink as any).platformId, 120);
+    const handle = sanitizeString((rawLink as any).handle, 200);
+    const isPrivate = (rawLink as any).isPrivate === true || (rawLink as any).private === true;
+
+    if (!title || !url) continue;
+    if (!isHttpUrl(url)) {
+      return { error: "링크 URL은 http(s)여야 합니다" };
+    }
+
+    const cleaned = {
+      title,
+      url,
+      ...(iconUrl && isHttpUrl(iconUrl) ? { iconUrl } : {}),
+      ...(platformId ? { platformId } : {}),
+      ...(handle ? { handle } : {}),
+      ...(isPrivate ? { isPrivate: true } : {}),
+    };
+
+    if (isPrivate) {
+      privateLinks.push(cleaned);
+    } else {
+      publicLinks.push(cleaned);
+    }
+  }
+
+  return { publicLinks, privateLinks };
+}
+
 export async function pageAdminLogin(
   req: Request,
   env: any,
@@ -88,6 +197,21 @@ export async function savePage(
     return errorResponse("잘못된 요청 본문입니다", 400, headers);
   }
 
+  const { error: profileError, profile } = validateProfile(body.profile);
+  if (profileError) {
+    return errorResponse(profileError, 400, headers);
+  }
+
+  const { error: linkError, publicLinks, privateLinks } = validateLinks(body.links);
+  if (linkError) {
+    return errorResponse(linkError, 400, headers);
+  }
+
+  const { error: contactError, schema } = validateContactSchema(body.contactSchema);
+  if (contactError) {
+    return errorResponse(contactError, 400, headers);
+  }
+
   const existingRaw = await env.PAGE_KV.get(`page:${canonicalPageId}`);
   let existingData: any = {};
   if (existingRaw) {
@@ -98,14 +222,15 @@ export async function savePage(
     }
   }
 
-  const incomingLinks = Array.isArray(body.links) ? body.links : [];
   const providedPrivate = Array.isArray((body as any).privateLinks)
-    ? (body as any).privateLinks
-    : [];
-  const privateLinks = providedPrivate.length
-    ? providedPrivate
-    : incomingLinks.filter((link: any) => !!link?.isPrivate);
-  const publicLinks = incomingLinks.filter((link: any) => !link?.isPrivate);
+    ? validateLinks((body as any).privateLinks)
+    : null;
+  if (providedPrivate?.error) {
+    return errorResponse(providedPrivate.error, 400, headers);
+  }
+  const fallbackPrivateLinks = providedPrivate?.privateLinks?.length
+    ? providedPrivate.privateLinks
+    : privateLinks;
 
   let slugs: string[] | null = null;
   if (body.slugs !== undefined) {
@@ -128,17 +253,16 @@ export async function savePage(
     : normalizeSlugs([], canonicalPageId);
 
   const pageData = {
-    profile: body.profile ?? existingData.profile ?? {},
+    profile: profile ?? existingData.profile ?? {},
     links: publicLinks,
-    privateLinks,
-    contactSchema: Array.isArray((body as any).contactSchema)
-      ? (body as any).contactSchema
-      : existingData.contactSchema ?? [],
+    privateLinks: fallbackPrivateLinks,
+    contactSchema: schema ?? existingData.contactSchema ?? [],
     slugs: normalizedSlugs,
-    plan: body.plan ?? existingData.plan ?? null,
+    plan: typeof body.plan === "string" ? body.plan.trim() : existingData.plan ?? null,
   };
 
-  if (hasPrivateLinks(pageData.links)) {
+  const linksForPlan = [...pageData.links, ...(pageData.privateLinks ?? [])];
+  if (hasPrivateLinks(linksForPlan)) {
     try {
       await enforcePlanLimit(env, pageData.plan, "create_private_link");
     } catch (error) {
