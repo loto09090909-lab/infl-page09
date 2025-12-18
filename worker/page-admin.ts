@@ -30,6 +30,7 @@ type SavePageBody = {
   plan?: unknown;
   privateLinks?: unknown;
   contactSchema?: unknown;
+  contactSettings?: unknown;
   slugs?: unknown;
 };
 
@@ -96,6 +97,24 @@ function validateContactSchema(raw: unknown) {
     .filter(Boolean);
 
   return { schema, provided: true };
+}
+
+function validateContactSettings(raw: unknown) {
+  if (raw === undefined) return { settings: undefined };
+  if (!raw || typeof raw !== "object") {
+    return { error: "contactSettings는 객체여야 합니다" };
+  }
+
+  const webhookUrl = sanitizeString((raw as any).webhookUrl, 1000);
+  if (webhookUrl && !isHttpUrl(webhookUrl)) {
+    return { error: "webhookUrl은 http(s)여야 합니다" };
+  }
+
+  return {
+    settings: {
+      ...(webhookUrl ? { webhookUrl } : {}),
+    },
+  };
 }
 
 function validateLinks(rawLinks: unknown) {
@@ -295,6 +314,13 @@ export async function savePage(
     return errorResponse(contactError, 400, headers);
   }
 
+  const { error: contactSettingsError, settings: contactSettings } = validateContactSettings(
+    body.contactSettings
+  );
+  if (contactSettingsError) {
+    return errorResponse(contactSettingsError, 400, headers);
+  }
+
   const existingRaw = await env.PAGE_KV.get(`page:${canonicalPageId}`);
   let existingData: any = {};
   if (existingRaw) {
@@ -345,6 +371,7 @@ export async function savePage(
     privateLinks: nextPrivateLinks,
     contactSchema:
       contactProvided || schema !== undefined ? schema ?? [] : existingData.contactSchema ?? [],
+    contactSettings: contactSettings ?? existingData.contactSettings ?? {},
     slugs: normalizedSlugs,
     plan:
       typeof body.plan === "string"

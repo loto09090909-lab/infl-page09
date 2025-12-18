@@ -5,7 +5,7 @@
 - **슈퍼 관리자**: D1 `super_admin` 테이블의 PBKDF2 또는 기존 SHA-256 해시를 검증해 서명 토큰을 발급하며, 페이지 생성·목록·삭제·수정 시 KV와 D1(`page_auth`, `page_meta`)을 모두 갱신합니다.【F:worker/super-admin.ts†L21-L169】【F:worker/super-admin.ts†L301-L376】
 - **페이지 관리자**: D1(`page_admins`)의 관리자와 사용자 인증 정보를 비교해 서명 토큰을 발급하고, 페이지 데이터 저장 시 KV와 `page_meta`를 덮어씁니다.【F:worker/page-admin.ts†L1-L105】【F:worker/page-admin.ts†L195-L286】
 - **페이지 조회**: 우선 D1 `page_meta`를 조회하고 없을 경우 KV `page:{pageId}`를 반환합니다. JSON 파싱 실패 시 500 오류를 보냅니다.【F:worker/page-view.ts†L1-L46】
-- **컨택트 제출/조회**: 공개 페이지에서 `contactSchema` 기반 폼을 제출하면 `/api/pages/:pageId/contact`가 KV에 저장하고, 페이지 관리자는 `/api/page/:pageId/contact-submissions`로 최신 내역을 확인합니다.【F:worker/contact.ts†L1-L134】【F:public/js/script.js†L420-L520】
+- **컨택트 제출/조회**: 공개 페이지에서 `contactSchema` 기반 폼을 제출하면 `/api/pages/:pageId/contact`가 IP별 제출 횟수를 제한하며 KV에 저장하고, 설정된 웹훅으로 페이로드를 전달합니다. 페이지 관리자는 목록 조회와 CSV 다운로드를 지원합니다.【F:worker/contact.ts†L1-L214】【F:public/js/script.js†L420-L520】【F:public/js/script.js†L1400-L1465】
 - **프런트엔드 흐름**: 공통 스크립트가 하드코딩된 워커 도메인으로 API를 호출하며, 사용자 페이지일 때만 데이터 요청을 수행합니다. 슈퍼/페이지 관리자 로그인은 세션 토큰을 `sessionStorage`에 저장해 이후 요청에 사용하며, 페이지 관리자 로그인 폼은 URL의 pageId를 자동 채웁니다.【F:public/js/script.js†L1-L226】
 - **슈퍼 관리자 UI**: 별도 스크립트로 페이지 생성·목록·삭제·편집을 수행하고, 토큰이 없으면 로그인 페이지로 리다이렉트합니다.【F:public/js/suscript.js†L1-L123】
 

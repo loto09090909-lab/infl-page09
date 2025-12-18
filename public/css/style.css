@@ -959,6 +959,17 @@ body.user-view {
     justify-self: end;
 }
 
+.contact-settings {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.contact-settings input {
+    width: 100%;
+}
+
 .user-contact {
     margin-top: 18px;
     padding: 16px;

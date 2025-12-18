@@ -8,6 +8,10 @@ type ContactField = {
   placeholder?: string;
 };
 
+type ContactSettings = {
+  webhookUrl?: string;
+};
+
 type ContactSubmission = {
   id: string;
   pageId: string;
@@ -19,6 +23,8 @@ type ContactSubmission = {
 
 const MAX_FIELD_LENGTH = 2000;
 const MAX_SUBMISSIONS_PER_PAGE = 200;
+const DEFAULT_RATE_LIMIT = 5;
+const DEFAULT_RATE_WINDOW_MS = 15 * 60 * 1000;
 
 function sanitizeString(value: unknown, maxLength: number): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -27,17 +33,95 @@ function sanitizeString(value: unknown, maxLength: number): string | undefined {
   return trimmed.slice(0, maxLength);
 }
 
-async function readContactSchema(env: any, pageId: string): Promise<ContactField[]> {
+async function readContactSchema(env: any, pageId: string): Promise<{
+  schema: ContactField[];
+  settings: ContactSettings;
+}> {
   const kvRaw = await env.PAGE_KV.get(`page:${pageId}`);
-  if (!kvRaw) return [];
+  if (!kvRaw) return { schema: [], settings: {} };
   try {
     const parsed = JSON.parse(kvRaw);
-    if (Array.isArray(parsed?.contactSchema)) {
-      return parsed.contactSchema.filter((field: any) => field && typeof field === "object");
+    const schema = Array.isArray(parsed?.contactSchema)
+      ? parsed.contactSchema.filter((field: any) => field && typeof field === "object")
+      : [];
+    const settings: ContactSettings = {};
+    if (parsed?.contactSettings && typeof parsed.contactSettings === "object") {
+      const webhookUrl = typeof parsed.contactSettings.webhookUrl === "string"
+        ? parsed.contactSettings.webhookUrl.trim()
+        : "";
+      if (webhookUrl && (webhookUrl.startsWith("http://") || webhookUrl.startsWith("https://"))) {
+        settings.webhookUrl = webhookUrl;
+      }
     }
-    return [];
+    return { schema, settings };
   } catch (error) {
-    return [];
+    return { schema: [], settings: {} };
+  }
+}
+
+async function checkSubmissionThrottle(env: any, pageId: string, ip: string | null) {
+  if (!ip) return;
+
+  const key = `contact:throttle:${pageId}:${ip}`;
+  const now = Date.now();
+  const windowMs = Number(env.CONTACT_THROTTLE_WINDOW_MS) || DEFAULT_RATE_WINDOW_MS;
+  const limit = Number(env.CONTACT_THROTTLE_MAX) || DEFAULT_RATE_LIMIT;
+
+  let count = 0;
+  let resetAt = now + windowMs;
+
+  const raw = await env.PAGE_KV.get(key);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as { count?: number; resetAt?: number };
+      count = typeof parsed.count === "number" ? parsed.count : 0;
+      resetAt = typeof parsed.resetAt === "number" ? parsed.resetAt : resetAt;
+    } catch (error) {
+      count = 0;
+    }
+  }
+
+  if (resetAt < now) {
+    count = 0;
+    resetAt = now + windowMs;
+  }
+
+  if (count >= limit) {
+    const waitSeconds = Math.max(1, Math.ceil((resetAt - now) / 1000));
+    throw new Error(`제출이 너무 잦습니다. ${waitSeconds}초 후 다시 시도해주세요.`);
+  }
+
+  count += 1;
+  await env.PAGE_KV.put(key, JSON.stringify({ count, resetAt }), { expirationTtl: Math.ceil((resetAt - now) / 1000) });
+}
+
+async function forwardSubmission(
+  env: any,
+  submission: ContactSubmission,
+  settings: ContactSettings
+) {
+  const webhookUrl = settings.webhookUrl || env.CONTACT_WEBHOOK_URL;
+  if (!webhookUrl || !(webhookUrl.startsWith("http://") || webhookUrl.startsWith("https://"))) {
+    return;
+  }
+
+  try {
+    await fetch(webhookUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        pageId: submission.pageId,
+        submittedAt: submission.submittedAt,
+        answers: submission.answers,
+        ip: submission.ip,
+        userAgent: submission.userAgent,
+        id: submission.id,
+      }),
+    });
+  } catch (error) {
+    console.error("contact webhook failed", error);
   }
 }
 
@@ -68,7 +152,7 @@ export async function submitContact(
     return errorResponse("페이지를 찾을 수 없습니다", 404, headers);
   }
 
-  const schema = await readContactSchema(env, canonicalPageId);
+  const { schema, settings } = await readContactSchema(env, canonicalPageId);
   if (!schema.length) {
     return errorResponse("컨택트 폼이 설정되지 않았습니다", 404, headers);
   }
@@ -112,7 +196,14 @@ export async function submitContact(
     userAgent: req.headers.get("user-agent"),
   };
 
+  try {
+    await checkSubmissionThrottle(env, canonicalPageId, submission.ip || null);
+  } catch (error) {
+    return errorResponse(error instanceof Error ? error.message : "제출 제한을 초과했습니다", 429, headers);
+  }
+
   await storeSubmission(env, submission);
+  forwardSubmission(env, submission, settings);
 
   return jsonResponse({ ok: true, id: submission.id }, 201, headers);
 }
@@ -163,4 +254,39 @@ export async function listContactSubmissions(
 
   const submissions = await fetchSubmissions(env, canonicalPageId, 50);
   return jsonResponse({ submissions }, 200, headers);
+}
+
+export async function exportContactSubmissions(
+  req: Request,
+  env: any,
+  pageId: string,
+  headers: HeadersInit
+): Promise<Response> {
+  const token = getBearerToken(req);
+  const canonicalPageId = await resolvePageId(env, pageId);
+  const pageTokenValid = await verifySessionToken(env, "page", token, canonicalPageId);
+  const superTokenValid = await verifySessionToken(env, "super", token);
+
+  if (!pageTokenValid && !superTokenValid) {
+    return errorResponse("인증이 필요합니다", 401, headers);
+  }
+
+  const submissions = await fetchSubmissions(env, canonicalPageId, 200);
+  const header = ["id", "pageId", "submittedAt", "ip", "userAgent", "answers"].join(",");
+  const rows = submissions.map((s) => {
+    const answers = s.answers.map((a) => `${a.label}:${a.value}`).join(" | ");
+    return [s.id, s.pageId, s.submittedAt, s.ip ?? "", s.userAgent ?? "", answers]
+      .map((value) => `"${(value ?? "").toString().replace(/"/g, '""')}"`)
+      .join(",");
+  });
+
+  const csv = [header, ...rows].join("\n");
+  return new Response(csv, {
+    status: 200,
+    headers: {
+      ...headers,
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="contact-submissions-${canonicalPageId}.csv"`,
+    },
+  });
 }

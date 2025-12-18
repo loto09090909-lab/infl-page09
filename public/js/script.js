@@ -397,6 +397,7 @@ let dragState = null;
 let adminSlugs = [];
 let adminContactSchema = [];
 let publicContactSchema = [];
+let contactSettings = {};
 let currentPageId = '';
 let pagePlan = 'free';
 let contactSubmissions = [];
@@ -610,10 +611,14 @@ async function loadPageData(pageId, options = {}) {
             ];
             adminSlugs = Array.isArray(data.slugs) && data.slugs.length ? data.slugs : [pageId];
             adminContactSchema = Array.isArray(data.contactSchema) ? data.contactSchema : [];
+            contactSettings = typeof data.contactSettings === 'object' && data.contactSettings
+                ? { ...data.contactSettings }
+                : {};
             pagePlan = data.plan || 'free';
             renderAdminLinks();
             renderSlugEditor();
             renderContactSchema();
+            hydrateContactSettings();
             renderPrivacySummary();
             renderUsage();
             renderOnboardingBanner();
@@ -860,6 +865,9 @@ async function savePage() {
             type: field.type || 'text',
             ...(field.placeholder ? { placeholder: field.placeholder } : {}),
         })),
+        contactSettings: contactSettings && contactSettings.webhookUrl
+            ? { webhookUrl: contactSettings.webhookUrl.trim() }
+            : {},
         slugs: adminSlugs,
         plan: pagePlan,
     };
@@ -1464,6 +1472,52 @@ async function fetchContactSubmissions() {
     }
 }
 
+async function downloadContactCsv() {
+    const status = document.getElementById('contact-submission-status');
+    if (!derivedPageId || !status) return;
+
+    const token = sessionStorage.getItem('page_admin_token');
+    if (!token) {
+        status.style.display = 'block';
+        status.className = 'status-banner warning';
+        status.innerText = '로그인 후 CSV를 다운로드할 수 있습니다.';
+        return;
+    }
+
+    status.style.display = 'block';
+    status.className = 'status-banner info';
+    status.innerText = 'CSV를 생성하는 중입니다...';
+
+    try {
+        const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/contact-submissions.csv`, {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${token}` },
+        }, [401, 403, 404]);
+
+        if (!res.ok) {
+            const msg = await res.text();
+            throw new Error(msg || `다운로드 실패 (${res.status})`);
+        }
+
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = `contact-submissions-${derivedPageId}.csv`;
+        anchor.style.display = 'none';
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+        URL.revokeObjectURL(url);
+
+        status.className = 'status-banner success';
+        status.innerText = 'CSV를 다운로드했습니다.';
+    } catch (error) {
+        status.className = 'status-banner error';
+        status.innerText = error?.message || 'CSV 다운로드에 실패했습니다.';
+    }
+}
+
 function renderAdminLinks() {
     const adminList = document.getElementById('link-list');
     if (!adminList) return;
@@ -1782,6 +1836,17 @@ function renderContactSchema() {
 
         list.appendChild(row);
     });
+}
+
+function hydrateContactSettings() {
+    const webhookInput = document.getElementById('contactWebhook');
+    if (!webhookInput) return;
+
+    webhookInput.value = contactSettings.webhookUrl || '';
+    webhookInput.oninput = (e) => {
+        const value = (e.target.value || '').trim();
+        contactSettings = value ? { ...contactSettings, webhookUrl: value } : {};
+    };
 }
 
 function renderContactSubmissions() {

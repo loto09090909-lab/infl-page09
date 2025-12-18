@@ -21,6 +21,7 @@ type CreatePageBody = {
   pageId: string;
   profile?: unknown;
   contactSchema?: unknown;
+  contactSettings?: unknown;
   adminEmail: string;
   adminPassword?: string;
   adminOauthProvider?: string;
@@ -37,6 +38,7 @@ type UpdatePageBody = {
   links?: unknown;
   privateLinks?: unknown;
   contactSchema?: unknown;
+  contactSettings?: unknown;
   adminPassword?: string;
   slugs?: unknown;
 };
@@ -50,6 +52,7 @@ type NormalizedCreatePage = {
   pageId: string;
   profile: Record<string, unknown>;
   contactSchema: unknown[];
+  contactSettings: Record<string, unknown>;
   adminEmail: string;
   adminPassword?: string;
   adminOauthProvider?: string;
@@ -136,6 +139,24 @@ function validateContactSchema(raw: unknown) {
     .filter(Boolean);
 
   return { schema, provided: true };
+}
+
+function validateContactSettings(raw: unknown) {
+  if (raw === undefined) return { settings: undefined };
+  if (!raw || typeof raw !== "object") {
+    return { error: "contactSettings는 객체여야 합니다" };
+  }
+
+  const webhookUrl = sanitizeString((raw as any).webhookUrl, 1000);
+  if (webhookUrl && !isHttpUrl(webhookUrl)) {
+    return { error: "webhookUrl은 http(s)여야 합니다" };
+  }
+
+  return {
+    settings: {
+      ...(webhookUrl ? { webhookUrl } : {}),
+    },
+  };
 }
 
 function validateLinks(rawLinks: unknown, defaultPrivate = false) {
@@ -230,10 +251,18 @@ function normalizeCreatePageBody(
     throw new CreatePageError(contactError, 400);
   }
 
+  const { error: contactSettingsError, settings: contactSettings } = validateContactSettings(
+    body.contactSettings
+  );
+  if (contactSettingsError) {
+    throw new CreatePageError(contactSettingsError, 400);
+  }
+
   return {
     pageId,
     profile: profile ?? {},
     contactSchema: contactSchema ?? [],
+    contactSettings: contactSettings ?? {},
     adminEmail: body.adminEmail.trim().toLowerCase(),
     adminPassword: body.adminPassword,
     adminOauthProvider: body.adminOauthProvider,
@@ -272,6 +301,7 @@ async function persistCreatePage(env: any, data: NormalizedCreatePage) {
     links: Array.isArray(data.links) ? data.links : [],
     privateLinks: Array.isArray(data.privateLinks) ? data.privateLinks : [],
     contactSchema: Array.isArray(data.contactSchema) ? data.contactSchema : [],
+    contactSettings: data.contactSettings ?? {},
     slugs: data.slugs ?? [],
     plan: data.plan ?? null,
   };
@@ -620,6 +650,7 @@ export async function getAdminPage(
   let plan: string | null = null;
   let privateLinks: unknown[] = [];
   let contactSchema: unknown[] = [];
+  let contactSettings: Record<string, unknown> | undefined;
   let slugs = await getSlugsForPage(env, row.page_id);
   if (kvValue) {
     try {
@@ -629,6 +660,9 @@ export async function getAdminPage(
       contactSchema = Array.isArray(parsed.contactSchema)
         ? parsed.contactSchema
         : [];
+      contactSettings = parsed.contactSettings && typeof parsed.contactSettings === "object"
+        ? parsed.contactSettings
+        : undefined;
       if (Array.isArray(parsed.slugs) && parsed.slugs.length) {
         slugs = parsed.slugs;
       }
@@ -650,6 +684,7 @@ export async function getAdminPage(
       slugs,
       privateLinks,
       contactSchema,
+      contactSettings,
     },
     200,
     headers
@@ -766,6 +801,13 @@ export async function updatePage(
     return errorResponse(contactError, 400, headers);
   }
 
+  const { error: contactSettingsError, settings: contactSettings } = validateContactSettings(
+    body.contactSettings
+  );
+  if (contactSettingsError) {
+    return errorResponse(contactSettingsError, 400, headers);
+  }
+
   const nextPublicLinks = linksProvided ? publicLinks ?? [] : existingData.links ?? [];
   const nextPrivateLinks = providedPrivate.provided
     ? providedPrivate.privateLinks ?? []
@@ -781,6 +823,7 @@ export async function updatePage(
       contactProvided || schema !== undefined
         ? schema ?? []
         : existingData.contactSchema ?? [],
+    contactSettings: contactSettings ?? existingData.contactSettings ?? {},
     plan:
       typeof body.plan === "string"
         ? sanitizeString(body.plan, 30) ?? existingPlan ?? null

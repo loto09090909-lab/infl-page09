@@ -168,6 +168,11 @@ export default {
         const { listContactSubmissions } = await import("./contact");
         return listContactSubmissions(req, env, pageId, corsHeaders);
       }
+
+      if (method === "GET" && action === "contact-submissions.csv") {
+        const { exportContactSubmissions } = await import("./contact");
+        return exportContactSubmissions(req, env, pageId, corsHeaders);
+      }
     }
 
     return errorResponse("Not Found", 404, corsHeaders);
