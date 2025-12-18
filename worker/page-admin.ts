@@ -8,6 +8,13 @@ import {
   normalizePlanId,
   PlanLimitError,
 } from "./plan-limits";
+import {
+  findConflictingSlug,
+  getSlugsForPage,
+  hasSlugMap,
+  normalizeSlugs,
+  replaceSlugMap,
+} from "./slug-map";
 
 type LoginBody = {
   email?: string;
@@ -20,6 +27,7 @@ type SavePageBody = {
   profile?: unknown;
   links?: unknown;
   plan?: unknown;
+  slugs?: unknown;
 };
 
 export async function pageAdminLogin(
@@ -94,7 +102,43 @@ export async function savePage(
     }
   }
 
-  const normalizedPlan = normalizePlanId(body.plan ?? existingPlan, "free");
+  const metaRow = await env.DB.prepare(
+    "SELECT plan_id FROM page_meta WHERE page_id = ? LIMIT 1"
+  )
+    .bind(canonicalPageId)
+    .first<{ plan_id: string | null }>();
+
+  const normalizedPlan = normalizePlanId(
+    body.plan ?? metaRow?.plan_id ?? existingPlan,
+    "free"
+  );
+
+  let slugs: string[] | null = null;
+  if (body.slugs !== undefined) {
+    slugs = normalizeSlugs(body.slugs, canonicalPageId);
+    const conflict = await findConflictingSlug(env, slugs, canonicalPageId);
+    if (conflict) {
+      return errorResponse(
+        `이미 다른 페이지에 사용 중인 슬러그입니다: ${conflict}`,
+        409,
+        headers
+      );
+    }
+
+    try {
+      await enforcePlanLimit(env, normalizedPlan, "update_slug");
+    } catch (error) {
+      if (error instanceof PlanLimitError) {
+        return errorResponse(error.message, error.status, headers);
+      }
+      throw error;
+    }
+  } else {
+    const hasExistingSlugMap = await hasSlugMap(env, canonicalPageId);
+    if (!hasExistingSlugMap) {
+      slugs = await getSlugsForPage(env, canonicalPageId);
+    }
+  }
   const pageData = {
     profile: body.profile ?? {},
     links: Array.isArray(body.links) ? body.links : [],
@@ -125,6 +169,10 @@ export async function savePage(
       normalizedPlan
     )
     .run();
+
+  if (slugs) {
+    await replaceSlugMap(env, canonicalPageId, slugs);
+  }
 
   return jsonResponse({ success: true, message: "Page saved" }, 200, headers);
 }
