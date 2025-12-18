@@ -15,6 +15,7 @@ import { login as userLogin, signup as userSignup } from "./users";
 import {
   createPrivateLink,
   listPrivateLinksForPage,
+  getPageStatsForAdmin,
 } from "./page-admin";
 import {
   getContactFormForAdmin,
@@ -173,6 +174,10 @@ export default {
 
       if (action === "contact-submissions" && method === "GET") {
         return listContactSubmissions(req, env, pageId, corsHeaders);
+      }
+
+      if (action === "stats" && method === "GET") {
+        return getPageStatsForAdmin(req, env, pageId, corsHeaders);
       }
     }
 

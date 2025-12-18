@@ -84,6 +84,9 @@ CREATE TABLE IF NOT EXISTS page_stats (
   views INTEGER NOT NULL DEFAULT 0,
   admin_views INTEGER NOT NULL DEFAULT 0,
 
+  private_views INTEGER NOT NULL DEFAULT 0,
+  contact_submissions INTEGER NOT NULL DEFAULT 0,
+
   revenue_cents INTEGER NOT NULL DEFAULT 0,
 
   PRIMARY KEY (page_id, day),

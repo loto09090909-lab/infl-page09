@@ -2,6 +2,7 @@ import { resolvePageId } from "./slug";
 import { errorResponse, jsonResponse } from "./utils";
 import { consumePrivateLink } from "./private-links";
 import { getPublicContactForm } from "./contact-forms";
+import { recordPageView } from "./stats";
 
 type PageMetaRow = {
   page_id: string;
@@ -15,7 +16,8 @@ type PageMetaRow = {
 export async function getPage(
   env: any,
   pageId: string,
-  headers: HeadersInit
+  headers: HeadersInit,
+  options: { trackView?: boolean; isPrivate?: boolean; isAdmin?: boolean } = {}
 ): Promise<Response> {
   const resolvedPageId = await resolvePageId(env, pageId);
 
@@ -28,6 +30,13 @@ export async function getPage(
   const contactForm = await getPublicContactForm(env, resolvedPageId);
 
   if (dbRow) {
+    if (options.trackView !== false) {
+      await recordPageView(env, resolvedPageId, {
+        isPrivate: options.isPrivate,
+        isAdmin: options.isAdmin,
+      });
+    }
+
     return jsonResponse(
       {
         profile: {
@@ -51,6 +60,12 @@ export async function getPage(
 
   try {
     const parsed = JSON.parse(kvValue);
+    if (options.trackView !== false) {
+      await recordPageView(env, resolvedPageId, {
+        isPrivate: options.isPrivate,
+        isAdmin: options.isAdmin,
+      });
+    }
     return jsonResponse({ ...parsed, contactForm }, 200, headers);
   } catch (err) {
     return errorResponse("Page data is corrupted", 500, headers);
@@ -68,7 +83,7 @@ export async function getPrivatePage(
     return errorResponse(result.error, result.status, headers);
   }
 
-  return getPage(env, result.pageId, headers);
+  return getPage(env, result.pageId, headers, { isPrivate: true });
 }
 
 function safeParseLinks(raw: string | null) {

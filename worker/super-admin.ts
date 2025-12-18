@@ -15,6 +15,7 @@ import {
   normalizeSlugs,
   replaceSlugMap,
 } from "./slug-map";
+import { recordPageView } from "./stats";
 
 type CreatePageBody = {
   pageId: string;
@@ -406,6 +407,8 @@ export async function getAdminPage(
   if (!row) {
     return errorResponse("Page not found", 404, headers);
   }
+
+  await recordPageView(env, canonicalPageId, { isAdmin: true });
 
   const kvValue = await env.PAGE_KV.get(`page:${row.page_id}`);
   let planFromKv: string | null = null;

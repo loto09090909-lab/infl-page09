@@ -12,6 +12,7 @@ import {
   createPrivateLinkRecord,
   listPrivateLinks,
 } from "./private-links";
+import { getPageStats } from "./stats";
 import {
   findConflictingSlug,
   getSlugsForPage,
@@ -185,6 +186,22 @@ export async function savePage(
   }
 
   return jsonResponse({ success: true, message: "Page saved" }, 200, headers);
+}
+
+export async function getPageStatsForAdmin(
+  req: Request,
+  env: any,
+  pageId: string,
+  headers: HeadersInit
+) {
+  const access = await verifyPageAccess(req, env, pageId, headers);
+  if (access.authorized !== true) return access.authorized;
+
+  const url = new URL(req.url);
+  const days = Number(url.searchParams.get("days") ?? 30);
+  const stats = await getPageStats(env, access.canonicalPageId, days);
+
+  return jsonResponse(stats, 200, headers);
 }
 
 export async function createPrivateLink(

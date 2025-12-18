@@ -3,6 +3,7 @@ import { resolvePageId } from "./slug";
 import { jsonResponse, errorResponse, parseJsonBody } from "./utils";
 import { verifyPageAccess, getPlanForPage } from "./page-admin";
 import { validatePrivateLinkAccess } from "./private-links";
+import { recordContactSubmission } from "./stats";
 
 const ALLOWED_FIELD_TYPES = new Set(["text", "email", "tel", "textarea"]);
 
@@ -168,6 +169,8 @@ export async function submitContact(
       req.headers.get("User-Agent") ?? null
     )
     .run();
+
+  await recordContactSubmission(env, resolvedPageId);
 
   return jsonResponse({ success: true }, 201, headers);
 }
