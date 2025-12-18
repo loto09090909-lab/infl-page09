@@ -128,6 +128,43 @@ export async function consumePrivateLink(
   token: string,
   accessCode?: string | null
 ): Promise<{ pageId: string } | { error: string; status: number }> {
+  const validation = await validatePrivateLink(env, token, accessCode);
+  if ("error" in validation) {
+    return validation;
+  }
+
+  const { row } = validation;
+
+  if (row.remaining_views !== null) {
+    const nextRemaining = Math.max(0, row.remaining_views - 1);
+    await env.DB.prepare(
+      "UPDATE private_links SET remaining_views = ? WHERE id = ?"
+    )
+      .bind(nextRemaining, row.id)
+      .run();
+  }
+
+  return { pageId: row.page_id } as const;
+}
+
+export async function validatePrivateLinkAccess(
+  env: any,
+  token: string,
+  accessCode?: string | null
+): Promise<{ pageId: string; privateLinkId: string } | { error: string; status: number }> {
+  const validation = await validatePrivateLink(env, token, accessCode);
+  if ("error" in validation) {
+    return validation;
+  }
+
+  return { pageId: validation.row.page_id, privateLinkId: validation.row.id };
+}
+
+async function validatePrivateLink(
+  env: any,
+  token: string,
+  accessCode?: string | null
+): Promise<{ row: PrivateLinkRow } | { error: string; status: number }> {
   const row = await env.DB.prepare(
     "SELECT id, page_id, token, max_views, remaining_views, expire_at, access_code_hash FROM private_links WHERE token = ? LIMIT 1"
   )
@@ -158,16 +195,7 @@ export async function consumePrivateLink(
     }
   }
 
-  if (row.remaining_views !== null) {
-    const nextRemaining = Math.max(0, row.remaining_views - 1);
-    await env.DB.prepare(
-      "UPDATE private_links SET remaining_views = ? WHERE id = ?"
-    )
-      .bind(nextRemaining, row.id)
-      .run();
-  }
-
-  return { pageId: row.page_id } as const;
+  return { row } as const;
 }
 
 export function validatePrivateLinkCreation(planAllowed: boolean) {

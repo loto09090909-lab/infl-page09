@@ -1,6 +1,7 @@
 import { resolvePageId } from "./slug";
 import { errorResponse, jsonResponse } from "./utils";
 import { consumePrivateLink } from "./private-links";
+import { getPublicContactForm } from "./contact-forms";
 
 type PageMetaRow = {
   page_id: string;
@@ -24,6 +25,8 @@ export async function getPage(
     .bind(resolvedPageId)
     .first<PageMetaRow>();
 
+  const contactForm = await getPublicContactForm(env, resolvedPageId);
+
   if (dbRow) {
     return jsonResponse(
       {
@@ -34,6 +37,7 @@ export async function getPage(
         },
         links: safeParseLinks(dbRow.links),
         plan: dbRow.plan_id,
+        contactForm,
       },
       200,
       headers
@@ -47,7 +51,7 @@ export async function getPage(
 
   try {
     const parsed = JSON.parse(kvValue);
-    return jsonResponse(parsed, 200, headers);
+    return jsonResponse({ ...parsed, contactForm }, 200, headers);
   } catch (err) {
     return errorResponse("Page data is corrupted", 500, headers);
   }

@@ -233,7 +233,7 @@ export async function listPrivateLinksForPage(
   return jsonResponse({ links }, 200, headers);
 }
 
-async function verifyPageAccess(
+export async function verifyPageAccess(
   req: Request,
   env: any,
   pageId: string,
@@ -251,7 +251,7 @@ async function verifyPageAccess(
   return { authorized: true as const, canonicalPageId };
 }
 
-async function getPlanForPage(env: any, canonicalPageId: string) {
+export async function getPlanForPage(env: any, canonicalPageId: string) {
   const metaRow = await env.DB.prepare(
     "SELECT plan_id FROM page_meta WHERE page_id = ? LIMIT 1"
   )

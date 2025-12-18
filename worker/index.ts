@@ -16,6 +16,12 @@ import {
   createPrivateLink,
   listPrivateLinksForPage,
 } from "./page-admin";
+import {
+  getContactFormForAdmin,
+  saveContactForm,
+  submitContact,
+  listContactSubmissions,
+} from "./contact-forms";
 
 export default {
   async fetch(req: Request, env: any): Promise<Response> {
@@ -41,6 +47,14 @@ export default {
         return errorResponse("pageId가 필요합니다", 400, corsHeaders);
       }
       return getPage(env, decodeURIComponent(pageId), corsHeaders);
+    }
+
+    if (method === "POST" && path.startsWith("/api/pages/") && path.endsWith("/contact")) {
+      const pageId = path.replace("/api/pages/", "").replace(/\/contact$/, "");
+      if (!pageId) {
+        return errorResponse("pageId가 필요합니다", 400, corsHeaders);
+      }
+      return submitContact(req, env, decodeURIComponent(pageId), corsHeaders);
     }
 
     if (method === "GET" && path.startsWith("/api/private/")) {
@@ -145,6 +159,20 @@ export default {
         if (method === "POST") {
           return createPrivateLink(req, env, pageId, corsHeaders);
         }
+      }
+
+      if (action === "contact-form") {
+        if (method === "GET") {
+          return getContactFormForAdmin(req, env, pageId, corsHeaders);
+        }
+
+        if (method === "POST") {
+          return saveContactForm(req, env, pageId, corsHeaders);
+        }
+      }
+
+      if (action === "contact-submissions" && method === "GET") {
+        return listContactSubmissions(req, env, pageId, corsHeaders);
       }
     }
 

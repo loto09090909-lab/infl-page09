@@ -1,4 +1,8 @@
-export type PlanAction = "create_page" | "update_slug" | "create_private_link";
+export type PlanAction =
+  | "create_page"
+  | "update_slug"
+  | "create_private_link"
+  | "configure_contact_form";
 
 export class PlanLimitError extends Error {
   status: number;
@@ -14,6 +18,7 @@ export type PlanLimitRow = {
   can_create_pages: number;
   can_change_slug: number;
   can_create_private_links: number;
+  max_contact_fields: number;
 };
 
 export function normalizePlanId(planId: unknown, defaultPlan = "free") {
@@ -25,7 +30,7 @@ export function normalizePlanId(planId: unknown, defaultPlan = "free") {
 export async function getPlanLimits(env: any, planId?: string | null): Promise<PlanLimitRow> {
   const effectivePlanId = normalizePlanId(planId, "default");
   const row = await env.DB.prepare(
-    "SELECT plan_id, can_create_pages, can_change_slug, can_create_private_links FROM plan_limits WHERE plan_id = ? LIMIT 1"
+    "SELECT plan_id, can_create_pages, can_change_slug, can_create_private_links, max_contact_fields FROM plan_limits WHERE plan_id = ? LIMIT 1"
   )
     .bind(effectivePlanId)
     .first<PlanLimitRow>();
@@ -36,6 +41,7 @@ export async function getPlanLimits(env: any, planId?: string | null): Promise<P
       can_create_pages: 1,
       can_change_slug: 1,
       can_create_private_links: 1,
+      max_contact_fields: 5,
     }
   );
 }
@@ -57,6 +63,11 @@ export async function enforcePlanLimit(env: any, planId: unknown, action: PlanAc
     case "create_private_link":
       if (!planLimits.can_create_private_links) {
         throw new PlanLimitError("이 플랜에서는 프라이빗 링크를 만들 수 없습니다", 403);
+      }
+      break;
+    case "configure_contact_form":
+      if (!planLimits.max_contact_fields || planLimits.max_contact_fields <= 0) {
+        throw new PlanLimitError("이 플랜에서는 컨택트 폼을 설정할 수 없습니다", 403);
       }
       break;
   }

@@ -99,15 +99,16 @@ CREATE TABLE IF NOT EXISTS plan_limits (
   plan_id TEXT PRIMARY KEY,
   can_create_pages INTEGER NOT NULL DEFAULT 1 CHECK (can_create_pages IN (0,1)),
   can_change_slug INTEGER NOT NULL DEFAULT 1 CHECK (can_change_slug IN (0,1)),
-  can_create_private_links INTEGER NOT NULL DEFAULT 1 CHECK (can_create_private_links IN (0,1))
+  can_create_private_links INTEGER NOT NULL DEFAULT 1 CHECK (can_create_private_links IN (0,1)),
+  max_contact_fields INTEGER NOT NULL DEFAULT 0 CHECK (max_contact_fields >= 0)
 );
 
 -- 기본값 시드(원하는 값으로 조정)
-INSERT OR IGNORE INTO plan_limits(plan_id, can_create_pages, can_change_slug, can_create_private_links)
+INSERT OR IGNORE INTO plan_limits(plan_id, can_create_pages, can_change_slug, can_create_private_links, max_contact_fields)
 VALUES
-('free',    1, 0, 0),
-('basic',   1, 1, 1),
-('premium', 1, 1, 1);
+('free',    1, 0, 0, 2),
+('basic',   1, 1, 1, 5),
+('premium', 1, 1, 1, 20);
 
 -- =========================
 -- private_links (프라이빗/난수형 링크)
@@ -127,3 +128,32 @@ CREATE TABLE IF NOT EXISTS private_links (
 );
 
 CREATE INDEX IF NOT EXISTS idx_private_links_page ON private_links(page_id);
+
+-- =========================
+-- contact_forms (컨택트 폼 스키마)
+-- =========================
+CREATE TABLE IF NOT EXISTS contact_forms (
+  page_id TEXT PRIMARY KEY,
+  schema_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (page_id) REFERENCES page_meta(page_id) ON DELETE CASCADE
+);
+
+-- =========================
+-- contact_submissions (컨택트 폼 제출 기록)
+-- =========================
+CREATE TABLE IF NOT EXISTS contact_submissions (
+  id TEXT PRIMARY KEY,
+  page_id TEXT NOT NULL,
+  private_link_id TEXT,
+  payload_json TEXT NOT NULL,
+  submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
+  ip TEXT,
+  user_agent TEXT,
+  FOREIGN KEY (page_id) REFERENCES page_meta(page_id) ON DELETE CASCADE,
+  FOREIGN KEY (private_link_id) REFERENCES private_links(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_contact_submissions_page ON contact_submissions(page_id);
+CREATE INDEX IF NOT EXISTS idx_contact_submissions_private ON contact_submissions(private_link_id);
