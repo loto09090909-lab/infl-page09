@@ -1,5 +1,8 @@
 const APP_CONFIG = window.APP_CONFIG || {};
 
+const storedManualBase = (typeof localStorage !== 'undefined' && localStorage.getItem('manualApiBase')) || null;
+let MANUAL_API_BASE = storedManualBase || null;
+
 function resolveApiBases() {
     const bases = [];
     const pushBase = (value) => {
@@ -35,6 +38,13 @@ function resolveApiBases() {
 const API_BASES = resolveApiBases();
 const API_HEALTH_CACHE = new Map();
 let LAST_API_BASE_USED = null;
+
+function getApiBaseCandidates() {
+    if (MANUAL_API_BASE) {
+        return [MANUAL_API_BASE, ...API_BASES.filter((base) => base !== MANUAL_API_BASE)];
+    }
+    return API_BASES;
+}
 
 function withTimeout(promise, timeoutMs = 8000, controller = new AbortController()) {
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -73,7 +83,7 @@ async function checkApiHealth(base) {
 }
 
 async function primeApiBaseSelection() {
-    for (const base of API_BASES) {
+    for (const base of getApiBaseCandidates()) {
         const healthy = await checkApiHealth(base);
         if (healthy) {
             LAST_API_BASE_USED = base;
@@ -81,7 +91,7 @@ async function primeApiBaseSelection() {
             return base;
         }
     }
-    updateEnvBadge(API_BASES[0] || null);
+    updateEnvBadge(getApiBaseCandidates()[0] || null);
     return null;
 }
 
@@ -92,9 +102,9 @@ async function apiFetch(
 ) {
     let lastError;
 
-    for (const base of API_BASES) {
+    for (const base of getApiBaseCandidates()) {
         const healthy = await checkApiHealth(base).catch(() => null);
-        if (healthy === false) {
+        if (healthy === false && base !== MANUAL_API_BASE) {
             lastError = lastError || new Error(`Health check failed for ${base}`);
             continue;
         }
@@ -207,6 +217,106 @@ function updateEnvBadge(base) {
     const detail = host ? `${envLabel} · ${host}` : envLabel;
     badge.innerHTML = `<span class="env-dot"></span><span>${detail}</span>`;
     badge.style.display = 'inline-flex';
+}
+
+function setManualApiBase(base) {
+    const normalized = base ? base.replace(/\/+$/, '') : null;
+    MANUAL_API_BASE = normalized || null;
+    try {
+        if (MANUAL_API_BASE) {
+            localStorage.setItem('manualApiBase', MANUAL_API_BASE);
+        } else {
+            localStorage.removeItem('manualApiBase');
+        }
+    } catch (error) {
+        console.warn('manualApiBase 저장 실패', error);
+    }
+    updateEnvBadge(MANUAL_API_BASE || LAST_API_BASE_USED || getApiBaseCandidates()[0] || null);
+}
+
+async function renderApiDebugPanel(targetId) {
+    const container = document.getElementById(targetId);
+    if (!container) return;
+
+    container.innerHTML = '';
+    container.classList.add('api-debug');
+
+    const header = document.createElement('div');
+    header.className = 'api-debug-header';
+    header.innerHTML = '<div><p class="eyebrow">API 연결</p><h3>환경/호스트 상태</h3></div>';
+
+    const actions = document.createElement('div');
+    actions.className = 'api-debug-actions';
+    const refreshBtn = document.createElement('button');
+    refreshBtn.type = 'button';
+    refreshBtn.className = 'ghost';
+    refreshBtn.innerText = '재검사';
+    refreshBtn.onclick = () => refreshApiDebugPanel(targetId);
+    const resetBtn = document.createElement('button');
+    resetBtn.type = 'button';
+    resetBtn.className = 'ghost';
+    resetBtn.innerText = '자동 선택';
+    resetBtn.onclick = () => {
+        setManualApiBase(null);
+        refreshApiDebugPanel(targetId);
+    };
+    actions.appendChild(refreshBtn);
+    actions.appendChild(resetBtn);
+    header.appendChild(actions);
+
+    const list = document.createElement('div');
+    list.id = `${targetId}-list`;
+    list.className = 'api-debug-list';
+    list.innerHTML = '<p class="help-text">헬스체크 결과를 불러오는 중...</p>';
+
+    container.appendChild(header);
+    container.appendChild(list);
+
+    await refreshApiDebugPanel(targetId);
+}
+
+async function refreshApiDebugPanel(targetId) {
+    const list = document.getElementById(`${targetId}-list`);
+    if (!list) return;
+
+    const candidates = getApiBaseCandidates();
+    if (!candidates.length) {
+        list.innerHTML = '<p class="help-text">사용 가능한 API 베이스가 없습니다.</p>';
+        return;
+    }
+
+    const rows = await Promise.all(
+        candidates.map(async (base) => {
+            const status = await checkApiHealth(base).catch(() => false);
+            const wrapper = document.createElement('div');
+            wrapper.className = `api-debug-row ${MANUAL_API_BASE === base ? 'active' : ''}`;
+
+            const dot = document.createElement('span');
+            dot.className = `env-dot ${status ? 'ok' : 'fail'}`;
+
+            const label = document.createElement('div');
+            label.className = 'api-debug-label';
+            label.innerHTML = `<strong>${base}</strong><span>${status ? '응답 정상' : '응답 없음'}</span>`;
+
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = MANUAL_API_BASE === base ? 'secondary' : 'ghost';
+            button.innerText = MANUAL_API_BASE === base ? '수동 선택됨' : '이 베이스 사용';
+            button.onclick = () => {
+                setManualApiBase(base);
+                refreshApiDebugPanel(targetId);
+                primeApiBaseSelection();
+            };
+
+            wrapper.appendChild(dot);
+            wrapper.appendChild(label);
+            wrapper.appendChild(button);
+            return wrapper;
+        })
+    );
+
+    list.innerHTML = '';
+    rows.forEach((row) => list.appendChild(row));
 }
 
 function createLinkIcon(preset) {
@@ -470,6 +580,7 @@ const isUserHtml = window.location.pathname.endsWith('/user.html');
 const isPublicView = !pageRole && (isUserPage || looksLikeSlugPage || isUserHtml);
 const derivedPageId = pageIdFromPath || pageIdFromQuery || '';
 
+updateEnvBadge(MANUAL_API_BASE || API_BASES[0] || null);
 primeApiBaseSelection();
 
 if (isPublicView) {
@@ -550,6 +661,8 @@ if (userViewReady || pageRole === 'page-admin') {
 
 // 페이지 관리자 로그인 화면에서 URL로 받은 pageId를 자동 입력
 document.addEventListener('DOMContentLoaded', () => {
+    renderApiDebugPanel('api-debug');
+
     const pageAdminIdInput = document.getElementById('page-admin-id');
     if (pageAdminIdInput && (pageIdFromPath || pageIdFromQuery)) {
         pageAdminIdInput.value = pageIdFromPath || pageIdFromQuery;
