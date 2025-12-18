@@ -1,4 +1,4 @@
-import { resolvePageId } from "./slug";
+import { resolvePageWithRedirect } from "./slug";
 import { errorResponse, jsonResponse } from "./utils";
 import { consumePrivateLink } from "./private-links";
 import { getPublicContactForm } from "./contact-forms";
@@ -19,7 +19,16 @@ export async function getPage(
   headers: HeadersInit,
   options: { trackView?: boolean; isPrivate?: boolean; isAdmin?: boolean } = {}
 ): Promise<Response> {
-  const resolvedPageId = await resolvePageId(env, pageId);
+  const resolution = await resolvePageWithRedirect(env, pageId);
+  if (resolution.redirectSlug) {
+    const redirectHeaders = {
+      ...headers,
+      Location: `/api/pages/${encodeURIComponent(resolution.redirectSlug)}`,
+    };
+    return new Response(null, { status: 301, headers: redirectHeaders });
+  }
+
+  const resolvedPageId = resolution.pageId;
 
   const dbRow = await env.DB.prepare(
     "SELECT page_id, name, photo_url, description, links, plan_id FROM page_meta WHERE page_id = ? LIMIT 1"

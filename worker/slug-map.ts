@@ -51,6 +51,17 @@ export async function findConflictingSlug(env: any, slugs: string[], ownerPageId
 }
 
 export async function replaceSlugMap(env: any, pageId: string, slugs: string[]) {
+  const existing = await env.DB.prepare(
+    "SELECT display_name FROM slug_map WHERE page_id = ?"
+  )
+    .bind(pageId)
+    .all<{ display_name: string }>();
+
+  const existingSlugs = (existing?.results ?? [])
+    .map((row) => row.display_name)
+    .filter(Boolean);
+  const primarySlug = slugs[0] ?? pageId;
+
   await env.DB.prepare("DELETE FROM slug_map WHERE page_id = ?")
     .bind(pageId)
     .run();
@@ -60,6 +71,18 @@ export async function replaceSlugMap(env: any, pageId: string, slugs: string[]) 
       "INSERT OR REPLACE INTO slug_map (display_name, page_id) VALUES (?, ?)"
     )
       .bind(slug, pageId)
+      .run();
+  }
+
+  const removedSlugs = existingSlugs.filter(
+    (slug) => !slugs.includes(slug) && slug !== primarySlug
+  );
+
+  for (const oldSlug of removedSlugs) {
+    await env.DB.prepare(
+      "INSERT OR REPLACE INTO slug_history (old_slug, new_slug, page_id) VALUES (?, ?, ?)"
+    )
+      .bind(oldSlug, primarySlug, pageId)
       .run();
   }
 }

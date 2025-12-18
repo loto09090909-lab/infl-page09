@@ -75,6 +75,20 @@ CREATE TABLE IF NOT EXISTS slug_map (
 CREATE INDEX IF NOT EXISTS idx_slug_map_page ON slug_map(page_id);
 
 -- =========================
+-- slug_history
+--  - 이전 슬러그를 새 메인 슬러그로 301 리디렉션할 때 사용
+-- =========================
+CREATE TABLE IF NOT EXISTS slug_history (
+  old_slug TEXT PRIMARY KEY,
+  new_slug TEXT NOT NULL,
+  page_id TEXT NOT NULL,
+  changed_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (page_id) REFERENCES page_meta(page_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_slug_history_page ON slug_history(page_id);
+
+-- =========================
 -- page_stats (일별 통계)
 --  - revenue는 정밀도 문제로 REAL보다 "정수 cents"가 안전(추천)
 -- =========================
