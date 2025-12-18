@@ -106,6 +106,11 @@ let userViewReady = hasUserView;
 let adminLinks = [];
 let selectedPlatformId = PLATFORM_PRESETS[0]?.id || '';
 let dragState = null;
+let adminContactFields = [];
+let contactSubmissions = [];
+let privateLinks = [];
+let pageStats = null;
+let lastLoadedPageId = '';
 
 function createCustomIcon(url, alt = "") {
     if (!url) return null;
@@ -188,6 +193,7 @@ async function loadPageData(pageId) {
     }
 
     const data = await res.json();
+    lastLoadedPageId = pageId;
 
     if (data && data.profile) {
         updatePageContext(pageId, data.profile);
@@ -217,6 +223,23 @@ async function loadPageData(pageId) {
         if (photoInput) photoInput.value = data.profile.photoUrl ?? '';
     } else {
         console.error('Page data not found');
+    }
+
+    if (Array.isArray(data?.contactForm)) {
+        adminContactFields = data.contactForm;
+        renderContactFormEditor();
+        renderPublicContactForm(data.contactForm);
+    } else {
+        adminContactFields = [];
+        renderContactFormEditor();
+        renderPublicContactForm(null);
+    }
+
+    if (pageRole === 'page-admin') {
+        fetchContactForm();
+        fetchContactSubmissions();
+        fetchPrivateLinkList();
+        fetchStats();
     }
 }
 
@@ -248,6 +271,9 @@ const pathSegments = window.location.pathname.split('/').filter(Boolean);
 const searchParams = new URLSearchParams(window.location.search);
 const pageIdFromQuery = searchParams.get('pageId');
 const pageRole = document.body?.dataset?.pageRole;
+const privateTokenFromQuery = searchParams.get('privateToken') || '';
+const privateAccessCodeFromQuery =
+    searchParams.get('accessCode') || searchParams.get('code') || '';
 const pageIdFromPath =
     pathSegments.length >= 2 && pathSegments[1] === 'admin' ? pathSegments[0] : '';
 const isUserPage = pathSegments.length === 2 && pathSegments[0] === 'user' && pathSegments[1];
@@ -311,6 +337,20 @@ document.addEventListener('DOMContentLoaded', () => {
     if (document.body?.dataset?.pageRole === 'page-admin') {
         renderPlatformSelector();
         updatePlatformPrefix();
+
+        document.getElementById('add-contact-field')?.addEventListener('click', addContactFieldFromInputs);
+        document.getElementById('save-contact-form')?.addEventListener('click', saveContactFormConfig);
+        document.getElementById('load-contact-form')?.addEventListener('click', fetchContactForm);
+        document
+            .getElementById('refresh-contact-submissions')
+            ?.addEventListener('click', fetchContactSubmissions);
+        document
+            .getElementById('create-private-link')
+            ?.addEventListener('click', createPrivateLinkFromInputs);
+        document
+            .getElementById('refresh-private-links')
+            ?.addEventListener('click', fetchPrivateLinkList);
+        document.getElementById('refresh-stats')?.addEventListener('click', fetchStats);
     }
 });
 
@@ -787,5 +827,413 @@ function renderAdminLinks() {
         li.appendChild(fields);
         li.appendChild(actions);
         adminList.appendChild(li);
+    });
+}
+
+// ---- 컨택트 폼 편집 ----
+function renderContactFormEditor() {
+    const list = document.getElementById('contact-field-list');
+    if (!list) return;
+
+    list.innerHTML = '';
+
+    if (!adminContactFields.length) {
+        const empty = document.createElement('li');
+        empty.innerText = '추가된 필드가 없습니다. 위 입력창에서 필드를 추가하세요.';
+        list.appendChild(empty);
+        return;
+    }
+
+    adminContactFields.forEach((field, index) => {
+        const li = document.createElement('li');
+        const header = document.createElement('div');
+        header.className = 'field-chip';
+        header.innerText = `${field.label || field.name} (${field.type})`;
+
+        const meta = document.createElement('div');
+        meta.className = 'field-meta';
+        meta.innerText = `${field.name}${field.required ? ' · 필수' : ''}${field.placeholder ? ` · ${field.placeholder}` : ''}`;
+
+        const actions = document.createElement('div');
+        actions.className = 'link-row-actions';
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'pill-button danger';
+        removeBtn.innerText = '삭제';
+        removeBtn.onclick = () => removeContactField(index);
+        actions.appendChild(removeBtn);
+
+        li.appendChild(header);
+        li.appendChild(meta);
+        li.appendChild(actions);
+        list.appendChild(li);
+    });
+}
+
+function addContactFieldFromInputs() {
+    const nameInput = document.getElementById('contact-field-name');
+    const labelInput = document.getElementById('contact-field-label');
+    const typeSelect = document.getElementById('contact-field-type');
+    const placeholderInput = document.getElementById('contact-field-placeholder');
+    const requiredInput = document.getElementById('contact-field-required');
+
+    const name = nameInput?.value?.trim();
+    const label = labelInput?.value?.trim();
+    const type = typeSelect?.value || 'text';
+    const placeholder = placeholderInput?.value?.trim();
+    const required = !!requiredInput?.checked;
+
+    if (!name) {
+        alert('필드 키를 입력하세요. (예: email, phone)');
+        return;
+    }
+
+    adminContactFields.push({
+        name,
+        label: label || name,
+        type,
+        required,
+        ...(placeholder ? { placeholder } : {}),
+    });
+
+    renderContactFormEditor();
+
+    if (nameInput) nameInput.value = '';
+    if (labelInput) labelInput.value = '';
+    if (placeholderInput) placeholderInput.value = '';
+    if (requiredInput) requiredInput.checked = false;
+}
+
+function removeContactField(index) {
+    adminContactFields.splice(index, 1);
+    renderContactFormEditor();
+}
+
+async function fetchContactForm() {
+    if (!lastLoadedPageId) return;
+    const token = sessionStorage.getItem('page_admin_token');
+    if (!token) return;
+
+    const res = await apiFetch(`/api/page/${encodeURIComponent(lastLoadedPageId)}/contact-form`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (res.ok) {
+        const data = await res.json();
+        adminContactFields = Array.isArray(data?.fields) ? data.fields : [];
+        renderContactFormEditor();
+    }
+}
+
+async function saveContactFormConfig() {
+    if (!lastLoadedPageId) {
+        alert('페이지 정보를 먼저 불러와 주세요.');
+        return;
+    }
+    const token = sessionStorage.getItem('page_admin_token');
+    if (!token) {
+        alert('페이지 관리자 인증이 필요합니다. 다시 로그인해 주세요.');
+        return;
+    }
+
+    const res = await apiFetch(`/api/page/${encodeURIComponent(lastLoadedPageId)}/contact-form`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ fields: adminContactFields }),
+    });
+
+    if (res.ok) {
+        alert('컨택트 폼이 저장되었습니다.');
+        fetchContactForm();
+    } else {
+        const text = await res.text();
+        alert(`저장 실패: ${text || res.status}`);
+    }
+}
+
+// ---- 컨택트 제출 ----
+function renderPublicContactForm(schema) {
+    const form = document.getElementById('contact-form');
+    const fieldsHost = document.getElementById('contact-fields');
+    const statusEl = document.getElementById('contact-status');
+    if (!form || !fieldsHost) return;
+
+    fieldsHost.innerHTML = '';
+
+    if (!schema || !schema.length) {
+        form.style.display = 'none';
+        if (statusEl) statusEl.innerText = '컨택트 폼이 준비되지 않았습니다.';
+        return;
+    }
+
+    form.style.display = 'flex';
+    if (statusEl) statusEl.innerText = '';
+
+    schema.forEach((field) => {
+        const group = document.createElement('div');
+        group.className = 'field-group';
+
+        const label = document.createElement('label');
+        label.innerText = field.label || field.name;
+        label.htmlFor = `contact-${field.name}`;
+
+        const inputId = `contact-${field.name}`;
+        let input;
+        if (field.type === 'textarea') {
+            input = document.createElement('textarea');
+            input.rows = 3;
+        } else {
+            input = document.createElement('input');
+            input.type = field.type || 'text';
+        }
+        input.id = inputId;
+        input.name = field.name;
+        input.placeholder = field.placeholder || '';
+        input.required = !!field.required;
+
+        group.appendChild(label);
+        group.appendChild(input);
+        fieldsHost.appendChild(group);
+    });
+
+    form.onsubmit = handleContactSubmit;
+}
+
+async function handleContactSubmit(event) {
+    event.preventDefault();
+    const statusEl = document.getElementById('contact-status');
+    if (!lastLoadedPageId) {
+        if (statusEl) statusEl.innerText = '페이지 정보를 불러온 뒤 시도해 주세요.';
+        return;
+    }
+
+    const form = event.target;
+    const formData = new FormData(form);
+    const values = {};
+    formData.forEach((value, key) => {
+        values[key] = value;
+    });
+
+    const payload = { values };
+
+    if (privateTokenFromQuery) {
+        payload.privateToken = privateTokenFromQuery;
+    }
+    if (privateAccessCodeFromQuery) {
+        payload.accessCode = privateAccessCodeFromQuery;
+    }
+
+    const res = await apiFetch(`/api/pages/${encodeURIComponent(lastLoadedPageId)}/contact`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+
+    if (res.ok) {
+        if (statusEl) statusEl.innerText = '제출이 완료되었습니다.';
+        form.reset();
+    } else {
+        const text = await res.text();
+        if (statusEl) statusEl.innerText = `제출 실패: ${text || res.status}`;
+    }
+}
+
+// ---- 컨택트 제출 목록 ----
+async function fetchContactSubmissions() {
+    if (!lastLoadedPageId) return;
+    const token = sessionStorage.getItem('page_admin_token');
+    if (!token) return;
+
+    const res = await apiFetch(`/api/page/${encodeURIComponent(lastLoadedPageId)}/contact-submissions`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (res.ok) {
+        const data = await res.json();
+        contactSubmissions = data?.submissions || [];
+        renderContactSubmissions();
+    }
+}
+
+function renderContactSubmissions() {
+    const host = document.getElementById('contact-submission-list');
+    if (!host) return;
+    host.innerHTML = '';
+
+    if (!contactSubmissions.length) {
+        host.innerText = '아직 제출된 컨택트가 없습니다.';
+        return;
+    }
+
+    contactSubmissions.forEach((item) => {
+        const card = document.createElement('div');
+        card.className = 'submission-card';
+
+        const meta = document.createElement('div');
+        meta.className = 'submission-meta';
+        meta.innerText = `${item.submittedAt || ''}${item.privateLinkId ? ` · 프라이빗:${item.privateLinkId}` : ''}`;
+
+        const values = document.createElement('div');
+        values.className = 'submission-values';
+        Object.entries(item.values || {}).forEach(([key, value]) => {
+            const kv = document.createElement('div');
+            kv.className = 'kv';
+            const k = document.createElement('strong');
+            k.innerText = key;
+            const v = document.createElement('span');
+            v.innerText = String(value ?? '');
+            kv.appendChild(k);
+            kv.appendChild(v);
+            values.appendChild(kv);
+        });
+
+        card.appendChild(meta);
+        card.appendChild(values);
+        host.appendChild(card);
+    });
+}
+
+// ---- 프라이빗 링크 관리 ----
+async function createPrivateLinkFromInputs() {
+    if (!lastLoadedPageId) {
+        alert('페이지 정보를 먼저 불러와 주세요.');
+        return;
+    }
+    const token = sessionStorage.getItem('page_admin_token');
+    if (!token) {
+        alert('페이지 관리자 인증이 필요합니다. 다시 로그인해 주세요.');
+        return;
+    }
+
+    const ttlInput = document.getElementById('private-link-ttl');
+    const maxViewsInput = document.getElementById('private-link-maxviews');
+    const codeInput = document.getElementById('private-link-code');
+
+    const ttlMinutes = ttlInput?.value ? Number(ttlInput.value) : undefined;
+    const maxViews = maxViewsInput?.value ? Number(maxViewsInput.value) : undefined;
+    const accessCode = codeInput?.value?.trim() || undefined;
+
+    const res = await apiFetch(`/api/page/${encodeURIComponent(lastLoadedPageId)}/private-links`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ ttlMinutes, maxViews, accessCode }),
+    });
+
+    if (res.ok) {
+        alert('프라이빗 링크가 생성되었습니다.');
+        if (ttlInput) ttlInput.value = '';
+        if (maxViewsInput) maxViewsInput.value = '';
+        if (codeInput) codeInput.value = '';
+        fetchPrivateLinkList();
+    } else {
+        const text = await res.text();
+        alert(`생성 실패: ${text || res.status}`);
+    }
+}
+
+async function fetchPrivateLinkList() {
+    if (!lastLoadedPageId) return;
+    const token = sessionStorage.getItem('page_admin_token');
+    if (!token) return;
+
+    const res = await apiFetch(`/api/page/${encodeURIComponent(lastLoadedPageId)}/private-links`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (res.ok) {
+        const data = await res.json();
+        privateLinks = data?.links || [];
+        renderPrivateLinks();
+    }
+}
+
+function renderPrivateLinks() {
+    const host = document.getElementById('private-link-list');
+    if (!host) return;
+    host.innerHTML = '';
+
+    if (!privateLinks.length) {
+        const empty = document.createElement('li');
+        empty.innerText = '생성된 프라이빗 링크가 없습니다.';
+        host.appendChild(empty);
+        return;
+    }
+
+    privateLinks.forEach((link) => {
+        const li = document.createElement('li');
+        const chip = document.createElement('div');
+        chip.className = 'private-link-chip';
+        const tokenSpan = document.createElement('code');
+        tokenSpan.innerText = link.token;
+        chip.appendChild(tokenSpan);
+
+        if (link.remainingViews !== null && link.remainingViews !== undefined) {
+            const views = document.createElement('span');
+            views.innerText = `남은 조회수: ${link.remainingViews}`;
+            chip.appendChild(views);
+        }
+        if (link.expireAt) {
+            const exp = document.createElement('span');
+            exp.innerText = `만료: ${link.expireAt}`;
+            chip.appendChild(exp);
+        }
+
+        li.appendChild(chip);
+        host.appendChild(li);
+    });
+}
+
+// ---- 통계 ----
+async function fetchStats() {
+    if (!lastLoadedPageId) return;
+    const token = sessionStorage.getItem('page_admin_token');
+    if (!token) return;
+
+    const res = await apiFetch(`/api/page/${encodeURIComponent(lastLoadedPageId)}/stats?days=30`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (res.ok) {
+        pageStats = await res.json();
+        renderStats();
+    }
+}
+
+function renderStats() {
+    const host = document.getElementById('stats-overview');
+    if (!host || !pageStats?.totals) return;
+
+    const { totals } = pageStats;
+    host.innerHTML = '';
+
+    const tiles = [
+        { label: '총 조회수', value: totals.views },
+        { label: '관리자 조회', value: totals.adminViews },
+        { label: '프라이빗 조회', value: totals.privateViews },
+        { label: '컨택트 제출', value: totals.contactSubmissions },
+    ];
+
+    tiles.forEach((tile) => {
+        const div = document.createElement('div');
+        div.className = 'stat-tile';
+        const label = document.createElement('div');
+        label.className = 'label';
+        label.innerText = tile.label;
+        const value = document.createElement('div');
+        value.className = 'value';
+        value.innerText = String(tile.value ?? 0);
+        div.appendChild(label);
+        div.appendChild(value);
+        host.appendChild(div);
     });
 }

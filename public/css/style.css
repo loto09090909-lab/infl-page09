@@ -696,3 +696,153 @@ body.user-view {
     color: #6b7280;
     font-size: 13px;
 }
+
+.contact-form-card .inline-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.contact-form-editor input,
+.contact-form-editor select,
+.contact-form-editor button {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.inline-checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+}
+
+#contact-field-list li,
+#private-link-list li {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.field-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: #f3f4f6;
+    font-weight: 600;
+}
+
+.field-meta {
+    color: #6b7280;
+    font-size: 13px;
+}
+
+.submission-list {
+    display: grid;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.submission-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 12px;
+    background: #f9fafb;
+}
+
+.submission-meta {
+    font-size: 12px;
+    color: #6b7280;
+    margin-bottom: 6px;
+}
+
+.submission-values {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 6px 12px;
+}
+
+.submission-values .kv {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 8px;
+}
+
+.submission-values .kv strong {
+    color: #111827;
+}
+
+.private-link-chip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+
+.private-link-chip code {
+    background: #111827;
+    color: #fff;
+    padding: 6px 8px;
+    border-radius: 8px;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.stats-overview {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.stat-tile {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 12px;
+}
+
+.stat-tile .label {
+    font-size: 13px;
+    color: #6b7280;
+}
+
+.stat-tile .value {
+    font-size: 22px;
+    font-weight: 700;
+    margin-top: 4px;
+}
+
+.contact-form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    align-items: stretch;
+}
+
+.contact-form .field-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    text-align: left;
+}
+
+.contact-form input,
+.contact-form textarea,
+.contact-form select {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.contact-status {
+    font-size: 14px;
+    color: #15803d;
+    min-height: 18px;
+    text-align: center;
+}
