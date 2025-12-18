@@ -117,12 +117,14 @@ function validateContactSettings(raw: unknown) {
   }
 
   const webhookUrl = sanitizeString((raw as any).webhookUrl, 1000);
+  const enabled = (raw as any).enabled === true;
   if (webhookUrl && !isHttpUrl(webhookUrl)) {
     return { error: "webhookUrl은 http(s)여야 합니다" };
   }
 
   return {
     settings: {
+      ...(enabled ? { enabled: true } : { enabled: false }),
       ...(webhookUrl ? { webhookUrl } : {}),
     },
   };
@@ -382,7 +384,7 @@ export async function savePage(
     privateLinks: nextPrivateLinks,
     contactSchema:
       contactProvided || schema !== undefined ? schema ?? [] : existingData.contactSchema ?? [],
-    contactSettings: contactSettings ?? existingData.contactSettings ?? {},
+    contactSettings: contactSettings ?? existingData.contactSettings ?? { enabled: false },
     slugs: normalizedSlugs,
     plan:
       typeof body.plan === "string"

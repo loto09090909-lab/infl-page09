@@ -39,6 +39,14 @@ export async function getPage(
     .first<PageMetaRow>();
 
   if (dbRow) {
+    const contactSettings = kvParsed?.contactSettings ?? {};
+    const safeContactSettings = includePrivate
+      ? {
+          enabled: contactSettings?.enabled === true,
+          ...(contactSettings?.webhookUrl ? { webhookUrl: contactSettings.webhookUrl } : {}),
+        }
+      : { enabled: contactSettings?.enabled === true };
+
     return jsonResponse(
       {
         profile: {
@@ -49,6 +57,7 @@ export async function getPage(
         links: safeParseLinks(dbRow.links),
         plan: kvParsed?.plan ?? null,
         contactSchema: kvParsed?.contactSchema ?? [],
+        contactSettings: safeContactSettings,
         privateLinks: includePrivate ? kvParsed?.privateLinks ?? [] : undefined,
         slugs: includePrivate
           ? kvParsed?.slugs ?? (await getSlugsForPage(env, resolvedPageId))
@@ -69,12 +78,21 @@ export async function getPage(
       ? parsed.links
       : [];
 
+    const contactSettings = parsed?.contactSettings ?? {};
+    const safeContactSettings = includePrivate
+      ? {
+          enabled: contactSettings?.enabled === true,
+          ...(contactSettings?.webhookUrl ? { webhookUrl: contactSettings.webhookUrl } : {}),
+        }
+      : { enabled: contactSettings?.enabled === true };
+
     return jsonResponse(
       {
         ...parsed,
         links: publicLinks,
         privateLinks: includePrivate ? parsed.privateLinks ?? [] : undefined,
         contactSchema: parsed.contactSchema ?? [],
+        contactSettings: safeContactSettings,
         slugs: includePrivate
           ? parsed.slugs ?? (await getSlugsForPage(env, resolvedPageId))
           : undefined,

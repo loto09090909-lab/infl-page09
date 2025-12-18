@@ -158,12 +158,14 @@ function validateContactSettings(raw: unknown) {
   }
 
   const webhookUrl = sanitizeString((raw as any).webhookUrl, 1000);
+  const enabled = (raw as any).enabled === true;
   if (webhookUrl && !isHttpUrl(webhookUrl)) {
     return { error: "webhookUrl은 http(s)여야 합니다" };
   }
 
   return {
     settings: {
+      ...(enabled ? { enabled: true } : { enabled: false }),
       ...(webhookUrl ? { webhookUrl } : {}),
     },
   };
@@ -272,7 +274,7 @@ function normalizeCreatePageBody(
     pageId,
     profile: profile ?? {},
     contactSchema: contactSchema ?? [],
-    contactSettings: contactSettings ?? {},
+    contactSettings: contactSettings ?? { enabled: false },
     adminEmail: body.adminEmail.trim().toLowerCase(),
     adminPassword: body.adminPassword,
     adminOauthProvider: body.adminOauthProvider,
@@ -311,7 +313,7 @@ async function persistCreatePage(env: any, data: NormalizedCreatePage) {
     links: Array.isArray(data.links) ? data.links : [],
     privateLinks: Array.isArray(data.privateLinks) ? data.privateLinks : [],
     contactSchema: Array.isArray(data.contactSchema) ? data.contactSchema : [],
-    contactSettings: data.contactSettings ?? {},
+    contactSettings: data.contactSettings ?? { enabled: false },
     slugs: data.slugs ?? [],
     plan: data.plan ?? null,
   };
@@ -833,7 +835,7 @@ export async function updatePage(
       contactProvided || schema !== undefined
         ? schema ?? []
         : existingData.contactSchema ?? [],
-    contactSettings: contactSettings ?? existingData.contactSettings ?? {},
+    contactSettings: contactSettings ?? existingData.contactSettings ?? { enabled: false },
     plan:
       typeof body.plan === "string"
         ? sanitizeString(body.plan, 30) ?? existingPlan ?? null

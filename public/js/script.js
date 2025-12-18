@@ -397,7 +397,8 @@ let dragState = null;
 let adminSlugs = [];
 let adminContactSchema = [];
 let publicContactSchema = [];
-let contactSettings = {};
+let contactSettings = { enabled: false };
+let contactEnabled = false;
 let currentPageId = '';
 let pagePlan = 'free';
 let contactSubmissions = [];
@@ -592,6 +593,7 @@ async function loadPageData(pageId, options = {}) {
 
         renderUserLinks(publicLinks);
         publicContactSchema = Array.isArray(data.contactSchema) ? data.contactSchema : [];
+        contactEnabled = data?.contactSettings?.enabled === true;
         renderPublicContactForm();
 
         if (includeAdmin) {
@@ -612,8 +614,8 @@ async function loadPageData(pageId, options = {}) {
             adminSlugs = Array.isArray(data.slugs) && data.slugs.length ? data.slugs : [pageId];
             adminContactSchema = Array.isArray(data.contactSchema) ? data.contactSchema : [];
             contactSettings = typeof data.contactSettings === 'object' && data.contactSettings
-                ? { ...data.contactSettings }
-                : {};
+                ? { enabled: data.contactSettings.enabled === true, ...(data.contactSettings.webhookUrl ? { webhookUrl: data.contactSettings.webhookUrl } : {}) }
+                : { enabled: false };
             pagePlan = data.plan || 'free';
             renderAdminLinks();
             renderSlugEditor();
@@ -856,6 +858,8 @@ async function savePage() {
         ...(link.handle ? { handle: link.handle } : {}),
     }));
 
+    const enabledContact = contactSettings.enabled === true;
+
     const payload = {
         profile: { name, description: desc, photoUrl: photo },
         links: formattedPublic,
@@ -869,9 +873,12 @@ async function savePage() {
                 ? { options: field.options.filter(Boolean).map((item) => (item || '').trim()).filter(Boolean) }
                 : {}),
         })),
-        contactSettings: contactSettings && contactSettings.webhookUrl
-            ? { webhookUrl: contactSettings.webhookUrl.trim() }
-            : {},
+        contactSettings: {
+            enabled: enabledContact,
+            ...(contactSettings && contactSettings.webhookUrl
+                ? { webhookUrl: contactSettings.webhookUrl.trim() }
+                : {}),
+        },
         slugs: adminSlugs,
         plan: pagePlan,
     };
@@ -1364,6 +1371,14 @@ function renderPublicContactForm() {
 
     fieldsHost.innerHTML = '';
 
+    if (!contactEnabled) {
+        section.style.display = 'none';
+        setContactStatus('');
+        return;
+    }
+
+    section.style.display = 'block';
+
     if (!publicContactSchema.length) {
         help.innerText = '관리자가 컨택트 필드를 설정하지 않았습니다.';
         form.style.display = 'none';
@@ -1476,7 +1491,7 @@ async function submitContactForm(event) {
     event.preventDefault();
     const form = event.target;
     const submitBtn = document.getElementById('user-contact-submit');
-    if (!form || !currentPageId || !publicContactSchema.length) {
+    if (!form || !currentPageId || !publicContactSchema.length || !contactEnabled) {
         setContactStatus('제출할 컨택트 폼이 없습니다.', 'warning');
         return;
     }
@@ -1970,12 +1985,20 @@ function renderContactSchema() {
 
 function hydrateContactSettings() {
     const webhookInput = document.getElementById('contactWebhook');
-    if (!webhookInput) return;
+    const enabledInput = document.getElementById('contactEnabled');
+    if (!webhookInput || !enabledInput) return;
 
     webhookInput.value = contactSettings.webhookUrl || '';
     webhookInput.oninput = (e) => {
         const value = (e.target.value || '').trim();
-        contactSettings = value ? { ...contactSettings, webhookUrl: value } : {};
+        const enabled = contactSettings.enabled === true;
+        contactSettings = value ? { ...contactSettings, webhookUrl: value } : { enabled };
+    };
+
+    enabledInput.checked = contactSettings.enabled === true;
+    enabledInput.onchange = (e) => {
+        const enabled = !!e.target.checked;
+        contactSettings = { ...contactSettings, enabled };
     };
 }
 

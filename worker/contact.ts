@@ -12,6 +12,7 @@ type ContactField = {
 
 type ContactSettings = {
   webhookUrl?: string;
+  enabled?: boolean;
 };
 
 type ContactSubmission = {
@@ -82,7 +83,7 @@ async function readContactSchema(env: any, pageId: string): Promise<{
           })
           .filter(Boolean)
       : [];
-    const settings: ContactSettings = {};
+    const settings: ContactSettings = { enabled: false };
     if (parsed?.contactSettings && typeof parsed.contactSettings === "object") {
       const webhookUrl = typeof parsed.contactSettings.webhookUrl === "string"
         ? parsed.contactSettings.webhookUrl.trim()
@@ -90,10 +91,12 @@ async function readContactSchema(env: any, pageId: string): Promise<{
       if (webhookUrl && (webhookUrl.startsWith("http://") || webhookUrl.startsWith("https://"))) {
         settings.webhookUrl = webhookUrl;
       }
+
+      settings.enabled = parsed.contactSettings.enabled === true;
     }
     return { schema, settings };
   } catch (error) {
-    return { schema: [], settings: {} };
+    return { schema: [], settings: { enabled: false } };
   }
 }
 
@@ -191,6 +194,10 @@ export async function submitContact(
   }
 
   const { schema, settings } = await readContactSchema(env, canonicalPageId);
+  if (!settings.enabled) {
+    return errorResponse("컨택트 폼이 비활성화되었습니다", 404, headers);
+  }
+
   if (!schema.length) {
     return errorResponse("컨택트 폼이 설정되지 않았습니다", 404, headers);
   }
