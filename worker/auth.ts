@@ -1,4 +1,4 @@
-export type SessionRole = "super" | "page";
+export type SessionRole = "super" | "page" | "user";
 
 export async function createSessionToken(
   env: any,

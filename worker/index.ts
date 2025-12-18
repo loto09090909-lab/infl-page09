@@ -11,6 +11,7 @@ import {
 } from "./super-admin";
 import { getPage } from "./page-view";
 import { buildCorsHeaders, CorsOptions, errorResponse } from "./utils";
+import { login as userLogin, signup as userSignup } from "./users";
 
 export default {
   async fetch(req: Request, env: any): Promise<Response> {
@@ -38,33 +39,62 @@ export default {
       return getPage(env, decodeURIComponent(pageId), corsHeaders);
     }
 
+    // --- 사용자 가입/로그인 ---
+    if (method === "POST" && path === "/api/users/signup") {
+      return userSignup(req, env, corsHeaders);
+    }
+
+    if (method === "POST" && path === "/api/users/login") {
+      return userLogin(req, env, corsHeaders);
+    }
+
     // --- 1. 관리자 API ---
-    if (method === "POST" && path === "/api/admin/login") {
+    if (
+      method === "POST" &&
+      (path === "/api/super-admin/login" || path === "/api/admin/login")
+    ) {
       return superAdminLogin(req, env, corsHeaders);
     }
 
     const adminToken = getBearerToken(req);
     const isAdmin = await verifySessionToken(env, "super", adminToken);
 
-    if (path === "/api/admin/pages/import" && method === "POST") {
-      if (!isAdmin) return errorResponse("인증이 필요합니다", 401, corsHeaders);
+    const isSuperAdminRoute =
+      path.startsWith("/api/super-admin/") || path.startsWith("/api/admin/");
+
+    if (isSuperAdminRoute && !isAdmin) {
+      return errorResponse("슈퍼 관리자 인증이 필요합니다", 401, corsHeaders);
+    }
+
+    if (
+      isSuperAdminRoute &&
+      path.replace("/api/super-admin", "/api/admin") === "/api/admin/pages/import" &&
+      method === "POST"
+    ) {
       return bulkCreatePages(req, env, corsHeaders);
     }
 
-    if (path === "/api/admin/pages" && method === "POST") {
-      if (!isAdmin) return errorResponse("인증이 필요합니다", 401, corsHeaders);
+    if (
+      isSuperAdminRoute &&
+      path.replace("/api/super-admin", "/api/admin") === "/api/admin/pages" &&
+      method === "POST"
+    ) {
       return createPage(req, env, corsHeaders);
     }
 
-    if (path === "/api/admin/pages" && method === "GET") {
-      if (!isAdmin) return errorResponse("인증이 필요합니다", 401, corsHeaders);
+    if (
+      isSuperAdminRoute &&
+      path.replace("/api/super-admin", "/api/admin") === "/api/admin/pages" &&
+      method === "GET"
+    ) {
       return listPages(req, env, corsHeaders);
     }
 
-    const adminPageMatch = path.match(/^\/api\/admin\/pages\/(.+)$/);
-    if (adminPageMatch) {
+    const adminPageMatch = path
+      .replace("/api/super-admin", "/api/admin")
+      .match(/^\/api\/admin\/pages\/(.+)$/);
+    if (isSuperAdminRoute && adminPageMatch) {
       const pageId = adminPageMatch[1];
-      if (!isAdmin) return errorResponse("인증이 필요합니다", 401, corsHeaders);
 
       if (method === "GET") {
         return getAdminPage(env, decodeURIComponent(pageId), corsHeaders);
