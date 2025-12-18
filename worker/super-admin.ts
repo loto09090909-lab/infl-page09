@@ -9,7 +9,7 @@ import {
 } from "./slug-map";
 import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
 import { enforcePlanLimit, hasPrivateLinks, PlanLimitError } from "./plan-limits";
-import { findOrCreateUser, hashPassword, updateUserPassword } from "./users";
+import { findOrCreateUser, hashPassword, updateUserPassword, verifyPassword } from "./users";
 import {
   buildLoginIdentifier,
   clearLoginAttempts,
@@ -334,15 +334,15 @@ export async function superAdminLogin(
     );
   }
 
-  const hashedPassword = await hashPassword(body.password);
-
   const row = await env.DB.prepare(
     "SELECT username, password_hash FROM super_admins WHERE username = ? LIMIT 1"
   )
     .bind(username)
     .first<{ username: string; password_hash: string }>();
 
-  if (!row || row.password_hash !== hashedPassword) {
+  const passwordValid = await verifyPassword(body.password, row?.password_hash ?? null);
+
+  if (!row || !passwordValid) {
     await recordFailedLogin(env, "super", loginIdentifier);
     return errorResponse("인증에 실패했습니다", 401, headers);
   }

@@ -1125,11 +1125,31 @@ async function bootstrapSuperAdmin() {
     }
 }
 
-async function sha256Hex(value) {
-    const buffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
-    return Array.from(new Uint8Array(buffer))
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join('');
+const PBKDF2_ITERATIONS = 120000;
+const PBKDF2_KEY_LENGTH = 32; // bytes
+
+function bufferToBase64(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (const byte of bytes) {
+        binary += String.fromCharCode(byte);
+    }
+    return btoa(binary);
+}
+
+async function pbkdf2Hash(password) {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const encodedPassword = new TextEncoder().encode(password);
+    const key = await crypto.subtle.importKey('raw', encodedPassword, 'PBKDF2', false, ['deriveBits']);
+    const derivedBits = await crypto.subtle.deriveBits(
+        { name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+        key,
+        PBKDF2_KEY_LENGTH * 8
+    );
+
+    const saltB64 = bufferToBase64(salt.buffer);
+    const hashB64 = bufferToBase64(derivedBits);
+    return `pbkdf2$${PBKDF2_ITERATIONS}$${saltB64}$${hashB64}`;
 }
 
 async function showD1SeedSql() {
@@ -1145,7 +1165,7 @@ async function showD1SeedSql() {
         return;
     }
 
-    const hash = await sha256Hex(password);
+    const hash = await pbkdf2Hash(password);
     const escapedUsername = username.replace(/'/g, "''");
     const sql = `INSERT OR REPLACE INTO super_admins (username, password_hash)\nVALUES ('${escapedUsername}', '${hash}');`;
 

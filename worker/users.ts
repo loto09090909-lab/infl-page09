@@ -21,11 +21,98 @@ export type AuthBody = {
 const MAX_ATTEMPTS = 5;
 const LOCK_MILLISECONDS = 15 * 60 * 1000;
 
+const PBKDF2_ITERATIONS = 120_000;
+const PBKDF2_KEY_LENGTH = 32; // bytes
+const PBKDF2_PREFIX = "pbkdf2";
+
+function bufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
+}
+
+function base64ToBuffer(value: string): ArrayBuffer {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
 export async function hashPassword(password: string) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const encodedPassword = new TextEncoder().encode(password);
+  const key = await crypto.subtle.importKey("raw", encodedPassword, "PBKDF2", false, ["deriveBits"]);
+  const derivedBits = await crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt,
+      iterations: PBKDF2_ITERATIONS,
+      hash: "SHA-256",
+    },
+    key,
+    PBKDF2_KEY_LENGTH * 8
+  );
+
+  const saltB64 = bufferToBase64(salt.buffer);
+  const hashB64 = bufferToBase64(derivedBits);
+
+  return `${PBKDF2_PREFIX}$${PBKDF2_ITERATIONS}$${saltB64}$${hashB64}`;
+}
+
+function isLegacySha256(hash: string) {
+  return /^[a-f0-9]{64}$/i.test(hash);
+}
+
+async function verifyPbkdf2(password: string, stored: string) {
+  const parts = stored.split("$");
+  if (parts.length !== 4 || parts[0] !== PBKDF2_PREFIX) return false;
+
+  const iterations = Number(parts[1]);
+  const salt = base64ToBuffer(parts[2]);
+  const expected = parts[3];
+
+  if (!Number.isFinite(iterations) || iterations <= 0) return false;
+
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
+  const derivedBits = await crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt,
+      iterations,
+      hash: "SHA-256",
+    },
+    key,
+    PBKDF2_KEY_LENGTH * 8
+  );
+
+  const actual = bufferToBase64(derivedBits);
+  return actual === expected;
+}
+
+async function verifyLegacySha256(password: string, stored: string) {
   const encoded = new TextEncoder().encode(password);
   const hashBuffer = await crypto.subtle.digest("SHA-256", encoded);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  const hex = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  return hex === stored;
+}
+
+export async function verifyPassword(password: string, stored: string | null) {
+  if (!stored) return false;
+  if (stored.startsWith(`${PBKDF2_PREFIX}$`)) {
+    return verifyPbkdf2(password, stored);
+  }
+
+  if (isLegacySha256(stored)) {
+    return verifyLegacySha256(password, stored);
+  }
+
+  return false;
 }
 
 async function getUserByEmail(env: any, email: string) {
@@ -203,6 +290,5 @@ async function authenticateUser(user: UserRow, credentials: AuthBody) {
     return false;
   }
 
-  const hashed = await hashPassword(credentials.password);
-  return hashed === user.password_hash;
+  return verifyPassword(credentials.password, user.password_hash);
 }

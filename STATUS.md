@@ -2,13 +2,13 @@
 
 ## 1. 현재 구현 상태 요약
 - **API 진입점**: Cloudflare Worker가 `/api/pages/:pageId` 공개 조회, `/api/admin/*` 슈퍼 관리자 CRUD, `/api/page/:pageId/*` 페이지 관리자 로그인·저장을 라우팅합니다. CORS는 `ALLOWED_ORIGINS` 기반으로 동적으로 산출합니다.【F:worker/index.ts†L13-L87】
-- **인증/세션**: 슈퍼·페이지·사용자 세션은 `TOKEN_SECRET` HMAC으로 서명된 토큰을 발급·검증하며, 로그아웃 시 jti를 KV에 폐기합니다. 기존 KV UUID 세션도 호환 검증하지만 비밀번호 해시는 여전히 SHA-256입니다.【F:worker/auth.ts†L1-L93】【F:worker/auth.ts†L95-L152】【F:worker/users.ts†L17-L35】
+- **인증/세션**: 슈퍼·페이지·사용자 세션은 `TOKEN_SECRET` HMAC으로 서명된 토큰을 발급·검증하며, 로그아웃 시 jti를 KV에 폐기합니다. 신규 비밀번호는 PBKDF2(SHA-256)로 저장하고 기존 SHA-256 해시도 호환 검증합니다.【F:worker/auth.ts†L4-L93】【F:worker/auth.ts†L95-L152】【F:worker/users.ts†L19-L117】
 - **페이지 관리 플로우**: 슈퍼 관리자는 D1 `super_admin`의 평문 비밀번호를 조회해 세션을 발급하고, 페이지 생성/수정 시 KV(`page:*`, `page_auth:*`)와 D1(`page_auth`, `page_meta`, `slug_map`)을 동시에 갱신합니다.【F:worker/super-admin.ts†L27-L240】 페이지 관리자는 저장 시 자신의 토큰 또는 슈퍼 토큰만 확인하고 동일하게 KV/D1을 덮어씁니다.【F:worker/page-admin.ts†L44-L94】
 - **프런트엔드 흐름**: 여러 API 베이스를 하드코딩/추론(`known worker`, `pages.dev` 파생, 현재 origin)해 순차 호출하고, 슬러그 형태 URL에서는 `/api/pages/:slug`로 직접 데이터를 로드합니다. 관리자 저장은 `/api/page/{id}/save` 호출에 의존합니다.【F:public/js/script.js†L1-L285】
 - **정적 라우팅**: `_redirects`가 `/user.html`, `/admin.html` 등으로 슬러그/관리자 경로를 리라이트하지만 최종 와일드카드가 여전히 `index.html`을 반환합니다.【F:public/_redirects†L1-L17】
 
 ## 2. 주요 위험 및 개선 필요 영역
-- **약한 비밀번호 해시**: 서명 토큰으로 세션 무결성은 강화됐지만 슈퍼·페이지 관리자와 사용자 비밀번호는 여전히 SHA-256 해시라서 재사용·사전 공격에 취약합니다.【F:worker/users.ts†L17-L35】【F:worker/super-admin.ts†L23-L55】
+- **레거시 해시 대응 필요**: 신규 저장은 PBKDF2로 강화했지만, 기존 SHA-256 해시를 계속 허용하므로 점진적인 재발급·교체 정책이 필요합니다.【F:worker/users.ts†L19-L117】【F:worker/super-admin.ts†L301-L376】
 - **요청 검증 부재**: `parseJsonBody` 결과를 그대로 신뢰해 `profile/links/plan`을 KV·D1에 저장하므로 대형/비정형 입력이나 XSS 필드가 필터 없이 반영됩니다.【F:worker/super-admin.ts†L56-L240】【F:worker/page-admin.ts†L44-L94】
 - **프런트-백 계약 불일치**: 프런트는 하드코딩된 워커 도메인을 순회하고 `/api/page/{id}/save` 엔드포인트만 사용해 저장하지만, 슬러그 기반 SSR이나 환경 분리가 전혀 없어 배포 환경이 바뀌면 API 탐색 실패 가능성이 높습니다.【F:public/js/script.js†L1-L285】
 - **라우팅 충돌 위험**: `_redirects`의 최하단 `/* /index.html 200` 규칙이 슬러그 페이지보다 우선될 경우 `user.html`이 아닌 인덱스로 내려갈 수 있어 빈 화면이 노출될 수 있습니다.【F:public/_redirects†L1-L17】

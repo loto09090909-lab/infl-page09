@@ -1,6 +1,6 @@
 # 슈퍼 관리자 부트스트랩 가이드
 
-슈퍼 관리자 로그인을 위해서는 `super_admins` 테이블에 아이디와 비밀번호 해시가 있어야 합니다. 비밀번호는 SHA-256 해시로 저장하며, 아래 두 가지 방법 중 하나로 초기 계정을 준비할 수 있습니다.
+슈퍼 관리자 로그인을 위해서는 `super_admins` 테이블에 아이디와 비밀번호 해시가 있어야 합니다. 비밀번호는 PBKDF2(SHA-256, 120k iteration, 16바이트 salt)로 저장하며, 아래 두 가지 방법 중 하나로 초기 계정을 준비할 수 있습니다. 기존 SHA-256 해시도 호환 검증되지만 신규 생성분은 모두 PBKDF2로 저장됩니다.
 
 또한 로그인·세션 토큰은 `TOKEN_SECRET`(또는 `SESSION_SECRET`) HMAC 키로 서명됩니다. 워커 환경 변수에 강력한 값을 설정하지 않으면 토큰이 발급되지 않으므로 배포 전에 **반드시 시크릿을 지정**하세요.
 
@@ -11,17 +11,17 @@
 3. 첫 계정이 없으면 누구나 생성할 수 있고, 이후에는 기존 슈퍼 관리자 토큰(`Authorization: Bearer <token>`)이 있어야 추가/재설정이 됩니다.
 4. 응답 예시:
    ```json
-   { "success": true, "username": "admin", "mode": "bootstrapped", "passwordHash": "<sha256>" }
+   { "success": true, "username": "admin", "mode": "bootstrapped", "passwordHash": "pbkdf2$120000$<salt>$<hash>" }
    ```
 
 ## 2) D1에 직접 시드
 
-1. 사용할 아이디/비밀번호를 정한 뒤 SHA-256 해시를 만듭니다. `public/login.html`의 "D1 시드 SQL 보기" 버튼을 눌러 브라우저에서 즉시 해시와 SQL을 생성할 수 있습니다.
+1. 사용할 아이디/비밀번호를 정한 뒤 PBKDF2 해시를 만듭니다. `public/login.html`의 "D1 시드 SQL 보기" 버튼을 누르면 브라우저에서 salt/iteration이 포함된 해시와 SQL을 바로 생성합니다.
 2. 생성된 SQL을 D1 콘솔이나 `wrangler d1 execute`에 넣어 실행합니다. 예시:
    ```sql
    INSERT OR REPLACE INTO super_admins (username, password_hash)
-   VALUES ('admin', '<sha256-hash>');
+   VALUES ('admin', 'pbkdf2$120000$<salt>$<hash>');
    ```
 3. 이후 `/api/admin/login`에 같은 아이디/비밀번호로 로그인하면 토큰을 받을 수 있습니다.
 
-> 비밀번호는 평문이 아닌 SHA-256 해시로 저장해야 합니다. 기존에 평문을 넣어 둔 경우, 위 방법 중 하나로 해시를 다시 시드한 뒤 로그인하세요.
+> 비밀번호는 평문이 아닌 PBKDF2 해시로 저장해야 합니다. 기존 SHA-256 해시는 계속 로그인에 사용되지만, 가능하면 PBKDF2로 교체하세요.
