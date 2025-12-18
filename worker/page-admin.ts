@@ -68,9 +68,11 @@ function validateProfile(profile: unknown) {
 }
 
 function validateContactSchema(raw: unknown) {
-  if (raw === undefined) return { schema: undefined };
+  if (raw === undefined) return { schema: undefined, provided: false };
   if (!Array.isArray(raw)) return { error: "contactSchema는 배열이어야 합니다" };
   if (raw.length > 50) return { error: "contactSchema 항목이 너무 많습니다" };
+
+  const allowedTypes = new Set(["text", "email", "tel", "url"]);
 
   const schema = raw
     .map((field) => {
@@ -78,7 +80,7 @@ function validateContactSchema(raw: unknown) {
       const label = sanitizeString((field as any).label, 120);
       const type = sanitizeString((field as any).type, 30);
       const placeholder = sanitizeString((field as any).placeholder, 200);
-      if (!label || !type) return null;
+      if (!label || !type || !allowedTypes.has(type)) return null;
       return {
         label,
         type,
@@ -87,11 +89,11 @@ function validateContactSchema(raw: unknown) {
     })
     .filter(Boolean);
 
-  return { schema };
+  return { schema, provided: true };
 }
 
 function validateLinks(rawLinks: unknown) {
-  if (rawLinks === undefined) return { publicLinks: [], privateLinks: [] };
+  if (rawLinks === undefined) return { publicLinks: undefined, privateLinks: undefined, provided: false };
   if (!Array.isArray(rawLinks)) {
     return { error: "links는 배열이어야 합니다" };
   }
@@ -133,7 +135,7 @@ function validateLinks(rawLinks: unknown) {
     }
   }
 
-  return { publicLinks, privateLinks };
+  return { publicLinks, privateLinks, provided: true };
 }
 
 export async function pageAdminLogin(
@@ -202,12 +204,19 @@ export async function savePage(
     return errorResponse(profileError, 400, headers);
   }
 
-  const { error: linkError, publicLinks, privateLinks } = validateLinks(body.links);
+  const {
+    error: linkError,
+    publicLinks,
+    privateLinks,
+    provided: linksProvided,
+  } = validateLinks(body.links);
   if (linkError) {
     return errorResponse(linkError, 400, headers);
   }
 
-  const { error: contactError, schema } = validateContactSchema(body.contactSchema);
+  const { error: contactError, schema, provided: contactProvided } = validateContactSchema(
+    body.contactSchema
+  );
   if (contactError) {
     return errorResponse(contactError, 400, headers);
   }
@@ -224,13 +233,17 @@ export async function savePage(
 
   const providedPrivate = Array.isArray((body as any).privateLinks)
     ? validateLinks((body as any).privateLinks)
-    : null;
+    : { publicLinks: undefined, privateLinks: undefined, provided: false };
   if (providedPrivate?.error) {
     return errorResponse(providedPrivate.error, 400, headers);
   }
-  const fallbackPrivateLinks = providedPrivate?.privateLinks?.length
-    ? providedPrivate.privateLinks
-    : privateLinks;
+
+  const nextPublicLinks = linksProvided ? publicLinks ?? [] : existingData.links ?? [];
+  const nextPrivateLinks = providedPrivate.provided
+    ? providedPrivate.privateLinks ?? []
+    : linksProvided && privateLinks !== undefined
+    ? privateLinks ?? []
+    : existingData.privateLinks ?? [];
 
   let slugs: string[] | null = null;
   if (body.slugs !== undefined) {
@@ -254,11 +267,15 @@ export async function savePage(
 
   const pageData = {
     profile: profile ?? existingData.profile ?? {},
-    links: publicLinks,
-    privateLinks: fallbackPrivateLinks,
-    contactSchema: schema ?? existingData.contactSchema ?? [],
+    links: nextPublicLinks,
+    privateLinks: nextPrivateLinks,
+    contactSchema:
+      contactProvided || schema !== undefined ? schema ?? [] : existingData.contactSchema ?? [],
     slugs: normalizedSlugs,
-    plan: typeof body.plan === "string" ? body.plan.trim() : existingData.plan ?? null,
+    plan:
+      typeof body.plan === "string"
+        ? sanitizeString(body.plan, 30)
+        : existingData.plan ?? null,
   };
 
   const linksForPlan = [...pageData.links, ...(pageData.privateLinks ?? [])];

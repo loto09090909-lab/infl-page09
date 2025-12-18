@@ -96,6 +96,15 @@ function slugify(value) {
     return encodedFallback;
 }
 
+function isHttpUrl(value) {
+    try {
+        const url = new URL(value);
+        return url.protocol === 'http:' || url.protocol === 'https:';
+    } catch (error) {
+        return false;
+    }
+}
+
 function createLinkIcon(preset) {
     if (!preset) return null;
 
@@ -127,6 +136,8 @@ let dragState = null;
 let adminSlugs = [];
 let adminContactSchema = [];
 let pagePlan = 'free';
+
+const MAX_CONTACT_FIELDS = 50;
 
 const PLAN_LIMITS = {
     free: 6,
@@ -273,9 +284,19 @@ async function loadPageData(pageId, options = {}) {
         renderUserLinks(publicLinks);
 
         if (includeAdmin) {
+            const normalizeLink = (link, isPrivate = false) => ({
+                ...link,
+                title: link.title || link.name || link.url || '',
+                url: link.url || '',
+                iconUrl: link.iconUrl || '',
+                platformId: link.platformId || '',
+                handle: link.handle || '',
+                isPrivate: isPrivate || !!link.isPrivate,
+            });
+
             adminLinks = [
-                ...publicLinks.map((link) => ({ ...link, isPrivate: !!link.isPrivate })),
-                ...privateLinks,
+                ...publicLinks.map((link) => normalizeLink(link, false)),
+                ...privateLinks.map((link) => normalizeLink(link, true)),
             ];
             adminSlugs = Array.isArray(data.slugs) && data.slugs.length ? data.slugs : [pageId];
             adminContactSchema = Array.isArray(data.contactSchema) ? data.contactSchema : [];
@@ -410,14 +431,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // 관리자 페이지: 페이지 저장
 async function savePage() {
+    const statusBox = document.getElementById('save-status');
+    const setStatus = (message, tone = 'info') => {
+        if (!statusBox) return;
+        statusBox.innerText = message;
+        statusBox.dataset.tone = tone;
+        statusBox.style.display = message ? 'block' : 'none';
+    };
+
+    setStatus('변경 사항을 검증하는 중입니다...', 'info');
+
     if (!derivedPageId) {
-        alert('페이지 식별자가 없어 저장할 수 없습니다. URL을 확인해주세요.');
+        setStatus('페이지 식별자가 없어 저장할 수 없습니다. URL을 확인해주세요.', 'error');
         return;
     }
 
     const token = sessionStorage.getItem('page_admin_token');
     if (!token) {
-        alert('페이지 관리자 로그인이 필요합니다. 다시 로그인 해주세요.');
+        setStatus('페이지 관리자 로그인이 필요합니다. 다시 로그인 해주세요.', 'error');
         return;
     }
 
@@ -425,18 +456,59 @@ async function savePage() {
     const desc = document.getElementById('desc')?.value?.trim() || '';
     const photo = document.getElementById('photo')?.value?.trim() || '';
 
-    if (adminLinks.some(link => !link.name || !link.url)) {
-        alert('모든 링크는 이름과 URL을 모두 입력해야 합니다.');
+    const linkErrors = [];
+    adminLinks.forEach((link, idx) => {
+        const title = (link.title || link.name || '').trim();
+        const url = (link.url || '').trim();
+        if (!title || !url) {
+            linkErrors.push(`${idx + 1}번째 링크에 이름/URL이 없습니다.`);
+            return;
+        }
+        if (!isHttpUrl(url)) {
+            linkErrors.push(`${idx + 1}번째 링크 URL이 http(s) 형식이 아닙니다.`);
+        }
+        if (link.iconUrl && !isHttpUrl(link.iconUrl)) {
+            linkErrors.push(`${idx + 1}번째 링크 아이콘 URL이 잘못되었습니다.`);
+        }
+    });
+
+    if (linkErrors.length) {
+        setStatus(linkErrors.join(' '), 'error');
+        return;
+    }
+
+    if (adminContactSchema.length > MAX_CONTACT_FIELDS) {
+        setStatus(`컨택트 필드는 최대 ${MAX_CONTACT_FIELDS}개까지만 추가할 수 있습니다.`, 'error');
         return;
     }
 
     const { publicLinks, privateLinks } = splitAdminLinks();
+    const formattedPublic = publicLinks.map((link) => ({
+        title: (link.title || link.name || '').trim(),
+        url: (link.url || '').trim(),
+        ...(link.iconUrl ? { iconUrl: link.iconUrl.trim() } : {}),
+        ...(link.platformId ? { platformId: link.platformId } : {}),
+        ...(link.handle ? { handle: link.handle } : {}),
+    }));
+
+    const formattedPrivate = privateLinks.map((link) => ({
+        title: (link.title || link.name || '').trim(),
+        url: (link.url || '').trim(),
+        isPrivate: true,
+        ...(link.iconUrl ? { iconUrl: link.iconUrl.trim() } : {}),
+        ...(link.platformId ? { platformId: link.platformId } : {}),
+        ...(link.handle ? { handle: link.handle } : {}),
+    }));
 
     const payload = {
         profile: { name, description: desc, photoUrl: photo },
-        links: publicLinks,
-        privateLinks,
-        contactSchema: adminContactSchema,
+        links: formattedPublic,
+        privateLinks: formattedPrivate,
+        contactSchema: adminContactSchema.map((field) => ({
+            label: (field.label || '').trim(),
+            type: field.type || 'text',
+            ...(field.placeholder ? { placeholder: field.placeholder } : {}),
+        })),
         slugs: adminSlugs,
         plan: pagePlan,
     };
@@ -451,10 +523,10 @@ async function savePage() {
     });
 
     if (res.ok) {
-        alert('페이지가 저장되었습니다.');
+        setStatus('페이지가 저장되었습니다.', 'success');
     } else {
         const errText = await res.text();
-        alert(`저장 실패: ${errText || res.status}`);
+        setStatus(`저장 실패: ${errText || res.status}`, 'error');
     }
 }
 
@@ -575,7 +647,7 @@ function addCustomLink() {
         return;
     }
 
-    adminLinks.push({ name, url, iconUrl });
+    adminLinks.push({ title: name, url, iconUrl });
     renderAdminLinks();
 
     if (nameInput) nameInput.value = '';
@@ -603,7 +675,7 @@ function addPlatformLink() {
 
     const url = buildPlatformUrl(preset, handle);
 
-    adminLinks.push({ name, url, platformId: preset.id, handle });
+    adminLinks.push({ title: name, url, platformId: preset.id, handle });
     renderAdminLinks();
 
     if (handleInput) handleInput.value = '';
@@ -760,12 +832,12 @@ function renderUserLinks(links) {
         const platformInfo = inferPlatformFromLink(link) || (link.platformId ? { preset: getPlatformPreset(link.platformId) } : null);
         const iconEl = platformInfo?.preset
             ? createLinkIcon(platformInfo.preset)
-            : createCustomIcon(link.iconUrl, link.name || link.url);
+            : createCustomIcon(link.iconUrl, link.title || link.url);
 
         if (iconEl) anchor.appendChild(iconEl);
 
         const label = document.createElement('span');
-        label.innerText = link.name || link.url;
+        label.innerText = link.title || link.url;
         anchor.appendChild(label);
 
         li.appendChild(anchor);
@@ -807,7 +879,7 @@ function renderAdminLinks() {
 
         const iconEl = platformInfo?.preset
             ? createLinkIcon(platformInfo.preset)
-            : createCustomIcon(link.iconUrl, link.name || '아이콘') || (() => {
+            : createCustomIcon(link.iconUrl, link.title || '아이콘') || (() => {
                 const fallback = document.createElement('span');
                 fallback.className = 'link-icon platform-icon-fallback';
                 fallback.innerText = '🔗';
@@ -817,7 +889,7 @@ function renderAdminLinks() {
         if (iconEl) meta.appendChild(iconEl);
 
         const metaLabel = document.createElement('span');
-        metaLabel.innerText = platformInfo?.preset?.label || link.name || '링크';
+        metaLabel.innerText = platformInfo?.preset?.label || link.title || '링크';
         meta.appendChild(metaLabel);
 
         if (link.isPrivate) {
@@ -835,8 +907,8 @@ function renderAdminLinks() {
 
         const nameInput = document.createElement('input');
         nameInput.placeholder = '링크 이름';
-        nameInput.value = link.name || '';
-        nameInput.oninput = (e) => updateAdminLink(index, 'name', e.target.value);
+        nameInput.value = link.title || '';
+        nameInput.oninput = (e) => updateAdminLink(index, 'title', e.target.value);
         fields.appendChild(nameInput);
 
         const privacyToggle = document.createElement('label');
@@ -935,7 +1007,7 @@ function renderPrivacySummary() {
         return;
     }
 
-    const privacyList = privateLinks.map((link) => link.name || link.url || '비공개 링크');
+    const privacyList = privateLinks.map((link) => link.title || link.url || '비공개 링크');
     summaryEl.innerHTML = `총 <strong>${adminLinks.length}</strong>개 링크 중 <strong>${privateLinks.length}</strong>개가 비공개입니다.<br>` +
         (privacyList.length ? `🔒 ${privacyList.join(', ')}` : '🔓 모든 링크가 공개 상태입니다.');
 }
@@ -1138,6 +1210,11 @@ function addContactField() {
         return;
     }
 
+    if (adminContactSchema.length >= MAX_CONTACT_FIELDS) {
+        alert(`컨택트 필드는 최대 ${MAX_CONTACT_FIELDS}개까지 추가할 수 있습니다.`);
+        return;
+    }
+
     adminContactSchema.push({ label, type, placeholder });
     renderContactSchema();
     renderUsage();
@@ -1172,9 +1249,9 @@ function applyDefaultTemplate() {
     }
 
     adminLinks = [
-        { name: 'Instagram', url: 'https://instagram.com/' + (derivedPageId || 'mychannel'), platformId: 'instagram', handle: derivedPageId || 'mychannel' },
-        { name: 'YouTube', url: 'https://www.youtube.com/@' + (derivedPageId || 'creator'), platformId: 'youtube', handle: derivedPageId || 'creator' },
-        { name: '이메일 문의', url: 'mailto:hello@example.com', isPrivate: true },
+        { title: 'Instagram', url: 'https://instagram.com/' + (derivedPageId || 'mychannel'), platformId: 'instagram', handle: derivedPageId || 'mychannel' },
+        { title: 'YouTube', url: 'https://www.youtube.com/@' + (derivedPageId || 'creator'), platformId: 'youtube', handle: derivedPageId || 'creator' },
+        { title: '이메일 문의', url: 'mailto:hello@example.com', isPrivate: true },
     ];
 
     applyContactPreset('basic');
