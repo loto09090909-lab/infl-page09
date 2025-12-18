@@ -1,7 +1,35 @@
 const APP_CONFIG = window.APP_CONFIG || {};
 
-const storedManualBase = (typeof localStorage !== 'undefined' && localStorage.getItem('manualApiBase')) || null;
+const urlParams = new URLSearchParams(window.location.search);
+const queryApiBase = urlParams.get("api_base") || urlParams.get("apiBase");
+
+const storedManualBase =
+    (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('sessionManualApiBase')) ||
+    (typeof localStorage !== 'undefined' && localStorage.getItem('manualApiBase')) ||
+    null;
 let MANUAL_API_BASE = storedManualBase || null;
+
+function applyRuntimeOverrides() {
+    if (APP_CONFIG.envLabel) {
+        const badge = document.getElementById('env-badge');
+        if (badge) badge.dataset.envLabel = APP_CONFIG.envLabel;
+    }
+
+    if (APP_CONFIG.preferredApiBase && !MANUAL_API_BASE) {
+        MANUAL_API_BASE = APP_CONFIG.preferredApiBase.replace(/\/+$/, '');
+    }
+
+    if (APP_CONFIG.allowQueryApiBase !== false && queryApiBase) {
+        MANUAL_API_BASE = queryApiBase.trim().replace(/\/+$/, '');
+        try {
+            sessionStorage.setItem('sessionManualApiBase', MANUAL_API_BASE);
+        } catch (error) {
+            console.warn('세션 수동 베이스 저장 실패', error);
+        }
+    }
+}
+
+applyRuntimeOverrides();
 
 function resolveApiBases() {
     const bases = [];
@@ -15,22 +43,34 @@ function resolveApiBases() {
         }
     };
 
+    if (typeof APP_CONFIG.apiBase === 'string') {
+        pushBase(APP_CONFIG.apiBase);
+    }
+
     (APP_CONFIG.apiBases || []).forEach((base) => pushBase(base));
 
-    const metaApiBase = document.querySelector('meta[name="api-base"]')?.content?.trim();
-    pushBase(metaApiBase);
+    if (APP_CONFIG.useMetaApiBase !== false) {
+        const metaApiBase = document.querySelector('meta[name="api-base"]')?.content?.trim();
+        pushBase(metaApiBase);
+    }
 
-    pushBase(window.API_BASE);
+    if (APP_CONFIG.useGlobalApiBase !== false) {
+        pushBase(window.API_BASE);
+    }
 
-    const knownWorkerBase = 'https://infl-worker.loto09090909.workers.dev';
-    pushBase(knownWorkerBase);
+    if (APP_CONFIG.useKnownWorkerBase !== false) {
+        const knownWorkerBase = APP_CONFIG.knownWorkerBase || 'https://infl-worker.loto09090909.workers.dev';
+        pushBase(knownWorkerBase);
+    }
 
-    if (window.location.hostname.endsWith('pages.dev')) {
+    if (APP_CONFIG.usePagesDerivedBase !== false && window.location.hostname.endsWith('pages.dev')) {
         const guessedWorker = window.location.origin.replace('.pages.dev', '.workers.dev');
         pushBase(guessedWorker);
     }
 
-    pushBase(window.location.origin);
+    if (APP_CONFIG.useCurrentOriginBase !== false) {
+        pushBase(window.location.origin);
+    }
 
     return bases;
 }
@@ -206,7 +246,7 @@ function updateEnvBadge(base) {
     const badge = document.getElementById('env-badge');
     if (!badge) return;
 
-    const envLabel = (APP_CONFIG.envLabel || 'local').trim();
+    const envLabel = (badge.dataset.envLabel || APP_CONFIG.envLabel || 'local').trim();
     let host = '';
     try {
         host = base ? new URL(base).host : '';
@@ -223,6 +263,13 @@ function setManualApiBase(base) {
     const normalized = base ? base.replace(/\/+$/, '') : null;
     MANUAL_API_BASE = normalized || null;
     try {
+        if (typeof sessionStorage !== 'undefined') {
+            if (MANUAL_API_BASE) {
+                sessionStorage.setItem('sessionManualApiBase', MANUAL_API_BASE);
+            } else {
+                sessionStorage.removeItem('sessionManualApiBase');
+            }
+        }
         if (MANUAL_API_BASE) {
             localStorage.setItem('manualApiBase', MANUAL_API_BASE);
         } else {
