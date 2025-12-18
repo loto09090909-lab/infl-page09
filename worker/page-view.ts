@@ -1,3 +1,5 @@
+import { getBearerToken, verifySessionToken } from "./auth";
+import { getSlugsForPage } from "./slug-map";
 import { resolvePageId } from "./slug";
 import { errorResponse, jsonResponse } from "./utils";
 
@@ -10,11 +12,25 @@ type PageMetaRow = {
 };
 
 export async function getPage(
+  req: Request,
   env: any,
   pageId: string,
   headers: HeadersInit
 ): Promise<Response> {
   const resolvedPageId = await resolvePageId(env, pageId);
+  const token = getBearerToken(req);
+  const isPageAdmin = await verifySessionToken(env, "page", token, resolvedPageId);
+  const isSuperAdmin = await verifySessionToken(env, "super", token);
+  const includePrivate = isPageAdmin || isSuperAdmin;
+  const kvRaw = await env.PAGE_KV.get(`page:${resolvedPageId}`);
+  let kvParsed: any = null;
+  if (kvRaw) {
+    try {
+      kvParsed = JSON.parse(kvRaw);
+    } catch (error) {
+      kvParsed = null;
+    }
+  }
 
   const dbRow = await env.DB.prepare(
     "SELECT page_id, name, photo_url, description, links FROM page_meta WHERE page_id = ? LIMIT 1"
@@ -31,20 +47,43 @@ export async function getPage(
           description: dbRow.description,
         },
         links: safeParseLinks(dbRow.links),
+        plan: kvParsed?.plan ?? null,
+        contactSchema: includePrivate
+          ? kvParsed?.contactSchema ?? []
+          : undefined,
+        privateLinks: includePrivate ? kvParsed?.privateLinks ?? [] : undefined,
+        slugs: includePrivate
+          ? kvParsed?.slugs ?? (await getSlugsForPage(env, resolvedPageId))
+          : undefined,
       },
       200,
       headers
     );
   }
 
-  const kvValue = await env.PAGE_KV.get(`page:${resolvedPageId}`);
-  if (!kvValue) {
+  if (!kvRaw) {
     return errorResponse("Page not found", 404, headers);
   }
 
   try {
-    const parsed = JSON.parse(kvValue);
-    return jsonResponse(parsed, 200, headers);
+    const parsed = JSON.parse(kvRaw);
+    const publicLinks = Array.isArray(parsed.links)
+      ? parsed.links
+      : [];
+
+    return jsonResponse(
+      {
+        ...parsed,
+        links: publicLinks,
+        privateLinks: includePrivate ? parsed.privateLinks ?? [] : undefined,
+        contactSchema: includePrivate ? parsed.contactSchema ?? [] : undefined,
+        slugs: includePrivate
+          ? parsed.slugs ?? (await getSlugsForPage(env, resolvedPageId))
+          : undefined,
+      },
+      200,
+      headers
+    );
   } catch (err) {
     return errorResponse("Page data is corrupted", 500, headers);
   }

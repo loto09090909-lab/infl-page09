@@ -15,6 +15,7 @@
             <p class="subtitle">링크 순서를 조정하고, 아이콘을 붙여 깔끔한 프로필을 만들 수 있습니다.</p>
             <div class="page-context">
                 <span class="badge">현재 페이지: <strong id="current-page-id">-</strong></span>
+                <span class="badge" id="current-slug-badge">슬러그: -</span>
                 <a id="public-link" class="ghost-link" href="#" target="_blank" rel="noopener">공개 페이지 열기</a>
             </div>
         </div>
@@ -24,6 +25,59 @@
     </header>
 
     <main class="layout">
+        <section class="card onboarding-card" id="onboarding-card" style="display: none;">
+            <div class="card-header">
+                <div>
+                    <p class="eyebrow">온보딩</p>
+                    <h3>기본 페이지를 한 번에 만들어보세요</h3>
+                    <p class="help-text">템플릿을 적용하면 추천 링크와 컨택트 필드가 자동으로 채워집니다.</p>
+                </div>
+                <button class="primary" type="button" onclick="applyDefaultTemplate()">기본 페이지 생성</button>
+            </div>
+            <div class="preset-row" id="onboarding-presets"></div>
+        </section>
+
+        <section class="card usage-card">
+            <div class="card-header">
+                <div>
+                    <p class="eyebrow">사용량/한도</p>
+                    <h3>플랜을 확인하고 업그레이드하세요</h3>
+                    <p class="help-text">링크, 프라이빗 링크, 컨택트 필드 수를 한눈에 확인할 수 있습니다.</p>
+                </div>
+                <button class="secondary" type="button" onclick="requestUpgrade()">업그레이드 문의</button>
+            </div>
+            <div class="usage-meter">
+                <div class="meter-labels">
+                    <span id="plan-label" class="badge muted">-</span>
+                    <span id="usage-count" class="usage-count">0 / 0</span>
+                </div>
+                <div class="meter-bar">
+                    <div id="usage-bar" class="meter-bar-inner"></div>
+                </div>
+                <p class="help-text" id="usage-help">플랜 한도를 불러오는 중...</p>
+            </div>
+        </section>
+
+        <section class="card slug-card">
+            <div class="card-header">
+                <div>
+                    <p class="eyebrow">슬러그</p>
+                    <h3>슬러그와 별칭 관리</h3>
+                    <p class="help-text">페이지 주소를 원하는 이름으로 바꾸고, 여러 개의 별칭을 추가할 수 있습니다.</p>
+                </div>
+            </div>
+            <div class="slug-editor">
+                <label class="field-label" for="primary-slug-input">대표 슬러그</label>
+                <input id="primary-slug-input" placeholder="my-page" />
+                <div class="inline-inputs">
+                    <input id="slug-alias-input" placeholder="별칭 슬러그 추가" />
+                    <button type="button" class="primary" onclick="addSlugAlias()">별칭 추가</button>
+                </div>
+                <div id="slug-chip-list" class="pill-list"></div>
+                <p class="help-text">슬러그는 영어/숫자/하이픈으로 구성되며, 기존 주소도 계속 유지됩니다.</p>
+            </div>
+        </section>
+
         <section class="card profile-edit">
             <div class="card-header">
                 <div>
@@ -71,6 +125,30 @@
             <ul id="link-list" class="link-list">
                 <!-- Links will be dynamically inserted here -->
             </ul>
+            <div id="private-links-summary" class="private-links-summary"></div>
+        </section>
+
+        <section class="card contact-card">
+            <div class="card-header">
+                <div>
+                    <p class="eyebrow">컨택트</p>
+                    <h3>컨택트 스키마 편집</h3>
+                    <p class="help-text">연락처 양식에 표시할 필드를 자유롭게 추가·수정하세요.</p>
+                </div>
+                <div id="contact-presets" class="preset-row"></div>
+            </div>
+            <div class="inline-inputs">
+                <input id="contactLabel" placeholder="라벨 (예: 이메일)">
+                <select id="contactType">
+                    <option value="text">텍스트</option>
+                    <option value="email">이메일</option>
+                    <option value="tel">전화번호</option>
+                    <option value="url">URL</option>
+                </select>
+                <input id="contactPlaceholder" placeholder="placeholder (선택)">
+                <button type="button" onclick="addContactField()">필드 추가</button>
+            </div>
+            <div id="contact-schema-list" class="contact-schema-list"></div>
         </section>
 
         <section class="card preview-card">

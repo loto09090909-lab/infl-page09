@@ -78,6 +78,24 @@ const inferPlatformFromLink = platformHelpers.inferPlatformFromLink || function 
     return null;
 };
 
+function slugify(value) {
+    const normalized = value.normalize('NFKD').toLowerCase();
+    const separated = normalized
+        .replace(/[\s\p{P}\p{S}_]+/gu, '-')
+        .replace(/-+/g, '-');
+    const cleaned = separated.replace(/[^a-z0-9-]/g, '');
+    const collapsed = cleaned.replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+
+    if (collapsed) return collapsed;
+
+    const encodedFallback = encodeURIComponent(normalized)
+        .replace(/%/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-+|-+$/g, '');
+
+    return encodedFallback;
+}
+
 function createLinkIcon(preset) {
     if (!preset) return null;
 
@@ -106,6 +124,42 @@ let userViewReady = hasUserView;
 let adminLinks = [];
 let selectedPlatformId = PLATFORM_PRESETS[0]?.id || '';
 let dragState = null;
+let adminSlugs = [];
+let adminContactSchema = [];
+let pagePlan = 'free';
+
+const PLAN_LIMITS = {
+    free: 6,
+    pro: 30,
+};
+
+const CONTACT_PRESETS = [
+    {
+        id: 'basic',
+        label: '기본 문의',
+        fields: [
+            { label: '이메일', type: 'email', placeholder: 'you@example.com' },
+            { label: 'SNS 아이디', type: 'text', placeholder: '@account' },
+        ],
+    },
+    {
+        id: 'business',
+        label: '비즈니스 제안',
+        fields: [
+            { label: '회사명', type: 'text', placeholder: '회사 이름' },
+            { label: '연락처', type: 'tel', placeholder: '010-0000-0000' },
+            { label: '제안 링크', type: 'url', placeholder: 'https://example.com' },
+        ],
+    },
+    {
+        id: 'creator',
+        label: '콜라보 문의',
+        fields: [
+            { label: '채널명', type: 'text', placeholder: 'YouTube/Instagram' },
+            { label: '선호 연락처', type: 'text', placeholder: 'DM, 이메일 등' },
+        ],
+    },
+];
 
 function createCustomIcon(url, alt = "") {
     if (!url) return null;
@@ -174,13 +228,22 @@ function ensureUserViewContainer() {
 }
 
 // 페이지 데이터 로드
-async function loadPageData(pageId) {
+async function loadPageData(pageId, options = {}) {
     if (!pageId || pageId === 'undefined') {
         console.debug('pageId가 없어 페이지 데이터를 요청하지 않습니다.');
         return;
     }
 
-    const res = await apiFetch(`/api/pages/${encodeURIComponent(pageId)}`);
+    const includeAdmin = !!options.includeAdmin;
+    const fetchOptions = {};
+    if (includeAdmin) {
+        const token = sessionStorage.getItem('page_admin_token');
+        if (token) {
+            fetchOptions.headers = { Authorization: `Bearer ${token}` };
+        }
+    }
+
+    const res = await apiFetch(`/api/pages/${encodeURIComponent(pageId)}`, fetchOptions);
 
     if (!res.ok) {
         console.error('Failed to fetch page data:', res);
@@ -202,11 +265,27 @@ async function loadPageData(pageId) {
         const descEl = document.querySelector('.profile-description');
         if (descEl && data.profile.description) descEl.innerText = data.profile.description;
 
-        renderUserLinks(data.links);
+        const publicLinks = Array.isArray(data.links) ? data.links : [];
+        const privateLinks = includeAdmin && Array.isArray(data.privateLinks)
+            ? data.privateLinks.map((link) => ({ ...link, isPrivate: true }))
+            : [];
 
-        if (Array.isArray(data.links)) {
-            adminLinks = data.links;
+        renderUserLinks(publicLinks);
+
+        if (includeAdmin) {
+            adminLinks = [
+                ...publicLinks.map((link) => ({ ...link, isPrivate: !!link.isPrivate })),
+                ...privateLinks,
+            ];
+            adminSlugs = Array.isArray(data.slugs) && data.slugs.length ? data.slugs : [pageId];
+            adminContactSchema = Array.isArray(data.contactSchema) ? data.contactSchema : [];
+            pagePlan = data.plan || 'free';
             renderAdminLinks();
+            renderSlugEditor();
+            renderContactSchema();
+            renderPrivacySummary();
+            renderUsage();
+            renderOnboardingBanner();
         }
 
         const nameInput = document.getElementById('name');
@@ -224,6 +303,12 @@ function updatePageContext(pageId, profile = {}) {
     const badge = document.getElementById('current-page-id');
     if (badge) {
         badge.innerText = pageId || '-';
+    }
+
+    const slugBadge = document.getElementById('current-slug-badge');
+    if (slugBadge) {
+        const primarySlug = adminSlugs[0] || pageId;
+        slugBadge.innerText = primarySlug ? `슬러그: ${primarySlug}` : '슬러그: -';
     }
 
     const publicLink = document.getElementById('public-link');
@@ -287,13 +372,13 @@ if (pageRole === 'page-admin') {
 if (userViewReady || pageRole === 'page-admin') {
     if (isUserPage) {
         const pageId = pathSegments[1];
-        loadPageData(pageId);
+        loadPageData(pageId, { includeAdmin: pageRole === 'page-admin' });
     } else if (looksLikeSlugPage) {
-        loadPageData(pathSegments[0]);
+        loadPageData(pathSegments[0], { includeAdmin: pageRole === 'page-admin' });
     } else if (isAdminHtml && pageIdFromQuery) {
-        loadPageData(pageIdFromQuery);
+        loadPageData(pageIdFromQuery, { includeAdmin: pageRole === 'page-admin' });
     } else if (pageRole === 'page-admin' && derivedPageId) {
-        loadPageData(derivedPageId);
+        loadPageData(derivedPageId, { includeAdmin: true });
     } else {
         console.debug('사용자 페이지가 아니므로 페이지 데이터를 로드를 건너뜁니다.');
     }
@@ -311,6 +396,15 @@ document.addEventListener('DOMContentLoaded', () => {
     if (document.body?.dataset?.pageRole === 'page-admin') {
         renderPlatformSelector();
         updatePlatformPrefix();
+        renderContactPresets();
+        renderSlugEditor();
+
+        const primarySlugInput = document.getElementById('primary-slug-input');
+        if (primarySlugInput) {
+            primarySlugInput.addEventListener('change', (e) => setPrimarySlug(e.target.value));
+            primarySlugInput.addEventListener('blur', (e) => setPrimarySlug(e.target.value));
+        }
+        renderOnboardingBanner();
     }
 });
 
@@ -336,9 +430,15 @@ async function savePage() {
         return;
     }
 
+    const { publicLinks, privateLinks } = splitAdminLinks();
+
     const payload = {
         profile: { name, description: desc, photoUrl: photo },
-        links: adminLinks,
+        links: publicLinks,
+        privateLinks,
+        contactSchema: adminContactSchema,
+        slugs: adminSlugs,
+        plan: pagePlan,
     };
 
     const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/save`, {
@@ -519,6 +619,12 @@ function updateAdminLink(index, field, value) {
     const target = adminLinks[index];
     if (!target) return;
 
+    if (field === 'isPrivate') {
+        adminLinks[index] = { ...target, isPrivate: !!value };
+        renderAdminLinks();
+        return;
+    }
+
     const platformInfo = inferPlatformFromLink(target);
 
     if (platformInfo) {
@@ -643,7 +749,7 @@ function renderUserLinks(links) {
 
     linksList.classList.add('link-stack');
     linksList.innerHTML = '';
-    links.forEach(link => {
+    links.filter((link) => !link?.isPrivate).forEach(link => {
         const li = document.createElement('li');
         const anchor = document.createElement('a');
         anchor.href = link.url || '#';
@@ -714,6 +820,13 @@ function renderAdminLinks() {
         metaLabel.innerText = platformInfo?.preset?.label || link.name || '링크';
         meta.appendChild(metaLabel);
 
+        if (link.isPrivate) {
+            const lock = document.createElement('span');
+            lock.innerText = '🔒';
+            lock.title = '비공개 링크';
+            meta.appendChild(lock);
+        }
+
         header.appendChild(reorder);
         header.appendChild(meta);
 
@@ -725,6 +838,18 @@ function renderAdminLinks() {
         nameInput.value = link.name || '';
         nameInput.oninput = (e) => updateAdminLink(index, 'name', e.target.value);
         fields.appendChild(nameInput);
+
+        const privacyToggle = document.createElement('label');
+        privacyToggle.className = 'link-privacy';
+        const privacyInput = document.createElement('input');
+        privacyInput.type = 'checkbox';
+        privacyInput.checked = !!link.isPrivate;
+        privacyInput.onchange = (e) => updateAdminLink(index, 'isPrivate', e.target.checked);
+        const privacyLabel = document.createElement('span');
+        privacyLabel.innerText = '비공개';
+        privacyToggle.appendChild(privacyInput);
+        privacyToggle.appendChild(privacyLabel);
+        fields.appendChild(privacyToggle);
 
         if (platformInfo) {
             const handleInput = document.createElement('input');
@@ -788,4 +913,278 @@ function renderAdminLinks() {
         li.appendChild(actions);
         adminList.appendChild(li);
     });
+
+    renderPrivacySummary();
+    renderUsage();
+    renderOnboardingBanner();
+}
+
+function splitAdminLinks() {
+    const publicLinks = adminLinks.filter((link) => !link.isPrivate);
+    const privateLinks = adminLinks.filter((link) => !!link.isPrivate);
+    return { publicLinks, privateLinks };
+}
+
+function renderPrivacySummary() {
+    const summaryEl = document.getElementById('private-links-summary');
+    if (!summaryEl) return;
+
+    const { privateLinks } = splitAdminLinks();
+    if (!adminLinks.length) {
+        summaryEl.innerText = '아직 추가된 링크가 없습니다. 링크를 추가하면 비공개 여부를 여기에서 확인할 수 있습니다.';
+        return;
+    }
+
+    const privacyList = privateLinks.map((link) => link.name || link.url || '비공개 링크');
+    summaryEl.innerHTML = `총 <strong>${adminLinks.length}</strong>개 링크 중 <strong>${privateLinks.length}</strong>개가 비공개입니다.<br>` +
+        (privacyList.length ? `🔒 ${privacyList.join(', ')}` : '🔓 모든 링크가 공개 상태입니다.');
+}
+
+function renderUsage() {
+    const planLabel = document.getElementById('plan-label');
+    const usageCount = document.getElementById('usage-count');
+    const usageBar = document.getElementById('usage-bar');
+    const usageHelp = document.getElementById('usage-help');
+    if (!planLabel || !usageCount || !usageBar || !usageHelp) return;
+
+    const { publicLinks, privateLinks } = splitAdminLinks();
+    const limit = PLAN_LIMITS[pagePlan] || PLAN_LIMITS.free;
+    const used = publicLinks.length + privateLinks.length + adminContactSchema.length;
+    const percent = Math.min(100, Math.round((used / limit) * 100));
+
+    planLabel.innerText = `플랜: ${pagePlan || 'free'}`;
+    usageCount.innerText = `${used} / ${limit}`;
+    usageBar.style.width = `${isFinite(percent) ? percent : 0}%`;
+    usageHelp.innerText = `공개 ${publicLinks.length}개, 비공개 ${privateLinks.length}개 | 컨택트 ${adminContactSchema.length}개`;
+}
+
+function renderSlugEditor() {
+    const chipList = document.getElementById('slug-chip-list');
+    const primaryInput = document.getElementById('primary-slug-input');
+    if (!adminSlugs.length && derivedPageId) {
+        adminSlugs = [slugify(derivedPageId)];
+    }
+    if (primaryInput) {
+        primaryInput.value = adminSlugs[0] || '';
+    }
+
+    if (!chipList) return;
+    chipList.innerHTML = '';
+
+    adminSlugs.forEach((slug, idx) => {
+        const pill = document.createElement('span');
+        pill.className = 'pill';
+        pill.innerText = slug;
+
+        if (idx > 0) {
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.innerText = '×';
+            removeBtn.onclick = () => removeSlugAlias(slug);
+            pill.appendChild(removeBtn);
+        } else {
+            const primaryBadge = document.createElement('span');
+            primaryBadge.className = 'badge muted';
+            primaryBadge.innerText = '대표';
+            pill.appendChild(primaryBadge);
+        }
+
+        chipList.appendChild(pill);
+    });
+}
+
+function setPrimarySlug(value) {
+    const next = slugify(value || derivedPageId || '');
+    if (!next) return;
+    adminSlugs = [next, ...adminSlugs.filter((slug) => slug !== next)];
+    renderSlugEditor();
+    updatePageContext(derivedPageId || next);
+}
+
+function addSlugAlias() {
+    const input = document.getElementById('slug-alias-input');
+    const raw = input?.value?.trim();
+    if (!raw) return;
+
+    const next = slugify(raw);
+    if (!next) {
+        alert('사용할 수 없는 슬러그입니다.');
+        return;
+    }
+
+    if (!adminSlugs.includes(next)) {
+        adminSlugs.push(next);
+        renderSlugEditor();
+        updatePageContext(derivedPageId || next);
+    }
+
+    if (input) input.value = '';
+}
+
+function removeSlugAlias(slug) {
+    adminSlugs = adminSlugs.filter((item, idx) => item !== slug || idx === 0);
+    renderSlugEditor();
+    updatePageContext(derivedPageId || adminSlugs[0] || slug);
+}
+
+function renderContactSchema() {
+    const list = document.getElementById('contact-schema-list');
+    if (!list) return;
+
+    list.innerHTML = '';
+    if (!adminContactSchema.length) {
+        const empty = document.createElement('p');
+        empty.className = 'help-text';
+        empty.innerText = '추가된 컨택트 필드가 없습니다. 위 입력창에서 필드를 추가해주세요.';
+        list.appendChild(empty);
+        return;
+    }
+
+    adminContactSchema.forEach((field, idx) => {
+        const row = document.createElement('div');
+        row.className = 'contact-row';
+
+        const labelInput = document.createElement('input');
+        labelInput.placeholder = '라벨';
+        labelInput.value = field.label || '';
+        labelInput.oninput = (e) => {
+            const current = adminContactSchema[idx] || {};
+            adminContactSchema[idx] = { ...current, label: e.target.value };
+        };
+
+        const typeSelect = document.createElement('select');
+        ['text', 'email', 'tel', 'url'].forEach((type) => {
+            const opt = document.createElement('option');
+            opt.value = type;
+            opt.innerText = type;
+            if (field.type === type) opt.selected = true;
+            typeSelect.appendChild(opt);
+        });
+        typeSelect.onchange = (e) => {
+            const current = adminContactSchema[idx] || {};
+            adminContactSchema[idx] = { ...current, type: e.target.value };
+            renderUsage();
+        };
+
+        const placeholderInput = document.createElement('input');
+        placeholderInput.placeholder = 'placeholder';
+        placeholderInput.value = field.placeholder || '';
+        placeholderInput.oninput = (e) => {
+            const current = adminContactSchema[idx] || {};
+            adminContactSchema[idx] = { ...current, placeholder: e.target.value };
+        };
+
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'pill-button ghost';
+        removeBtn.innerText = '삭제';
+        removeBtn.onclick = () => {
+            adminContactSchema.splice(idx, 1);
+            renderContactSchema();
+            renderUsage();
+        };
+
+        row.appendChild(labelInput);
+        row.appendChild(typeSelect);
+        row.appendChild(placeholderInput);
+        row.appendChild(removeBtn);
+
+        list.appendChild(row);
+    });
+}
+
+function renderPresetButtons(targetId, onClick) {
+    const container = document.getElementById(targetId);
+    if (!container) return;
+    container.innerHTML = '';
+
+    CONTACT_PRESETS.forEach((preset) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'preset-chip';
+        btn.innerText = preset.label;
+        btn.onclick = () => onClick(preset);
+        container.appendChild(btn);
+    });
+}
+
+function renderContactPresets() {
+    renderPresetButtons('contact-presets', (preset) => applyContactPreset(preset.id));
+}
+
+function renderOnboardingPresets() {
+    renderPresetButtons('onboarding-presets', (preset) => applyContactPreset(preset.id));
+}
+
+function applyContactPreset(presetId) {
+    const preset = CONTACT_PRESETS.find((item) => item.id === presetId);
+    if (!preset) return;
+    adminContactSchema = preset.fields.map((field) => ({ ...field }));
+    renderContactSchema();
+    renderUsage();
+}
+
+function addContactField() {
+    const labelInput = document.getElementById('contactLabel');
+    const typeInput = document.getElementById('contactType');
+    const placeholderInput = document.getElementById('contactPlaceholder');
+
+    const label = labelInput?.value?.trim();
+    const type = typeInput?.value || 'text';
+    const placeholder = placeholderInput?.value || '';
+
+    if (!label) {
+        alert('라벨을 입력해주세요.');
+        return;
+    }
+
+    adminContactSchema.push({ label, type, placeholder });
+    renderContactSchema();
+    renderUsage();
+
+    if (labelInput) labelInput.value = '';
+    if (placeholderInput) placeholderInput.value = '';
+}
+
+function renderOnboardingBanner() {
+    const card = document.getElementById('onboarding-card');
+    if (!card) return;
+    const nameInput = document.getElementById('name');
+    const shouldShow = !adminLinks.length && !(nameInput?.value?.trim());
+    card.style.display = shouldShow ? 'block' : 'none';
+    if (shouldShow) {
+        renderOnboardingPresets();
+    }
+}
+
+function applyDefaultTemplate() {
+    const nameInput = document.getElementById('name');
+    const descInput = document.getElementById('desc');
+    const photoInput = document.getElementById('photo');
+
+    if (nameInput && !nameInput.value) nameInput.value = '나의 링크 보드';
+    if (descInput && !descInput.value) descInput.value = '주요 채널과 컨택트를 한 곳에 모았어요.';
+    if (photoInput && !photoInput.value) photoInput.value = 'https://placehold.co/200x200.png';
+
+    const inferredSlug = slugify(nameInput?.value || derivedPageId || 'my-page');
+    if (inferredSlug) {
+        adminSlugs = [inferredSlug, ...adminSlugs.filter((s) => s !== inferredSlug)];
+    }
+
+    adminLinks = [
+        { name: 'Instagram', url: 'https://instagram.com/' + (derivedPageId || 'mychannel'), platformId: 'instagram', handle: derivedPageId || 'mychannel' },
+        { name: 'YouTube', url: 'https://www.youtube.com/@' + (derivedPageId || 'creator'), platformId: 'youtube', handle: derivedPageId || 'creator' },
+        { name: '이메일 문의', url: 'mailto:hello@example.com', isPrivate: true },
+    ];
+
+    applyContactPreset('basic');
+    renderAdminLinks();
+    renderContactSchema();
+    renderSlugEditor();
+    renderOnboardingBanner();
+    renderUsage();
+}
+
+function requestUpgrade() {
+    window.location.href = 'mailto:support@example.com?subject=%EC%97%85%EA%B7%B8%EB%A0%88%EC%9D%B4%EB%93%9C%20%EB%AC%B8%EC%9D%98';
 }

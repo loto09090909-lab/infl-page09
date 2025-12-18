@@ -1,5 +1,12 @@
 import { createSessionToken } from "./auth";
-import { resolvePageId, slugify } from "./slug";
+import { resolvePageId } from "./slug";
+import {
+  findConflictingSlug,
+  getSlugsForPage,
+  hasSlugMap,
+  normalizeSlugs,
+  replaceSlugMap,
+} from "./slug-map";
 import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
 
 type CreatePageBody = {
@@ -332,9 +339,20 @@ export async function getAdminPage(
 
   const kvValue = await env.PAGE_KV.get(`page:${row.page_id}`);
   let plan: string | null = null;
+  let privateLinks: unknown[] = [];
+  let contactSchema: unknown[] = [];
+  let slugs = await getSlugsForPage(env, row.page_id);
   if (kvValue) {
     try {
-      plan = JSON.parse(kvValue).plan ?? null;
+      const parsed = JSON.parse(kvValue);
+      plan = parsed.plan ?? null;
+      privateLinks = Array.isArray(parsed.privateLinks) ? parsed.privateLinks : [];
+      contactSchema = Array.isArray(parsed.contactSchema)
+        ? parsed.contactSchema
+        : [];
+      if (Array.isArray(parsed.slugs) && parsed.slugs.length) {
+        slugs = parsed.slugs;
+      }
     } catch (error) {
       plan = null;
     }
@@ -350,7 +368,9 @@ export async function getAdminPage(
       },
       links: safeParseLinks(row.links),
       plan,
-      slugs: await getSlugsForPage(env, row.page_id),
+      slugs,
+      privateLinks,
+      contactSchema,
     },
     200,
     headers
@@ -466,89 +486,4 @@ function safeParseLinks(raw: string | null) {
   } catch (error) {
     return [];
   }
-}
-
-function normalizeSlugs(raw: unknown, pageId: string) {
-  const incoming = Array.isArray(raw) ? raw : [];
-  const normalized: string[] = [];
-
-  for (const value of incoming) {
-    if (typeof value !== "string") continue;
-
-    const trimmed = value.trim();
-    if (!trimmed) continue;
-
-    const slugified = slugify(trimmed);
-    if (slugified) {
-      normalized.push(slugified);
-    }
-
-    if (!normalized.includes(trimmed)) {
-      normalized.push(trimmed);
-    }
-  }
-
-  const baseSlug = slugify(pageId) || pageId.trim();
-
-  if (baseSlug) {
-    normalized.unshift(baseSlug);
-  }
-
-  const rawPageId = pageId.trim();
-  if (rawPageId && !normalized.includes(rawPageId)) {
-    normalized.push(rawPageId);
-  }
-
-  return Array.from(new Set(normalized));
-}
-
-async function findConflictingSlug(env: any, slugs: string[], ownerPageId: string) {
-  for (const slug of slugs) {
-    const row = await env.DB.prepare(
-      "SELECT page_id FROM slug_map WHERE display_name = ? LIMIT 1"
-    )
-      .bind(slug)
-      .first<{ page_id: string }>();
-
-    if (row && row.page_id !== ownerPageId) {
-      return slug;
-    }
-  }
-
-  return null;
-}
-
-async function replaceSlugMap(env: any, pageId: string, slugs: string[]) {
-  await env.DB.prepare("DELETE FROM slug_map WHERE page_id = ?")
-    .bind(pageId)
-    .run();
-
-  for (const slug of slugs) {
-    await env.DB.prepare(
-      "INSERT OR REPLACE INTO slug_map (display_name, page_id) VALUES (?, ?)"
-    )
-      .bind(slug, pageId)
-      .run();
-  }
-}
-
-async function getSlugsForPage(env: any, pageId: string) {
-  const rows = await env.DB.prepare(
-    "SELECT display_name FROM slug_map WHERE page_id = ?"
-  )
-    .bind(pageId)
-    .all<{ display_name: string }>();
-
-  const slugs = (rows?.results ?? []).map((row) => row.display_name).filter(Boolean);
-  return slugs.length ? slugs : [pageId];
-}
-
-async function hasSlugMap(env: any, pageId: string) {
-  const row = await env.DB.prepare(
-    "SELECT display_name FROM slug_map WHERE page_id = ? LIMIT 1"
-  )
-    .bind(pageId)
-    .first();
-
-  return !!row;
 }

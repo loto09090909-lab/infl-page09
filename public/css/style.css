@@ -107,6 +107,11 @@ button:hover,
     color: #111827;
 }
 
+.badge.muted {
+    background: #f3f4f6;
+    color: #4b5563;
+}
+
 .ghost-link {
     padding: 10px 12px;
     border-radius: 10px;
@@ -695,4 +700,151 @@ body.user-view {
 .user-footer {
     color: #6b7280;
     font-size: 13px;
+}
+
+.link-privacy {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #4b5563;
+}
+
+.link-privacy input {
+    width: 14px;
+    height: 14px;
+}
+
+.pill-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #eef2ff;
+    border: 1px solid #e5e7eb;
+    color: #4338ca;
+    border-radius: 999px;
+    padding: 6px 10px;
+    font-size: 13px;
+}
+
+.pill button {
+    border: none;
+    background: transparent;
+    color: #6b7280;
+    cursor: pointer;
+}
+
+.usage-card .usage-meter {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.meter-bar {
+    background: #f3f4f6;
+    border-radius: 999px;
+    height: 14px;
+    width: 100%;
+    overflow: hidden;
+    border: 1px solid #e5e7eb;
+}
+
+.meter-bar-inner {
+    height: 100%;
+    width: 0;
+    background: linear-gradient(90deg, #34d399, #16a34a);
+    transition: width 0.3s ease;
+}
+
+.meter-labels {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+}
+
+.usage-count {
+    font-weight: 700;
+    color: #111827;
+}
+
+.slug-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.field-label {
+    font-size: 13px;
+    color: #4b5563;
+    font-weight: 600;
+}
+
+.private-links-summary {
+    margin-top: 10px;
+    padding: 10px;
+    border-radius: 12px;
+    background: #f8fafc;
+    border: 1px solid #e5e7eb;
+    color: #334155;
+    font-size: 13px;
+}
+
+.private-links-summary strong {
+    color: #111827;
+}
+
+.contact-schema-list {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.contact-row {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr 1fr auto;
+    gap: 8px;
+    align-items: center;
+}
+
+.contact-row .pill-button {
+    justify-self: end;
+}
+
+.preset-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+}
+
+.preset-chip {
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 8px 10px;
+    background: #fff;
+    cursor: pointer;
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+    font-size: 13px;
+}
+
+.preset-chip:hover {
+    border-color: #c7d2fe;
+    background: #eef2ff;
+}
+
+.onboarding-card {
+    border: 1px solid #c7d2fe;
+    background: linear-gradient(135deg, #eef2ff, #ecfdf3);
 }

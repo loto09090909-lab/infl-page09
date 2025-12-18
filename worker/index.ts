@@ -35,7 +35,7 @@ export default {
       if (!pageId) {
         return errorResponse("pageId가 필요합니다", 400, corsHeaders);
       }
-      return getPage(env, decodeURIComponent(pageId), corsHeaders);
+      return getPage(req, env, decodeURIComponent(pageId), corsHeaders);
     }
 
     // --- 1. 관리자 API ---
