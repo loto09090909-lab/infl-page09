@@ -6,6 +6,7 @@ import {
   deletePage,
   getAdminPage,
   listPages,
+  bootstrapSuperAdmin,
   superAdminLogin,
   updatePage,
 } from "./super-admin";
@@ -49,6 +50,13 @@ export default {
     }
 
     // --- 1. 관리자 API ---
+    if (
+      method === "POST" &&
+      (path === "/api/super-admin/bootstrap" || path === "/api/admin/bootstrap")
+    ) {
+      return bootstrapSuperAdmin(req, env, corsHeaders);
+    }
+
     if (
       method === "POST" &&
       (path === "/api/super-admin/login" || path === "/api/admin/login")

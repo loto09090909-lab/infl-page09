@@ -132,6 +132,13 @@ let dragState = null;
 let bulkUploadPages = [];
 let bulkPreviewMeta = { filename: '', totalRows: 0, skipped: 0 };
 
+function setSuperAdminStatus(message, tone = 'info') {
+    const statusEl = document.getElementById('sa-status');
+    if (!statusEl) return;
+    statusEl.textContent = message;
+    statusEl.className = `status-banner ${tone}`;
+}
+
 function createCustomLinkIcon(url, alt = '') {
     if (!url) return null;
 
@@ -273,11 +280,12 @@ async function submitPage() {
     });
 
     if (res.ok) {
-        alert(editingPageId ? '페이지가 수정되었습니다.' : '페이지가 생성되었습니다.');
+        setSuperAdminStatus(editingPageId ? '페이지가 수정되었습니다.' : '페이지가 생성되었습니다.', 'success');
         resetForm();
         loadPageList();  // 페이지 목록 갱신
     } else {
         const errText = await res.text();
+        setSuperAdminStatus(`페이지 저장 실패: ${errText || res.status}`, 'error');
         alert(`페이지 저장 실패: ${errText || res.status}`);
     }
 }
@@ -286,7 +294,7 @@ async function submitPage() {
 async function loadPageList(page = pageListState.page) {
     const token = sessionStorage.getItem('super_admin_token');
     if (!token) {
-        console.warn('슈퍼 관리자 토큰이 없습니다. 로그인 후 목록을 확인하세요.');
+        setSuperAdminStatus('슈퍼 관리자 토큰이 없습니다. 로그인 후 목록을 확인하세요.', 'error');
         return;
     }
 
@@ -305,7 +313,7 @@ async function loadPageList(page = pageListState.page) {
 
     if (!res.ok) {
         const errText = await res.text();
-        alert(`페이지 목록 불러오기 실패: ${errText || res.status}`);
+        setSuperAdminStatus(`페이지 목록 불러오기 실패: ${errText || res.status}`, 'error');
         return;
     }
 
@@ -320,6 +328,7 @@ async function loadPageList(page = pageListState.page) {
 
     renderPageList(pages);
     renderPagination();
+    setSuperAdminStatus(`페이지 ${pageListState.page} / ${Math.max(1, Math.ceil((pageListState.total || 0) / pageListState.pageSize))} (총 ${pageListState.total}개)를 불러왔습니다.`, 'info');
 }
 
 function renderPageList(pages) {
@@ -389,10 +398,11 @@ async function deletePage(pageId) {
     });
 
     if (res.ok) {
-        alert('페이지가 삭제되었습니다.');
+        setSuperAdminStatus('페이지가 삭제되었습니다.', 'success');
         loadPageList();  // 페이지 목록 갱신
     } else {
         const errText = await res.text();
+        setSuperAdminStatus(`페이지 삭제 실패: ${errText || res.status}`, 'error');
         alert(`페이지 삭제 실패: ${errText || res.status}`);
     }
 }
@@ -411,6 +421,7 @@ async function editPage(pageId) {
 
   if (!res.ok) {
     const errText = await res.text();
+    setSuperAdminStatus(`페이지 정보를 불러오지 못했습니다: ${errText || res.status}`,'error');
     alert(`페이지 정보를 불러오지 못했습니다: ${errText || res.status}`);
     return;
   }
@@ -451,6 +462,8 @@ async function editPage(pageId) {
   renderAliasSlugs();
   setFormTitle(`페이지 수정: ${page.pageId}`);
 
+    setSuperAdminStatus(`${page.pageId} 페이지를 편집합니다. 저장 시 관리자 비밀번호를 비워두면 기존 값을 유지합니다.`, 'info');
+
     const submitBtn = document.getElementById('submit-btn');
     if (submitBtn) submitBtn.innerText = '수정 저장';
   const cancelBtn = document.getElementById('cancel-edit-btn');
@@ -460,9 +473,11 @@ async function editPage(pageId) {
 document.addEventListener('DOMContentLoaded', () => {
     const token = sessionStorage.getItem('super_admin_token');
     if (!token) {
+        setSuperAdminStatus('슈퍼 관리자 로그인이 필요합니다. 로그인 화면으로 이동합니다.', 'error');
         window.location.href = '/login.html';
         return;
     }
+    setSuperAdminStatus('슈퍼 관리자 인증 토큰을 확인했습니다. 페이지 목록을 불러옵니다.', 'success');
     renderPlatformSelector();
     updatePlatformPrefix();
     setupSlugInputs();

@@ -1,4 +1,4 @@
-import { createSessionToken } from "./auth";
+import { createSessionToken, getBearerToken, verifySessionToken } from "./auth";
 import { resolvePageId } from "./slug";
 import {
   findConflictingSlug,
@@ -9,7 +9,7 @@ import {
 } from "./slug-map";
 import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
 import { enforcePlanLimit, hasPrivateLinks, PlanLimitError } from "./plan-limits";
-import { findOrCreateUser, updateUserPassword } from "./users";
+import { findOrCreateUser, hashPassword, updateUserPassword } from "./users";
 
 type CreatePageBody = {
   pageId: string;
@@ -317,18 +317,76 @@ export async function superAdminLogin(
       ? body.username.trim()
       : "admin"; // 기본 슈퍼 관리자 호환
 
+  const hashedPassword = await hashPassword(body.password);
+
   const row = await env.DB.prepare(
     "SELECT username, password_hash FROM super_admins WHERE username = ? LIMIT 1"
   )
     .bind(username)
     .first<{ username: string; password_hash: string }>();
 
-  if (!row || row.password_hash !== body.password) {
+  if (!row || row.password_hash !== hashedPassword) {
     return errorResponse("인증에 실패했습니다", 401, headers);
   }
 
   const session = await createSessionToken(env, "super", "super-admin");
   return jsonResponse(session, 200, headers);
+}
+
+export async function bootstrapSuperAdmin(
+  req: Request,
+  env: any,
+  headers: HeadersInit
+): Promise<Response> {
+  const body = await parseJsonBody<LoginBody>(req);
+  if (!body || typeof body.password !== "string") {
+    return errorResponse("아이디와 비밀번호를 모두 입력하세요", 400, headers);
+  }
+
+  const username =
+    typeof body.username === "string" && body.username.trim()
+      ? body.username.trim()
+      : "admin";
+
+  if (username.length < 3) {
+    return errorResponse("아이디는 3자 이상이어야 합니다", 400, headers);
+  }
+
+  if (body.password.trim().length < 8) {
+    return errorResponse("비밀번호는 8자 이상으로 설정하세요", 400, headers);
+  }
+
+  const countRow = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM super_admins"
+  ).first<{ count: number }>();
+  const adminCount = Number(countRow?.count ?? 0);
+
+  if (adminCount > 0) {
+    const token = getBearerToken(req);
+    const authorized = await verifySessionToken(env, "super", token);
+    if (!authorized) {
+      return errorResponse(
+        "이미 계정이 있어 추가/초기화하려면 슈퍼 관리자 토큰이 필요합니다",
+        401,
+        headers
+      );
+    }
+  }
+
+  const passwordHash = await hashPassword(body.password);
+  await env.DB.prepare(
+    "INSERT OR REPLACE INTO super_admins (username, password_hash) VALUES (?, ?)"
+  )
+    .bind(username, passwordHash)
+    .run();
+
+  const status = adminCount === 0 ? 201 : 200;
+  const mode = adminCount === 0 ? "bootstrapped" : "updated";
+  return jsonResponse(
+    { success: true, username, mode, passwordHash },
+    status,
+    headers
+  );
 }
 
 export async function createPage(

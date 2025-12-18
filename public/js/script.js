@@ -774,6 +774,69 @@ async function login() {
     }
 }
 
+async function bootstrapSuperAdmin() {
+    const usernameInput = document.getElementById('username');
+    const passwordInput = document.getElementById('password');
+    const username = usernameInput && usernameInput.value ? usernameInput.value : 'admin';
+    const password = passwordInput ? passwordInput.value : '';
+
+    if (!username || !password) {
+        alert('아이디와 비밀번호를 모두 입력하세요.');
+        return;
+    }
+
+    const token = sessionStorage.getItem('super_admin_token');
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const res = await apiFetch('/api/admin/bootstrap', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ username, password })
+    }, [400, 401, 404, 405]);
+
+    if (res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        alert(`계정을 준비했습니다: ${payload.username || username} (${payload.mode || 'created'})`);
+    } else {
+        const errText = await res.text();
+        alert(`계정 생성/재설정 실패: ${errText || res.status}`);
+    }
+}
+
+async function sha256Hex(value) {
+    const buffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+    return Array.from(new Uint8Array(buffer))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
+}
+
+async function showD1SeedSql() {
+    const usernameInput = document.getElementById('username');
+    const passwordInput = document.getElementById('password');
+    const snippetEl = document.getElementById('d1-seed-snippet');
+
+    const username = usernameInput && usernameInput.value ? usernameInput.value : 'admin';
+    const password = passwordInput ? passwordInput.value : '';
+
+    if (!password) {
+        alert('비밀번호를 입력하면 D1 시드 SQL을 생성합니다.');
+        return;
+    }
+
+    const hash = await sha256Hex(password);
+    const escapedUsername = username.replace(/'/g, "''");
+    const sql = `INSERT OR REPLACE INTO super_admins (username, password_hash)\nVALUES ('${escapedUsername}', '${hash}');`;
+
+    if (snippetEl) {
+        snippetEl.textContent = sql;
+    }
+
+    return sql;
+}
+
 // 인플루언서 페이지 관리자 로그인
 async function pageAdminLogin() {
     const passwordInput = document.getElementById('page-admin-password');

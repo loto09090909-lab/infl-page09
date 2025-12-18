@@ -189,6 +189,34 @@ button:hover,
     margin: 4px 0 0;
 }
 
+.status-banner {
+    margin: 0 6vw 16px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 1px solid #e5e7eb;
+    background: #f8fafc;
+    color: #0f172a;
+    font-weight: 600;
+}
+
+.status-banner.success {
+    border-color: #16a34a;
+    background: #ecfdf3;
+    color: #065f46;
+}
+
+.status-banner.error {
+    border-color: #ef4444;
+    background: #fef2f2;
+    color: #991b1b;
+}
+
+.status-banner.info {
+    border-color: #cbd5e1;
+    background: #eef2ff;
+    color: #312e81;
+}
+
 .platform-selector {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(48px, 1fr));
@@ -587,6 +615,27 @@ header {
     gap: 10px;
     max-width: 360px;
     margin: 20px auto;
+}
+
+.login-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.login-actions button {
+    flex: 1 1 180px;
+}
+
+.code-block {
+    background: #0b1727;
+    color: #e5e7eb;
+    padding: 12px;
+    border-radius: 10px;
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+    overflow-x: auto;
+    margin-top: 4px;
+    white-space: pre-wrap;
 }
 
 .page-list-controls {
