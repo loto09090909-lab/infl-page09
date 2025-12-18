@@ -1,5 +1,6 @@
 import { resolvePageId } from "./slug";
 import { errorResponse, jsonResponse } from "./utils";
+import { consumePrivateLink } from "./private-links";
 
 type PageMetaRow = {
   page_id: string;
@@ -50,6 +51,20 @@ export async function getPage(
   } catch (err) {
     return errorResponse("Page data is corrupted", 500, headers);
   }
+}
+
+export async function getPrivatePage(
+  env: any,
+  token: string,
+  accessCode: string | null,
+  headers: HeadersInit
+): Promise<Response> {
+  const result = await consumePrivateLink(env, token, accessCode ?? undefined);
+  if ("error" in result) {
+    return errorResponse(result.error, result.status, headers);
+  }
+
+  return getPage(env, result.pageId, headers);
 }
 
 function safeParseLinks(raw: string | null) {

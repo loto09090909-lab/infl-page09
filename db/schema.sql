@@ -108,3 +108,22 @@ VALUES
 ('free',    1, 0, 0),
 ('basic',   1, 1, 1),
 ('premium', 1, 1, 1);
+
+-- =========================
+-- private_links (프라이빗/난수형 링크)
+--  - max_views와 remaining_views로 n회 제한 구현
+--  - expire_at ISO8601, access_code_hash로 입장 코드 보호
+-- =========================
+CREATE TABLE IF NOT EXISTS private_links (
+  id TEXT PRIMARY KEY,
+  page_id TEXT NOT NULL,
+  token TEXT NOT NULL UNIQUE,
+  max_views INTEGER,
+  remaining_views INTEGER,
+  expire_at TEXT,
+  access_code_hash TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (page_id) REFERENCES page_meta(page_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_private_links_page ON private_links(page_id);

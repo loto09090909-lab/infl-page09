@@ -9,9 +9,13 @@ import {
   superAdminLogin,
   updatePage,
 } from "./super-admin";
-import { getPage } from "./page-view";
+import { getPage, getPrivatePage } from "./page-view";
 import { buildCorsHeaders, CorsOptions, errorResponse } from "./utils";
 import { login as userLogin, signup as userSignup } from "./users";
+import {
+  createPrivateLink,
+  listPrivateLinksForPage,
+} from "./page-admin";
 
 export default {
   async fetch(req: Request, env: any): Promise<Response> {
@@ -37,6 +41,16 @@ export default {
         return errorResponse("pageId가 필요합니다", 400, corsHeaders);
       }
       return getPage(env, decodeURIComponent(pageId), corsHeaders);
+    }
+
+    if (method === "GET" && path.startsWith("/api/private/")) {
+      const token = path.replace("/api/private/", "");
+      if (!token) {
+        return errorResponse("token이 필요합니다", 400, corsHeaders);
+      }
+
+      const accessCode = url.searchParams.get("code");
+      return getPrivatePage(env, token, accessCode, corsHeaders);
     }
 
     // --- 사용자 가입/로그인 ---
@@ -121,6 +135,16 @@ export default {
 
       if (method === "POST" && action === "save") {
         return savePage(req, env, pageId, corsHeaders);
+      }
+
+      if (action === "private-links") {
+        if (method === "GET") {
+          return listPrivateLinksForPage(req, env, pageId, corsHeaders);
+        }
+
+        if (method === "POST") {
+          return createPrivateLink(req, env, pageId, corsHeaders);
+        }
       }
     }
 

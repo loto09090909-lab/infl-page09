@@ -9,6 +9,10 @@ import {
   PlanLimitError,
 } from "./plan-limits";
 import {
+  createPrivateLinkRecord,
+  listPrivateLinks,
+} from "./private-links";
+import {
   findConflictingSlug,
   getSlugsForPage,
   hasSlugMap,
@@ -29,6 +33,16 @@ type SavePageBody = {
   plan?: unknown;
   slugs?: unknown;
 };
+
+type PrivateLinkBody = {
+  ttlMinutes?: unknown;
+  maxViews?: unknown;
+  accessCode?: unknown;
+};
+
+type PageAccessResult =
+  | { authorized: Response }
+  | { authorized: true; canonicalPageId: string };
 
 export async function pageAdminLogin(
   req: Request,
@@ -78,13 +92,9 @@ export async function savePage(
   pageId: string,
   headers: HeadersInit
 ) {
-  const token = getBearerToken(req);
-  const canonicalPageId = await resolvePageId(env, pageId);
-  const pageTokenValid = await verifySessionToken(env, "page", token, canonicalPageId);
-  const superTokenValid = await verifySessionToken(env, "super", token);
-  if (!pageTokenValid && !superTokenValid) {
-    return errorResponse("인증이 필요합니다", 401, headers);
-  }
+  const access = await verifyPageAccess(req, env, pageId, headers);
+  if (access.authorized !== true) return access.authorized;
+  const canonicalPageId = access.canonicalPageId;
 
   const body = await parseJsonBody<SavePageBody>(req);
   if (!body) {
@@ -175,5 +185,95 @@ export async function savePage(
   }
 
   return jsonResponse({ success: true, message: "Page saved" }, 200, headers);
+}
+
+export async function createPrivateLink(
+  req: Request,
+  env: any,
+  pageId: string,
+  headers: HeadersInit
+) {
+  const access = await verifyPageAccess(req, env, pageId, headers);
+  if (access.authorized !== true) return access.authorized;
+
+  const planId = await getPlanForPage(env, access.canonicalPageId);
+  try {
+    await enforcePlanLimit(env, planId, "create_private_link");
+  } catch (error) {
+    if (error instanceof PlanLimitError) {
+      return errorResponse(error.message, error.status, headers);
+    }
+    throw error;
+  }
+
+  const body = await parseJsonBody<PrivateLinkBody>(req);
+  if (!body) {
+    return errorResponse("잘못된 요청 본문입니다", 400, headers);
+  }
+
+  const created = await createPrivateLinkRecord(
+    env,
+    access.canonicalPageId,
+    body
+  );
+
+  return jsonResponse({ link: created }, 201, headers);
+}
+
+export async function listPrivateLinksForPage(
+  req: Request,
+  env: any,
+  pageId: string,
+  headers: HeadersInit
+) {
+  const access = await verifyPageAccess(req, env, pageId, headers);
+  if (access.authorized !== true) return access.authorized;
+
+  const links = await listPrivateLinks(env, access.canonicalPageId);
+  return jsonResponse({ links }, 200, headers);
+}
+
+async function verifyPageAccess(
+  req: Request,
+  env: any,
+  pageId: string,
+  headers: HeadersInit
+): Promise<PageAccessResult> {
+  const token = getBearerToken(req);
+  const canonicalPageId = await resolvePageId(env, pageId);
+  const pageTokenValid = await verifySessionToken(env, "page", token, canonicalPageId);
+  const superTokenValid = await verifySessionToken(env, "super", token);
+
+  if (!pageTokenValid && !superTokenValid) {
+    return { authorized: errorResponse("인증이 필요합니다", 401, headers) } as const;
+  }
+
+  return { authorized: true as const, canonicalPageId };
+}
+
+async function getPlanForPage(env: any, canonicalPageId: string) {
+  const metaRow = await env.DB.prepare(
+    "SELECT plan_id FROM page_meta WHERE page_id = ? LIMIT 1"
+  )
+    .bind(canonicalPageId)
+    .first<{ plan_id: string | null }>();
+
+  if (metaRow?.plan_id) {
+    return metaRow.plan_id;
+  }
+
+  const existingRaw = await env.PAGE_KV.get(`page:${canonicalPageId}`);
+  if (existingRaw) {
+    try {
+      const parsed = JSON.parse(existingRaw);
+      if (parsed.plan) {
+        return parsed.plan;
+      }
+    } catch (error) {
+      // ignore JSON parse errors
+    }
+  }
+
+  return "free";
 }
 
