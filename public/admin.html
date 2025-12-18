@@ -6,6 +6,7 @@
     <meta name="api-base" content="https://infl-worker.loto09090909.workers.dev">
     <title>{{PAGE_NAME}} 관리자</title>
     <link rel="stylesheet" href="css/style.css">
+    <script src="/config.js"></script>
 </head>
 <body data-page-role="page-admin" class="page-admin">
     <header class="page-hero">
@@ -17,6 +18,7 @@
                 <span class="badge">현재 페이지: <strong id="current-page-id">-</strong></span>
                 <span class="badge" id="current-slug-badge">슬러그: -</span>
                 <a id="public-link" class="ghost-link" href="#" target="_blank" rel="noopener">공개 페이지 열기</a>
+                <span id="env-badge" class="env-badge" aria-live="polite" style="display: none;"></span>
             </div>
         </div>
         <div class="hero-cta">

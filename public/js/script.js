@@ -1,33 +1,89 @@
+const APP_CONFIG = window.APP_CONFIG || {};
+
 function resolveApiBases() {
     const bases = [];
+    const pushBase = (value) => {
+        if (!value) return;
+        const trimmed = String(value).trim();
+        if (!trimmed) return;
+        const normalized = trimmed.replace(/\/+$/, '');
+        if (!bases.includes(normalized)) {
+            bases.push(normalized);
+        }
+    };
+
+    (APP_CONFIG.apiBases || []).forEach((base) => pushBase(base));
 
     const metaApiBase = document.querySelector('meta[name="api-base"]')?.content?.trim();
-    if (metaApiBase) {
-        bases.push(metaApiBase);
-    }
+    pushBase(metaApiBase);
 
-    if (window.API_BASE) {
-        bases.push(window.API_BASE);
-    }
+    pushBase(window.API_BASE);
 
     const knownWorkerBase = 'https://infl-worker.loto09090909.workers.dev';
-    if (!bases.includes(knownWorkerBase)) {
-        bases.push(knownWorkerBase);
-    }
+    pushBase(knownWorkerBase);
 
     if (window.location.hostname.endsWith('pages.dev')) {
         const guessedWorker = window.location.origin.replace('.pages.dev', '.workers.dev');
-        if (!bases.includes(guessedWorker)) {
-            bases.push(guessedWorker);
-        }
+        pushBase(guessedWorker);
     }
 
-    bases.push(window.location.origin);
+    pushBase(window.location.origin);
 
     return bases;
 }
 
 const API_BASES = resolveApiBases();
+const API_HEALTH_CACHE = new Map();
+let LAST_API_BASE_USED = null;
+
+function withTimeout(promise, timeoutMs = 8000, controller = new AbortController()) {
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    return promise.finally(() => clearTimeout(timeout));
+}
+
+async function checkApiHealth(base) {
+    if (!base) return false;
+
+    const cached = API_HEALTH_CACHE.get(base);
+    const now = Date.now();
+    const ttl = 60 * 1000; // 1 minute
+    if (cached && now - cached.checkedAt < ttl) {
+        return cached.ok;
+    }
+
+    const path = (APP_CONFIG.healthPath || '/api/health').startsWith('/')
+        ? APP_CONFIG.healthPath
+        : `/${APP_CONFIG.healthPath}`;
+    const url = `${base}${path}`;
+
+    try {
+        const controller = new AbortController();
+        const res = await withTimeout(
+            fetch(url, { method: 'GET', headers: { Accept: 'application/json' }, signal: controller.signal }),
+            4000,
+            controller
+        );
+        const ok = res.ok;
+        API_HEALTH_CACHE.set(base, { ok, checkedAt: now });
+        return ok;
+    } catch (error) {
+        API_HEALTH_CACHE.set(base, { ok: false, checkedAt: now });
+        return false;
+    }
+}
+
+async function primeApiBaseSelection() {
+    for (const base of API_BASES) {
+        const healthy = await checkApiHealth(base);
+        if (healthy) {
+            LAST_API_BASE_USED = base;
+            updateEnvBadge(base);
+            return base;
+        }
+    }
+    updateEnvBadge(API_BASES[0] || null);
+    return null;
+}
 
 async function apiFetch(
     path,
@@ -37,13 +93,29 @@ async function apiFetch(
     let lastError;
 
     for (const base of API_BASES) {
+        const healthy = await checkApiHealth(base).catch(() => null);
+        if (healthy === false) {
+            lastError = lastError || new Error(`Health check failed for ${base}`);
+            continue;
+        }
+
         try {
-            const res = await fetch(`${base}${path}`, options);
+            const controller = new AbortController();
+            const res = await withTimeout(
+                fetch(`${base}${path}`, { ...options, signal: controller.signal }),
+                options.timeoutMs || 8000,
+                controller
+            );
+
             if (res.ok) {
+                LAST_API_BASE_USED = base;
+                updateEnvBadge(base);
                 return res;
             }
 
             if (!fallbackStatuses.includes(res.status)) {
+                LAST_API_BASE_USED = base;
+                updateEnvBadge(base);
                 return res;
             }
 
@@ -54,7 +126,7 @@ async function apiFetch(
     }
 
     if (lastError instanceof Response) return lastError;
-    throw lastError;
+    throw lastError || new Error('모든 API 베이스에 연결하지 못했습니다');
 }
 
 const platformHelpers = window.PlatformHelpers || {};
@@ -118,6 +190,23 @@ function setPageLoginStatus(message, tone = 'info') {
     statusEl.textContent = message;
     statusEl.className = `status-banner ${tone}`;
     statusEl.style.display = 'block';
+}
+
+function updateEnvBadge(base) {
+    const badge = document.getElementById('env-badge');
+    if (!badge) return;
+
+    const envLabel = (APP_CONFIG.envLabel || 'local').trim();
+    let host = '';
+    try {
+        host = base ? new URL(base).host : '';
+    } catch (error) {
+        host = '';
+    }
+
+    const detail = host ? `${envLabel} · ${host}` : envLabel;
+    badge.innerHTML = `<span class="env-dot"></span><span>${detail}</span>`;
+    badge.style.display = 'inline-flex';
 }
 
 function createLinkIcon(preset) {
@@ -380,6 +469,8 @@ const isAdminHtml = pathSegments.length === 1 && pathSegments[0].startsWith('adm
 const isUserHtml = window.location.pathname.endsWith('/user.html');
 const isPublicView = !pageRole && (isUserPage || looksLikeSlugPage || isUserHtml);
 const derivedPageId = pageIdFromPath || pageIdFromQuery || '';
+
+primeApiBaseSelection();
 
 if (isPublicView) {
     document.body.classList.add('user-view');

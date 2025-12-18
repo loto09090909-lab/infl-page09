@@ -11,7 +11,7 @@ import {
   updatePage,
 } from "./super-admin";
 import { getPage } from "./page-view";
-import { buildCorsHeaders, CorsOptions, errorResponse } from "./utils";
+import { buildCorsHeaders, CorsOptions, errorResponse, jsonResponse } from "./utils";
 import { login as userLogin, signup as userSignup } from "./users";
 
 export default {
@@ -38,6 +38,14 @@ export default {
         return errorResponse("pageId가 필요합니다", 400, corsHeaders);
       }
       return getPage(req, env, decodeURIComponent(pageId), corsHeaders);
+    }
+
+    if (method === "GET" && path === "/api/health") {
+      return jsonResponse(
+        { ok: true, time: new Date().toISOString() },
+        200,
+        corsHeaders
+      );
     }
 
     // --- 사용자 가입/로그인 ---

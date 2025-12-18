@@ -107,6 +107,27 @@ button:hover,
     color: #111827;
 }
 
+.env-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 999px;
+    background: #f8fafc;
+    color: #0f172a;
+    font-weight: 600;
+    font-size: 12px;
+}
+
+.env-badge .env-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #16a34a;
+    box-shadow: 0 0 0 2px #dcfce7;
+}
+
 .badge.muted {
     background: #f3f4f6;
     color: #4b5563;
