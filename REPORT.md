@@ -1,15 +1,15 @@
 # 시스템 점검 결과
 
 ## 1. 구현 및 동작 개요
-- **백엔드 라우팅**: Cloudflare Worker가 공개 페이지 조회(`/api/pages/:pageId`), 슈퍼 관리자 로그인 및 페이지 CRUD(`/api/admin/*`), 페이지 관리자 로그인/저장(`/api/page/:pageId/*`)을 처리합니다. CORS는 `ALLOWED_ORIGINS` 환경변수를 기반으로 설정하며, 인증 토큰은 KV에 저장된 세션 UUID로 검증합니다.【F:worker/index.ts†L1-L87】【F:worker/auth.ts†L1-L36】
-- **슈퍼 관리자**: D1 `super_admin` 테이블의 사용자명/비밀번호를 평문으로 조회 후 세션 토큰을 발급하며, 페이지 생성·목록·삭제·수정 시 KV와 D1(`page_auth`, `page_meta`)을 모두 갱신합니다.【F:worker/super-admin.ts†L21-L169】
-- **페이지 관리자**: D1(`page_auth`) 또는 KV에 저장된 비밀번호를 평문 비교하여 세션 토큰을 발급하고, 페이지 데이터 저장 시 KV와 `page_meta`를 덮어씁니다.【F:worker/page-admin.ts†L1-L59】
+- **백엔드 라우팅**: Cloudflare Worker가 공개 페이지 조회(`/api/pages/:pageId`), 슈퍼 관리자 로그인 및 페이지 CRUD(`/api/admin/*`), 페이지 관리자 로그인/저장(`/api/page/:pageId/*`)을 처리합니다. CORS는 `ALLOWED_ORIGINS` 환경변수를 기반으로 설정하며, 인증 토큰은 `TOKEN_SECRET` HMAC 서명을 검증하거나 과거 KV UUID 세션을 호환 확인합니다.【F:worker/index.ts†L1-L87】【F:worker/auth.ts†L1-L93】【F:worker/auth.ts†L95-L152】
+- **슈퍼 관리자**: D1 `super_admin` 테이블의 비밀번호 해시를 비교해 서명 토큰을 발급하며, 페이지 생성·목록·삭제·수정 시 KV와 D1(`page_auth`, `page_meta`)을 모두 갱신합니다.【F:worker/super-admin.ts†L21-L169】
+- **페이지 관리자**: D1(`page_admins`)의 관리자와 사용자 인증 정보를 비교해 서명 토큰을 발급하고, 페이지 데이터 저장 시 KV와 `page_meta`를 덮어씁니다.【F:worker/page-admin.ts†L1-L105】【F:worker/page-admin.ts†L195-L286】
 - **페이지 조회**: 우선 D1 `page_meta`를 조회하고 없을 경우 KV `page:{pageId}`를 반환합니다. JSON 파싱 실패 시 500 오류를 보냅니다.【F:worker/page-view.ts†L1-L46】
 - **프런트엔드 흐름**: 공통 스크립트가 하드코딩된 워커 도메인으로 API를 호출하며, 사용자 페이지일 때만 데이터 요청을 수행합니다. 슈퍼/페이지 관리자 로그인은 세션 토큰을 `sessionStorage`에 저장해 이후 요청에 사용하며, 페이지 관리자 로그인 폼은 URL의 pageId를 자동 채웁니다.【F:public/js/script.js†L1-L226】
 - **슈퍼 관리자 UI**: 별도 스크립트로 페이지 생성·목록·삭제·편집을 수행하고, 토큰이 없으면 로그인 페이지로 리다이렉트합니다.【F:public/js/suscript.js†L1-L123】
 
 ## 2. 주요 문제점
-- **평문 인증과 세션 무결성 부족**: 슈퍼/페이지 관리자 비밀번호를 해시 없이 비교하고 세션 토큰은 랜덤 UUID를 KV에 저장할 뿐, 서명/스코프/재사용 방지 설정이 없습니다. 세션 TTL(기본 1시간) 외 보안 속성이 부족합니다.【F:worker/auth.ts†L1-L36】【F:worker/super-admin.ts†L21-L47】【F:worker/page-admin.ts†L13-L35】
+- **약한 비밀번호 해시**: 세션 토큰은 HMAC으로 서명되고 로그아웃 시 폐기되지만, 슈퍼·페이지 관리자 및 사용자 비밀번호는 여전히 SHA-256 해시에 의존해 재사용/사전 공격 위험이 남아 있습니다.【F:worker/users.ts†L17-L35】【F:worker/super-admin.ts†L23-L55】
 - **프런트/백 계약 불일치 및 하드코딩된 도메인**: `API_BASE`가 코드에 고정돼 환경별 분리가 불가능하며, 프런트 단의 저장/링크 추가 함수는 백엔드 라우트에 존재하지 않는 `/api/pages/save` 등을 호출합니다(데드 코드).【F:public/js/script.js†L1-L60】
 - **입력 검증 부재**: 요청 본문에 대한 스키마 검증이나 길이 제한이 없어 D1/KV에 임의 구조나 대형 페이로드가 저장될 수 있습니다. 에러 응답도 필드 단위 피드백이 없습니다.【F:worker/super-admin.ts†L50-L159】【F:worker/page-admin.ts†L37-L59】
 - **권한 경계 및 로깅 부족**: 페이지 저장 엔드포인트가 페이지 관리자 전용으로만 존재하고, 슈퍼 관리자의 페이지 수정/삭제와 동일 권한 분리가 부족합니다. 감사 로그, 실패 횟수 제한, IP 기반 레이트리밋이 없습니다.【F:worker/index.ts†L39-L87】【F:worker/super-admin.ts†L50-L159】
