@@ -7,6 +7,7 @@ type PageMetaRow = {
   photo_url: string | null;
   description: string | null;
   links: string | null;
+  plan_id: string | null;
 };
 
 export async function getPage(
@@ -17,7 +18,7 @@ export async function getPage(
   const resolvedPageId = await resolvePageId(env, pageId);
 
   const dbRow = await env.DB.prepare(
-    "SELECT page_id, name, photo_url, description, links FROM page_meta WHERE page_id = ? LIMIT 1"
+    "SELECT page_id, name, photo_url, description, links, plan_id FROM page_meta WHERE page_id = ? LIMIT 1"
   )
     .bind(resolvedPageId)
     .first<PageMetaRow>();
@@ -31,6 +32,7 @@ export async function getPage(
           description: dbRow.description,
         },
         links: safeParseLinks(dbRow.links),
+        plan: dbRow.plan_id,
       },
       200,
       headers

@@ -1,8 +1,13 @@
 import { createSessionToken } from "./auth";
 import { resolvePageId, slugify } from "./slug";
 import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
-import { enforcePlanLimit, hasPrivateLinks, PlanLimitError } from "./plan-limits";
-import { findOrCreateUser, updateUserPassword } from "./users";
+import {
+  enforcePlanLimit,
+  hasPrivateLinks,
+  normalizePlanId,
+  PlanLimitError,
+} from "./plan-limits";
+import { findOrCreateUser, hashPassword, updateUserPassword } from "./users";
 
 type CreatePageBody = {
   pageId: string;
@@ -87,19 +92,21 @@ function normalizeCreatePageBody(
     adminPassword: body.adminPassword,
     adminOauthProvider: body.adminOauthProvider,
     adminOauthId: body.adminOauthId,
-    plan: body.plan ?? null,
+    plan: normalizePlanId(body.plan, "free"),
     links,
     slugs: normalizeSlugs(body.slugs, pageId),
   };
 }
 
 async function persistCreatePage(env: any, data: NormalizedCreatePage) {
-  await enforcePlanLimit(env, data.plan, "create_page");
+  const planId = normalizePlanId(data.plan, "free");
+
+  await enforcePlanLimit(env, planId, "create_page");
   if (data.slugs.length) {
-    await enforcePlanLimit(env, data.plan, "update_slug");
+    await enforcePlanLimit(env, planId, "update_slug");
   }
   if (hasPrivateLinks(data.links)) {
-    await enforcePlanLimit(env, data.plan, "create_private_link");
+    await enforcePlanLimit(env, planId, "create_private_link");
   }
 
   const conflictingSlug = await findConflictingSlug(env, data.slugs, data.pageId);
@@ -113,7 +120,7 @@ async function persistCreatePage(env: any, data: NormalizedCreatePage) {
   const pageData = {
     profile: data.profile ?? {},
     links: Array.isArray(data.links) ? data.links : [],
-    plan: data.plan ?? null,
+    plan: planId,
   };
 
   await env.PAGE_KV.put(`page:${data.pageId}`, JSON.stringify(pageData));
@@ -134,14 +141,15 @@ async function persistCreatePage(env: any, data: NormalizedCreatePage) {
     .run();
 
   await env.DB.prepare(
-    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
+    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links, plan_id) VALUES (?, ?, ?, ?, ?, ?)"
   )
     .bind(
       data.pageId,
       (data.profile as any)?.name ?? null,
       (data.profile as any)?.photoUrl ?? null,
       (data.profile as any)?.description ?? null,
-      JSON.stringify((data as any).links ?? [])
+      JSON.stringify((data as any).links ?? []),
+      planId
     )
     .run();
 
@@ -169,8 +177,25 @@ export async function superAdminLogin(
     .bind(username)
     .first<{ username: string; password_hash: string }>();
 
-  if (!row || row.password_hash !== body.password) {
+  if (!row) {
     return errorResponse("인증에 실패했습니다", 401, headers);
+  }
+
+  const hashedInput = await hashPassword(body.password);
+  const passwordMatches =
+    row.password_hash === hashedInput || row.password_hash === body.password;
+
+  if (!passwordMatches) {
+    return errorResponse("인증에 실패했습니다", 401, headers);
+  }
+
+  // 레거시 평문 비밀번호를 사용하는 경우 자동으로 해시로 승격
+  if (row.password_hash === body.password) {
+    await env.DB.prepare(
+      "UPDATE super_admins SET password_hash = ? WHERE username = ?"
+    )
+      .bind(hashedInput, username)
+      .run();
   }
 
   const session = await createSessionToken(env, "super", "super-admin");
@@ -299,7 +324,7 @@ export async function listPages(
     : [pageSize, offset];
 
   let dataStmt = env.DB.prepare(
-    `SELECT DISTINCT pm.page_id, pm.name, pm.photo_url, pm.description, pm.links ${baseQuery} ORDER BY pm.page_id LIMIT ? OFFSET ?`
+    `SELECT DISTINCT pm.page_id, pm.name, pm.photo_url, pm.description, pm.links, pm.plan_id ${baseQuery} ORDER BY pm.page_id LIMIT ? OFFSET ?`
   );
   if (dataParams.length) {
     dataStmt = dataStmt.bind(...dataParams);
@@ -311,17 +336,18 @@ export async function listPages(
     photo_url: string | null;
     description: string | null;
     links: string | null;
+    plan_id: string | null;
   }>();
 
   const mapped = await Promise.all(
     (dbRows?.results ?? []).map(async (row) => {
       const kvValue = await env.PAGE_KV.get(`page:${row.page_id}`);
-      let plan: string | null = null;
+      let planFromKv: string | null = null;
       if (kvValue) {
         try {
-          plan = JSON.parse(kvValue).plan ?? null;
+          planFromKv = JSON.parse(kvValue).plan ?? null;
         } catch (error) {
-          plan = null;
+          planFromKv = null;
         }
       }
 
@@ -333,7 +359,7 @@ export async function listPages(
           description: row.description,
         },
         links: safeParseLinks(row.links),
-        plan,
+        plan: normalizePlanId(row.plan_id ?? planFromKv, "free"),
         slugs: await getSlugsForPage(env, row.page_id),
       };
     })
@@ -358,7 +384,7 @@ export async function getAdminPage(
 ): Promise<Response> {
   const canonicalPageId = await resolvePageId(env, pageId);
   const row = await env.DB.prepare(
-    "SELECT page_id, name, photo_url, description, links FROM page_meta WHERE page_id = ? LIMIT 1"
+    "SELECT page_id, name, photo_url, description, links, plan_id FROM page_meta WHERE page_id = ? LIMIT 1"
   )
     .bind(canonicalPageId)
     .first<{
@@ -367,6 +393,7 @@ export async function getAdminPage(
       photo_url: string | null;
       description: string | null;
       links: string | null;
+      plan_id: string | null;
     }>();
 
   if (!row) {
@@ -374,12 +401,12 @@ export async function getAdminPage(
   }
 
   const kvValue = await env.PAGE_KV.get(`page:${row.page_id}`);
-  let plan: string | null = null;
+  let planFromKv: string | null = null;
   if (kvValue) {
     try {
-      plan = JSON.parse(kvValue).plan ?? null;
+      planFromKv = JSON.parse(kvValue).plan ?? null;
     } catch (error) {
-      plan = null;
+      planFromKv = null;
     }
   }
 
@@ -392,7 +419,7 @@ export async function getAdminPage(
         description: row.description,
       },
       links: safeParseLinks(row.links),
-      plan,
+      plan: normalizePlanId(row.plan_id ?? planFromKv, "free"),
       slugs: await getSlugsForPage(env, row.page_id),
     },
     200,
@@ -467,7 +494,7 @@ export async function updatePage(
     }
 
     try {
-      await enforcePlanLimit(env, body.plan ?? existingPlan, "update_slug");
+      await enforcePlanLimit(env, normalizePlanId(body.plan ?? existingPlan, "free"), "update_slug");
     } catch (error) {
       if (error instanceof PlanLimitError) {
         return errorResponse(error.message, error.status, headers);
@@ -481,15 +508,16 @@ export async function updatePage(
     }
   }
 
+  const normalizedPlan = normalizePlanId(body.plan ?? existingPlan, "free");
   const updatedPage = {
     profile: body.profile ?? {},
     links: Array.isArray((body as any).links) ? (body as any).links : [],
-    plan: body.plan ?? existingPlan ?? null,
+    plan: normalizedPlan,
   };
 
   if (hasPrivateLinks(updatedPage.links)) {
     try {
-      await enforcePlanLimit(env, body.plan ?? existingPlan, "create_private_link");
+      await enforcePlanLimit(env, normalizedPlan, "create_private_link");
     } catch (error) {
       if (error instanceof PlanLimitError) {
         return errorResponse(error.message, error.status, headers);
@@ -513,15 +541,16 @@ export async function updatePage(
   }
 
   await env.DB.prepare(
-    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
+    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links, plan_id) VALUES (?, ?, ?, ?, ?, ?)"
   )
     .bind(
       canonicalPageId,
       (updatedPage.profile as any)?.name ?? null,
       (updatedPage.profile as any)?.photoUrl ?? null,
       (updatedPage.profile as any)?.description ?? null,
-      JSON.stringify((body as any).links ?? [])
-  )
+      JSON.stringify((body as any).links ?? []),
+      normalizedPlan
+    )
     .run();
 
   if (slugs) {

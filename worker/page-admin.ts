@@ -2,7 +2,12 @@ import { createSessionToken, getBearerToken, verifySessionToken } from "./auth";
 import { resolvePageId } from "./slug";
 import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
 import { authenticateExistingUser } from "./users";
-import { enforcePlanLimit, hasPrivateLinks, PlanLimitError } from "./plan-limits";
+import {
+  enforcePlanLimit,
+  hasPrivateLinks,
+  normalizePlanId,
+  PlanLimitError,
+} from "./plan-limits";
 
 type LoginBody = {
   email?: string;
@@ -89,10 +94,11 @@ export async function savePage(
     }
   }
 
+  const normalizedPlan = normalizePlanId(body.plan ?? existingPlan, "free");
   const pageData = {
     profile: body.profile ?? {},
     links: Array.isArray(body.links) ? body.links : [],
-    plan: body.plan ?? existingPlan ?? null,
+    plan: normalizedPlan,
   };
 
   if (hasPrivateLinks(pageData.links)) {
@@ -108,14 +114,15 @@ export async function savePage(
   await env.PAGE_KV.put(`page:${canonicalPageId}`, JSON.stringify(pageData));
 
   await env.DB.prepare(
-    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
+    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links, plan_id) VALUES (?, ?, ?, ?, ?, ?)"
   )
     .bind(
       canonicalPageId,
       (pageData.profile as any)?.name ?? null,
       (pageData.profile as any)?.photoUrl ?? null,
       (pageData.profile as any)?.description ?? null,
-      JSON.stringify(pageData.links)
+      JSON.stringify(pageData.links),
+      normalizedPlan
     )
     .run();
 

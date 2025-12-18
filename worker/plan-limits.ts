@@ -16,8 +16,14 @@ export type PlanLimitRow = {
   can_create_private_links: number;
 };
 
+export function normalizePlanId(planId: unknown, defaultPlan = "free") {
+  if (typeof planId !== "string") return defaultPlan;
+  const trimmed = planId.trim();
+  return trimmed.length ? trimmed : defaultPlan;
+}
+
 export async function getPlanLimits(env: any, planId?: string | null): Promise<PlanLimitRow> {
-  const effectivePlanId = (planId || "default").trim() || "default";
+  const effectivePlanId = normalizePlanId(planId, "default");
   const row = await env.DB.prepare(
     "SELECT plan_id, can_create_pages, can_change_slug, can_create_private_links FROM plan_limits WHERE plan_id = ? LIMIT 1"
   )
