@@ -150,8 +150,16 @@
                     <option value="email">이메일</option>
                     <option value="tel">전화번호</option>
                     <option value="url">URL</option>
+                    <option value="textarea">긴 답변</option>
+                    <option value="select">선택지</option>
+                    <option value="checkbox">체크박스</option>
                 </select>
                 <input id="contactPlaceholder" placeholder="placeholder (선택)">
+                <input id="contactOptions" placeholder="옵션 (쉼표로 구분, select/checkbox)">
+                <label class="inline-toggle">
+                    <input id="contactRequired" type="checkbox">
+                    필수
+                </label>
                 <button type="button" onclick="addContactField()">필드 추가</button>
             </div>
             <div class="contact-settings">

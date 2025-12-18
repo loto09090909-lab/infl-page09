@@ -79,7 +79,7 @@ function validateContactSchema(raw: unknown) {
   if (!Array.isArray(raw)) return { error: "contactSchema는 배열이어야 합니다" };
   if (raw.length > 50) return { error: "contactSchema 항목이 너무 많습니다" };
 
-  const allowedTypes = new Set(["text", "email", "tel", "url"]);
+  const allowedTypes = new Set(["text", "email", "tel", "url", "textarea", "select", "checkbox"]);
 
   const schema = raw
     .map((field) => {
@@ -87,11 +87,22 @@ function validateContactSchema(raw: unknown) {
       const label = sanitizeString((field as any).label, 120);
       const type = sanitizeString((field as any).type, 30);
       const placeholder = sanitizeString((field as any).placeholder, 200);
+      const required = (field as any).required === true;
+      const optionsRaw = Array.isArray((field as any).options) ? (field as any).options : [];
+      const options = optionsRaw
+        .map((opt) => sanitizeString(opt, 200))
+        .filter((opt) => !!opt)
+        .slice(0, 50);
+
       if (!label || !type || !allowedTypes.has(type)) return null;
+      if ((type === "select" || type === "checkbox") && options.length === 0) return null;
+
       return {
         label,
         type,
         ...(placeholder ? { placeholder } : {}),
+        ...(required ? { required: true } : {}),
+        ...(options.length ? { options } : {}),
       };
     })
     .filter(Boolean);

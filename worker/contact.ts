@@ -6,6 +6,8 @@ type ContactField = {
   label: string;
   type: string;
   placeholder?: string;
+  required?: boolean;
+  options?: string[];
 };
 
 type ContactSettings = {
@@ -33,6 +35,16 @@ function sanitizeString(value: unknown, maxLength: number): string | undefined {
   return trimmed.slice(0, maxLength);
 }
 
+const ALLOWED_CONTACT_TYPES = new Set([
+  "text",
+  "email",
+  "tel",
+  "url",
+  "textarea",
+  "select",
+  "checkbox",
+]);
+
 async function readContactSchema(env: any, pageId: string): Promise<{
   schema: ContactField[];
   settings: ContactSettings;
@@ -42,7 +54,33 @@ async function readContactSchema(env: any, pageId: string): Promise<{
   try {
     const parsed = JSON.parse(kvRaw);
     const schema = Array.isArray(parsed?.contactSchema)
-      ? parsed.contactSchema.filter((field: any) => field && typeof field === "object")
+      ? parsed.contactSchema
+          .filter((field: any) => field && typeof field === "object")
+          .map((field: any) => {
+            const label = sanitizeString(field.label, 120);
+            const type = sanitizeString(field.type, 30);
+            if (!label || !type || !ALLOWED_CONTACT_TYPES.has(type)) return null;
+
+            const placeholder = sanitizeString(field.placeholder, 200);
+            const required = field.required === true;
+            const options = Array.isArray(field.options)
+              ? field.options
+                  .map((opt: unknown) => sanitizeString(opt, 200))
+                  .filter((opt: string | undefined): opt is string => !!opt)
+                  .slice(0, 50)
+              : [];
+
+            if ((type === "select" || type === "checkbox") && options.length === 0) return null;
+
+            return {
+              label,
+              type,
+              ...(placeholder ? { placeholder } : {}),
+              ...(required ? { required: true } : {}),
+              ...(options.length ? { options } : {}),
+            } satisfies ContactField;
+          })
+          .filter(Boolean)
       : [];
     const settings: ContactSettings = {};
     if (parsed?.contactSettings && typeof parsed.contactSettings === "object") {
@@ -169,19 +207,57 @@ export async function submitContact(
     return errorResponse("answers 배열이 필요합니다", 400, headers);
   }
 
+  const errors: string[] = [];
   const answers = schema
     .map((field) => {
       const raw = answersInput.find((item) => item?.label === field.label);
-      const value = sanitizeString(raw?.value, MAX_FIELD_LENGTH);
-      return value
-        ? {
-            label: field.label,
-            type: field.type,
-            value,
-          }
-        : null;
+      const value = sanitizeString(raw?.value, MAX_FIELD_LENGTH) || "";
+
+      if (field.required && !value) {
+        errors.push(`${field.label}을(를) 입력해주세요.`);
+        return null;
+      }
+
+      if (!value) return null;
+
+      if (field.type === "email" && value && !/^\S+@\S+\.\S+$/.test(value)) {
+        errors.push(`${field.label}이 올바른 이메일 형식이 아닙니다.`);
+        return null;
+      }
+
+      if (field.type === "tel" && value && value.replace(/[^0-9+\-]/g, "").length < 6) {
+        errors.push(`${field.label}이 올바른 전화번호 형식인지 확인해주세요.`);
+        return null;
+      }
+
+      if (field.type === "url" && value && !(value.startsWith("http://") || value.startsWith("https://"))) {
+        errors.push(`${field.label}은 http(s) URL이어야 합니다.`);
+        return null;
+      }
+
+      if ((field.type === "select" || field.type === "checkbox") && Array.isArray(field.options) && field.options.length) {
+        const selections = value
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean);
+        const invalid = selections.filter((item) => !field.options!.includes(item));
+        if (invalid.length) {
+          errors.push(`${field.label} 값이 허용된 옵션에 없습니다.`);
+          return null;
+        }
+      }
+
+      return {
+        label: field.label,
+        type: field.type,
+        value,
+      } as ContactSubmission["answers"][number];
     })
     .filter(Boolean) as ContactSubmission["answers"];
+
+  if (errors.length) {
+    return errorResponse(errors.join(" "), 422, headers);
+  }
 
   if (!answers.length) {
     return errorResponse("제출할 답변이 없습니다", 400, headers);

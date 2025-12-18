@@ -864,6 +864,10 @@ async function savePage() {
             label: (field.label || '').trim(),
             type: field.type || 'text',
             ...(field.placeholder ? { placeholder: field.placeholder } : {}),
+            ...(field.required ? { required: true } : {}),
+            ...(Array.isArray(field.options) && field.options.length
+                ? { options: field.options.filter(Boolean).map((item) => (item || '').trim()).filter(Boolean) }
+                : {}),
         })),
         contactSettings: contactSettings && contactSettings.webhookUrl
             ? { webhookUrl: contactSettings.webhookUrl.trim() }
@@ -1370,23 +1374,97 @@ function renderPublicContactForm() {
     help.innerText = '아래 항목을 입력해 페이지 관리자에게 문의를 전달하세요.';
 
     publicContactSchema.forEach((field, idx) => {
-        const wrapper = document.createElement('label');
+        const baseId = `user-contact-${idx}`;
+        const wrapper = document.createElement('div');
         wrapper.className = 'contact-field';
-        wrapper.htmlFor = `user-contact-${idx}`;
 
-        const title = document.createElement('span');
+        const title = document.createElement('label');
         title.className = 'contact-label';
-        title.innerText = field.label;
+        title.htmlFor = baseId;
+        title.innerText = field.label + (field.required ? ' *' : '');
         wrapper.appendChild(title);
 
-        const input = document.createElement('input');
-        input.id = `user-contact-${idx}`;
-        input.name = field.label;
-        input.type = field.type || 'text';
-        input.placeholder = field.placeholder || '';
-        input.maxLength = 2000;
+        const placeholder = field.placeholder || '';
+        const required = !!field.required;
+        const options = Array.isArray(field.options) ? field.options : [];
+        const type = field.type || 'text';
 
-        wrapper.appendChild(input);
+        if (type === 'textarea') {
+            const textarea = document.createElement('textarea');
+            textarea.id = baseId;
+            textarea.name = field.label;
+            textarea.placeholder = placeholder;
+            textarea.maxLength = 2000;
+            textarea.required = required;
+            wrapper.appendChild(textarea);
+        } else if (type === 'select' && options.length) {
+            const select = document.createElement('select');
+            select.id = baseId;
+            select.name = field.label;
+            select.required = required;
+
+            const empty = document.createElement('option');
+            empty.value = '';
+            empty.innerText = placeholder || '선택하세요';
+            select.appendChild(empty);
+
+            options.forEach((opt) => {
+                const option = document.createElement('option');
+                option.value = opt;
+                option.innerText = opt;
+                select.appendChild(option);
+            });
+
+            wrapper.appendChild(select);
+        } else if (type === 'checkbox' && options.length) {
+            const group = document.createElement('div');
+            group.className = 'checkbox-group';
+            options.forEach((opt, optionIdx) => {
+                const itemId = `${baseId}-${optionIdx}`;
+                const row = document.createElement('label');
+                row.className = 'checkbox-item';
+
+                const input = document.createElement('input');
+                input.type = 'checkbox';
+                input.name = baseId;
+                input.value = opt;
+                input.id = itemId;
+                row.appendChild(input);
+
+                const span = document.createElement('span');
+                span.innerText = opt;
+                row.appendChild(span);
+                group.appendChild(row);
+            });
+            if (required) {
+                group.dataset.required = 'true';
+            }
+            wrapper.appendChild(group);
+        } else if (type === 'checkbox') {
+            const row = document.createElement('label');
+            row.className = 'checkbox-item';
+            const input = document.createElement('input');
+            input.type = 'checkbox';
+            input.id = baseId;
+            input.name = field.label;
+            input.value = 'checked';
+            if (required) input.required = true;
+            row.appendChild(input);
+            const span = document.createElement('span');
+            span.innerText = placeholder || '동의/확인';
+            row.appendChild(span);
+            wrapper.appendChild(row);
+        } else {
+            const input = document.createElement('input');
+            input.id = baseId;
+            input.name = field.label;
+            input.type = type;
+            input.placeholder = placeholder;
+            input.maxLength = 2000;
+            if (required) input.required = true;
+            wrapper.appendChild(input);
+        }
+
         fieldsHost.appendChild(wrapper);
     });
 
@@ -1402,11 +1480,39 @@ async function submitContactForm(event) {
         setContactStatus('제출할 컨택트 폼이 없습니다.', 'warning');
         return;
     }
-
     const answers = publicContactSchema.map((field, idx) => {
-        const input = document.getElementById(`user-contact-${idx}`);
-        return { label: field.label, value: input?.value?.trim() || '' };
+        const baseId = `user-contact-${idx}`;
+        const options = Array.isArray(field.options) ? field.options : [];
+        let value = '';
+
+        if (field.type === 'checkbox' && options.length) {
+            const checked = Array.from(document.querySelectorAll(`input[name="${baseId}"]:checked`));
+            value = checked.map((el) => (el.value || '').trim()).filter(Boolean).join(', ');
+        } else if (field.type === 'checkbox') {
+            const input = document.getElementById(baseId);
+            value = input?.checked ? 'checked' : '';
+        } else if (field.type === 'select') {
+            const select = document.getElementById(baseId);
+            value = select?.value?.trim() || '';
+        } else if (field.type === 'textarea') {
+            const textarea = document.getElementById(baseId);
+            value = textarea?.value?.trim() || '';
+        } else {
+            const input = document.getElementById(baseId);
+            value = input?.value?.trim() || '';
+        }
+
+        return { label: field.label, value };
     });
+
+    const missingRequired = publicContactSchema
+        .map((field, idx) => ({ field, value: answers[idx]?.value || '' }))
+        .filter(({ field, value }) => field.required && !value);
+
+    if (missingRequired.length) {
+        setContactStatus(`${missingRequired[0].field.label} 항목을 입력해주세요.`, 'error');
+        return;
+    }
 
     try {
         submitBtn.disabled = true;
@@ -1798,7 +1904,7 @@ function renderContactSchema() {
         };
 
         const typeSelect = document.createElement('select');
-        ['text', 'email', 'tel', 'url'].forEach((type) => {
+        ['text', 'email', 'tel', 'url', 'textarea', 'select', 'checkbox'].forEach((type) => {
             const opt = document.createElement('option');
             opt.value = type;
             opt.innerText = type;
@@ -1819,6 +1925,28 @@ function renderContactSchema() {
             adminContactSchema[idx] = { ...current, placeholder: e.target.value };
         };
 
+        const requiredToggle = document.createElement('label');
+        requiredToggle.className = 'inline-toggle';
+        const requiredInput = document.createElement('input');
+        requiredInput.type = 'checkbox';
+        requiredInput.checked = !!field.required;
+        requiredInput.onchange = (e) => {
+            const current = adminContactSchema[idx] || {};
+            adminContactSchema[idx] = { ...current, required: e.target.checked };
+        };
+        requiredToggle.appendChild(requiredInput);
+        requiredToggle.append(' 필수');
+
+        const optionsInput = document.createElement('input');
+        optionsInput.placeholder = '옵션 (쉼표로 구분)';
+        optionsInput.value = Array.isArray(field.options) ? field.options.join(', ') : '';
+        optionsInput.oninput = (e) => {
+            const raw = (e.target.value || '').split(',');
+            const options = raw.map((item) => item.trim()).filter(Boolean);
+            const current = adminContactSchema[idx] || {};
+            adminContactSchema[idx] = { ...current, options };
+        };
+
         const removeBtn = document.createElement('button');
         removeBtn.type = 'button';
         removeBtn.className = 'pill-button ghost';
@@ -1832,6 +1960,8 @@ function renderContactSchema() {
         row.appendChild(labelInput);
         row.appendChild(typeSelect);
         row.appendChild(placeholderInput);
+        row.appendChild(optionsInput);
+        row.appendChild(requiredToggle);
         row.appendChild(removeBtn);
 
         list.appendChild(row);
@@ -1935,10 +2065,15 @@ function addContactField() {
     const labelInput = document.getElementById('contactLabel');
     const typeInput = document.getElementById('contactType');
     const placeholderInput = document.getElementById('contactPlaceholder');
+    const optionsInput = document.getElementById('contactOptions');
+    const requiredInput = document.getElementById('contactRequired');
 
     const label = labelInput?.value?.trim();
     const type = typeInput?.value || 'text';
     const placeholder = placeholderInput?.value || '';
+    const rawOptions = (optionsInput?.value || '').split(',');
+    const options = rawOptions.map((item) => item.trim()).filter(Boolean);
+    const required = requiredInput?.checked || false;
 
     if (!label) {
         alert('라벨을 입력해주세요.');
@@ -1950,12 +2085,19 @@ function addContactField() {
         return;
     }
 
-    adminContactSchema.push({ label, type, placeholder });
+    if ((type === 'select' || type === 'checkbox') && !options.length) {
+        alert('선택지/체크박스 타입은 옵션을 한 개 이상 입력해야 합니다.');
+        return;
+    }
+
+    adminContactSchema.push({ label, type, placeholder, ...(required ? { required: true } : {}), ...(options.length ? { options } : {}) });
     renderContactSchema();
     renderUsage();
 
     if (labelInput) labelInput.value = '';
     if (placeholderInput) placeholderInput.value = '';
+    if (optionsInput) optionsInput.value = '';
+    if (requiredInput) requiredInput.checked = false;
 }
 
 function renderOnboardingBanner() {

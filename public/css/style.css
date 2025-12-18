@@ -950,7 +950,7 @@ body.user-view {
 
 .contact-row {
     display: grid;
-    grid-template-columns: 1.2fr 1fr 1fr auto;
+    grid-template-columns: 1.2fr 1fr 1fr 1fr auto auto;
     gap: 8px;
     align-items: center;
 }
@@ -1003,7 +1003,9 @@ body.user-view {
     font-size: 14px;
 }
 
-.contact-field input {
+.contact-field input,
+.contact-field textarea,
+.contact-field select {
     padding: 10px 12px;
     border-radius: 10px;
     border: 1px solid #d1d5db;
@@ -1011,9 +1013,38 @@ body.user-view {
     font-size: 14px;
 }
 
-.contact-field input:focus {
+.contact-field textarea {
+    min-height: 96px;
+    resize: vertical;
+}
+
+.contact-field input:focus,
+.contact-field textarea:focus,
+.contact-field select:focus {
     outline: 2px solid #4f46e5;
     border-color: #4f46e5;
+}
+
+.contact-field .checkbox-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.contact-field .checkbox-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: #111827;
+}
+
+.inline-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: #374151;
 }
 
 .contact-actions {
