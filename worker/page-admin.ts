@@ -8,9 +8,14 @@ import {
   replaceSlugMap,
 } from "./slug-map";
 import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
+import { authenticateExistingUser } from "./users";
+import { enforcePlanLimit, hasPrivateLinks, PlanLimitError } from "./plan-limits";
 
 type LoginBody = {
+  email?: string;
   password?: string;
+  oauthProvider?: string;
+  oauthId?: string;
 };
 
 type SavePageBody = {
@@ -29,22 +34,35 @@ export async function pageAdminLogin(
   headers: HeadersInit
 ) {
   const body = await parseJsonBody<LoginBody>(req);
-  if (!body || typeof body.password !== "string") {
-    return errorResponse("유효한 비밀번호를 입력하세요", 400, headers);
+  if (!body || typeof body.email !== "string") {
+    return errorResponse("이메일을 입력하세요", 400, headers);
   }
 
   const canonicalPageId = await resolvePageId(env, pageId);
 
-  const dbRow = await env.DB.prepare(
-    "SELECT password_hash FROM page_auth WHERE page_id = ? LIMIT 1"
+  const adminRow = await env.DB.prepare(
+    "SELECT user_id FROM page_admins WHERE page_id = ? LIMIT 1"
   )
     .bind(canonicalPageId)
-    .first<{ password_hash: string }>();
+    .first<{ user_id: string }>();
 
-  const storedPassword =
-    dbRow?.password_hash ?? (await env.PAGE_KV.get(`page_auth:${canonicalPageId}`));
-  if (!storedPassword || storedPassword !== body.password) {
-    return errorResponse("인증에 실패했습니다", 401, headers);
+  if (!adminRow?.user_id) {
+    return errorResponse("페이지 관리자 계정을 찾을 수 없습니다", 404, headers);
+  }
+
+  const result = await authenticateExistingUser(env, {
+    email: body.email,
+    password: body.password,
+    oauthProvider: body.oauthProvider,
+    oauthId: body.oauthId,
+  });
+
+  if ("error" in result) {
+    return errorResponse(result.error, result.status, headers);
+  }
+
+  if (result.user.id !== adminRow.user_id) {
+    return errorResponse("페이지 관리자 권한이 없습니다", 403, headers);
   }
 
   const session = await createSessionToken(env, "page", canonicalPageId);
@@ -119,6 +137,17 @@ export async function savePage(
     slugs: normalizedSlugs,
     plan: body.plan ?? existingData.plan ?? null,
   };
+
+  if (hasPrivateLinks(pageData.links)) {
+    try {
+      await enforcePlanLimit(env, pageData.plan, "create_private_link");
+    } catch (error) {
+      if (error instanceof PlanLimitError) {
+        return errorResponse(error.message, error.status, headers);
+      }
+      throw error;
+    }
+  }
   await env.PAGE_KV.put(`page:${canonicalPageId}`, JSON.stringify(pageData));
 
   await env.DB.prepare(
