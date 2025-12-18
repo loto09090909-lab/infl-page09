@@ -14,12 +14,14 @@ import { findOrCreateUser, updateUserPassword } from "./users";
 type CreatePageBody = {
   pageId: string;
   profile?: unknown;
+  contactSchema?: unknown;
   adminEmail: string;
   adminPassword?: string;
   adminOauthProvider?: string;
   adminOauthId?: string;
   plan?: unknown;
   links?: unknown;
+  privateLinks?: unknown;
   slugs?: unknown;
 };
 
@@ -27,6 +29,8 @@ type UpdatePageBody = {
   profile?: unknown;
   plan?: unknown;
   links?: unknown;
+  privateLinks?: unknown;
+  contactSchema?: unknown;
   adminPassword?: string;
   slugs?: unknown;
 };
@@ -39,12 +43,14 @@ type LoginBody = {
 type NormalizedCreatePage = {
   pageId: string;
   profile: Record<string, unknown>;
+  contactSchema: unknown[];
   adminEmail: string;
   adminPassword?: string;
   adminOauthProvider?: string;
   adminOauthId?: string;
   plan: unknown;
   links: unknown[];
+  privateLinks: unknown[];
   slugs: string[];
 };
 
@@ -59,6 +65,118 @@ class CreatePageError extends Error {
     super(message);
     this.status = status;
   }
+}
+
+const MAX_LINKS = 100;
+
+function sanitizeString(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, maxLength) : undefined;
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch (error) {
+    return false;
+  }
+}
+
+function validateProfile(profile: unknown) {
+  if (profile === undefined) return { profile: undefined };
+  if (!profile || typeof profile !== "object") {
+    return { error: "profile은 객체여야 합니다" };
+  }
+
+  const name = sanitizeString((profile as any).name, 120);
+  const description = sanitizeString((profile as any).description, 500);
+  const photoUrl = sanitizeString((profile as any).photoUrl, 500);
+
+  if (photoUrl && !isHttpUrl(photoUrl)) {
+    return { error: "photoUrl은 http(s) URL이어야 합니다" };
+  }
+
+  return {
+    profile: {
+      ...(name ? { name } : {}),
+      ...(description ? { description } : {}),
+      ...(photoUrl ? { photoUrl } : {}),
+    },
+  };
+}
+
+function validateContactSchema(raw: unknown) {
+  if (raw === undefined) return { schema: undefined, provided: false };
+  if (!Array.isArray(raw)) return { error: "contactSchema는 배열이어야 합니다" };
+  if (raw.length > 50) return { error: "contactSchema 항목이 너무 많습니다" };
+
+  const allowedTypes = new Set(["text", "email", "tel", "url"]);
+
+  const schema = raw
+    .map((field) => {
+      if (!field || typeof field !== "object") return null;
+      const label = sanitizeString((field as any).label, 120);
+      const type = sanitizeString((field as any).type, 30);
+      const placeholder = sanitizeString((field as any).placeholder, 200);
+      if (!label || !type || !allowedTypes.has(type)) return null;
+      return {
+        label,
+        type,
+        ...(placeholder ? { placeholder } : {}),
+      };
+    })
+    .filter(Boolean);
+
+  return { schema, provided: true };
+}
+
+function validateLinks(rawLinks: unknown, defaultPrivate = false) {
+  if (rawLinks === undefined) return { publicLinks: undefined, privateLinks: undefined, provided: false };
+  if (!Array.isArray(rawLinks)) {
+    return { error: "links는 배열이어야 합니다" };
+  }
+
+  if (rawLinks.length > MAX_LINKS) {
+    return { error: "링크가 너무 많습니다" };
+  }
+
+  const publicLinks: any[] = [];
+  const privateLinks: any[] = [];
+
+  for (const rawLink of rawLinks) {
+    if (!rawLink || typeof rawLink !== "object") continue;
+    const title = sanitizeString((rawLink as any).title ?? (rawLink as any).name, 120);
+    const url = sanitizeString((rawLink as any).url, 1000);
+    const iconUrl = sanitizeString((rawLink as any).iconUrl, 500);
+    const platformId = sanitizeString((rawLink as any).platformId, 120);
+    const handle = sanitizeString((rawLink as any).handle, 200);
+    const isPrivate =
+      (rawLink as any).isPrivate === true || (rawLink as any).private === true || defaultPrivate;
+
+    if (!title || !url) continue;
+    if (!isHttpUrl(url)) {
+      return { error: "링크 URL은 http(s)여야 합니다" };
+    }
+
+    const cleaned = {
+      title,
+      url,
+      ...(iconUrl && isHttpUrl(iconUrl) ? { iconUrl } : {}),
+      ...(platformId ? { platformId } : {}),
+      ...(handle ? { handle } : {}),
+      ...(isPrivate ? { isPrivate: true } : {}),
+    };
+
+    if (isPrivate) {
+      privateLinks.push(cleaned);
+    } else {
+      publicLinks.push(cleaned);
+    }
+  }
+
+  return { publicLinks, privateLinks, provided: true };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -84,18 +202,43 @@ function normalizeCreatePageBody(
   }
 
   const pageId = body.pageId.trim();
-  const profile = isRecord(body.profile) ? body.profile : {};
-  const links = Array.isArray((body as any).links) ? (body as any).links : [];
+  const { error: profileError, profile } = validateProfile(body.profile);
+  if (profileError) {
+    throw new CreatePageError(profileError, 400);
+  }
+
+  const { error: linkError, publicLinks, privateLinks } = validateLinks(body.links);
+  if (linkError) {
+    throw new CreatePageError(linkError, 400);
+  }
+
+  const providedPrivate = validateLinks((body as any).privateLinks ?? [], true);
+  if (providedPrivate?.error) {
+    throw new CreatePageError(providedPrivate.error, 400);
+  }
+
+  const { error: contactError, schema: contactSchema } = validateContactSchema(
+    body.contactSchema
+  );
+  if (contactError) {
+    throw new CreatePageError(contactError, 400);
+  }
 
   return {
     pageId,
-    profile,
+    profile: profile ?? {},
+    contactSchema: contactSchema ?? [],
     adminEmail: body.adminEmail.trim().toLowerCase(),
     adminPassword: body.adminPassword,
     adminOauthProvider: body.adminOauthProvider,
     adminOauthId: body.adminOauthId,
-    plan: body.plan ?? null,
-    links,
+    plan:
+      typeof body.plan === "string" ? sanitizeString(body.plan, 30) ?? null : body.plan ?? null,
+    links: publicLinks ?? [],
+    privateLinks: [
+      ...(privateLinks ?? []),
+      ...(providedPrivate?.privateLinks ?? []),
+    ],
     slugs: normalizeSlugs(body.slugs, pageId),
   };
 }
@@ -105,7 +248,8 @@ async function persistCreatePage(env: any, data: NormalizedCreatePage) {
   if (data.slugs.length) {
     await enforcePlanLimit(env, data.plan, "update_slug");
   }
-  if (hasPrivateLinks(data.links)) {
+  const allLinks = [...(data.links ?? []), ...(data.privateLinks ?? [])];
+  if (hasPrivateLinks(allLinks)) {
     await enforcePlanLimit(env, data.plan, "create_private_link");
   }
 
@@ -120,6 +264,9 @@ async function persistCreatePage(env: any, data: NormalizedCreatePage) {
   const pageData = {
     profile: data.profile ?? {},
     links: Array.isArray(data.links) ? data.links : [],
+    privateLinks: Array.isArray(data.privateLinks) ? data.privateLinks : [],
+    contactSchema: Array.isArray(data.contactSchema) ? data.contactSchema : [],
+    slugs: data.slugs ?? [],
     plan: data.plan ?? null,
   };
 
@@ -467,11 +614,13 @@ export async function updatePage(
   }
 
   let existingPlan: unknown = null;
+  let existingData: any = {};
   try {
-    const parsedExisting = JSON.parse(existingPage);
-    existingPlan = parsedExisting?.plan ?? null;
+    existingData = JSON.parse(existingPage);
+    existingPlan = existingData?.plan ?? null;
   } catch (error) {
     existingPlan = null;
+    existingData = {};
   }
 
   let slugs: string[] | null = null;
@@ -501,15 +650,58 @@ export async function updatePage(
     }
   }
 
+  const { error: profileError, profile } = validateProfile(body.profile);
+  if (profileError) {
+    return errorResponse(profileError, 400, headers);
+  }
+
+  const {
+    error: linkError,
+    publicLinks,
+    privateLinks,
+    provided: linksProvided,
+  } = validateLinks(body.links);
+  if (linkError) {
+    return errorResponse(linkError, 400, headers);
+  }
+
+  const providedPrivate = validateLinks((body as any).privateLinks ?? [], true);
+  if (providedPrivate?.error) {
+    return errorResponse(providedPrivate.error, 400, headers);
+  }
+
+  const { error: contactError, schema, provided: contactProvided } = validateContactSchema(
+    body.contactSchema
+  );
+  if (contactError) {
+    return errorResponse(contactError, 400, headers);
+  }
+
+  const nextPublicLinks = linksProvided ? publicLinks ?? [] : existingData.links ?? [];
+  const nextPrivateLinks = providedPrivate.provided
+    ? providedPrivate.privateLinks ?? []
+    : linksProvided && privateLinks !== undefined
+    ? privateLinks ?? []
+    : existingData.privateLinks ?? [];
+
   const updatedPage = {
-    profile: body.profile ?? {},
-    links: Array.isArray((body as any).links) ? (body as any).links : [],
-    plan: body.plan ?? existingPlan ?? null,
+    profile: profile ?? existingData.profile ?? {},
+    links: nextPublicLinks,
+    privateLinks: nextPrivateLinks,
+    contactSchema:
+      contactProvided || schema !== undefined
+        ? schema ?? []
+        : existingData.contactSchema ?? [],
+    plan:
+      typeof body.plan === "string"
+        ? sanitizeString(body.plan, 30) ?? existingPlan ?? null
+        : body.plan ?? existingPlan ?? null,
+    slugs: slugs ?? existingData.slugs ?? [],
   };
 
-  if (hasPrivateLinks(updatedPage.links)) {
+  if (hasPrivateLinks([...updatedPage.links, ...(updatedPage.privateLinks ?? [])])) {
     try {
-      await enforcePlanLimit(env, body.plan ?? existingPlan, "create_private_link");
+      await enforcePlanLimit(env, updatedPage.plan, "create_private_link");
     } catch (error) {
       if (error instanceof PlanLimitError) {
         return errorResponse(error.message, error.status, headers);
@@ -540,7 +732,7 @@ export async function updatePage(
       (updatedPage.profile as any)?.name ?? null,
       (updatedPage.profile as any)?.photoUrl ?? null,
       (updatedPage.profile as any)?.description ?? null,
-      JSON.stringify((body as any).links ?? [])
+      JSON.stringify(updatedPage.links)
   )
     .run();
 

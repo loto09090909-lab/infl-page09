@@ -174,6 +174,11 @@ function resetForm() {
     document.getElementById('pageName').value = '';
     document.getElementById('pageSlug').value = '';
     document.getElementById('pageSlug').removeAttribute('disabled');
+    const adminEmailInput = document.getElementById('adminEmail');
+    if (adminEmailInput) {
+      adminEmailInput.value = '';
+      adminEmailInput.removeAttribute('disabled');
+    }
     document.getElementById('pageDescription').value = '';
     document.getElementById('pagePhoto').value = '';
     document.getElementById('adminPassword').value = '';
@@ -200,13 +205,14 @@ async function submitPage() {
     const name = document.getElementById('pageName').value.trim();
     const rawSlug = document.getElementById('pageSlug').value.trim();
     const normalizedSlug = slugify(rawSlug);
+    const adminEmail = document.getElementById('adminEmail')?.value?.trim() || '';
     const description = document.getElementById('pageDescription').value.trim();
     const photoUrl = document.getElementById('pagePhoto').value.trim();
     const adminPassword = document.getElementById('adminPassword').value;
     const plan = document.getElementById('plan').value || 'free';
 
-    if (!editingPageId && ((!rawSlug && !normalizedSlug) || !adminPassword)) {
-        alert('슬러그와 관리자 비밀번호는 필수 입력입니다.');
+    if (!editingPageId && ((!rawSlug && !normalizedSlug) || !adminPassword || !adminEmail)) {
+        alert('슬러그, 관리자 이메일, 관리자 비밀번호는 필수 입력입니다.');
         return;
     }
 
@@ -234,6 +240,7 @@ async function submitPage() {
             photoUrl: photoUrl
         },
     links: managedLinks,
+    adminEmail: adminEmail || undefined,
     adminPassword: adminPassword || undefined,
     plan: plan,
     slugs
@@ -419,6 +426,11 @@ async function editPage(pageId) {
     document.getElementById('pageName').value = page.profile?.name || '';
     document.getElementById('pageSlug').value = page.pageId;
   document.getElementById('pageSlug').setAttribute('disabled', 'true');
+  const adminEmailInput = document.getElementById('adminEmail');
+  if (adminEmailInput) {
+    adminEmailInput.value = '';
+    adminEmailInput.setAttribute('disabled', 'true');
+  }
   document.getElementById('pageDescription').value = page.profile?.description || '';
   document.getElementById('pagePhoto').value = page.profile?.photoUrl || '';
   document.getElementById('adminPassword').value = '';
@@ -561,10 +573,11 @@ function normalizeBulkRow(row, rowNumber) {
   if (!row || typeof row !== 'object') return null;
 
   const pageId = selectCellValue(row, ['pageId', 'page_id', 'slug', '슬러그', '페이지ID']);
+  const adminEmail = selectCellValue(row, ['adminEmail', 'email', '관리자이메일']);
   const adminPassword = selectCellValue(row, ['adminPassword', 'password', 'admin_password', '관리자비밀번호']);
 
-  if (!pageId || !adminPassword) {
-    console.warn(`행 ${rowNumber}: pageId 또는 관리자 비밀번호가 없어 건너뜁니다.`);
+  if (!pageId || !adminPassword || !adminEmail) {
+    console.warn(`행 ${rowNumber}: pageId, 관리자 이메일 또는 관리자 비밀번호가 없어 건너뜁니다.`);
     return null;
   }
 
@@ -577,6 +590,7 @@ function normalizeBulkRow(row, rowNumber) {
 
   return {
     pageId: String(pageId).trim(),
+    adminEmail: String(adminEmail).trim(),
     adminPassword: String(adminPassword).trim(),
     profile: { name: name || '', description: description || '', photoUrl: photoUrl || '' },
     plan: plan || null,
@@ -657,7 +671,7 @@ function renderBulkPreview() {
   let html = `<strong>${filename || '선택한 파일'}</strong>에서 ${totalRows}개 행을 읽었습니다. `;
   html += `<span class="eyebrow">${bulkUploadPages.length}개 생성 준비</span>`;
   if (skipped) {
-    html += ` · ${skipped}개 행은 필수 정보(pageId/비밀번호) 누락으로 건너뜀`;
+    html += ` · ${skipped}개 행은 필수 정보(pageId/관리자 이메일/비밀번호) 누락으로 건너뜀`;
   }
 
   html += '<table><thead><tr><th>#</th><th>pageId</th><th>링크 수</th><th>추가 슬러그</th><th>요금제</th></tr></thead><tbody>';
