@@ -37,6 +37,11 @@ export async function verifySessionToken(
   }
 }
 
+export async function revokeSessionToken(env: any, role: SessionRole, token: string | null) {
+  if (!token) return;
+  await env.PAGE_KV.delete(`session:${role}:${token}`);
+}
+
 export function getBearerToken(req: Request): string | null {
   const authHeader = req.headers.get("Authorization") || "";
   const match = authHeader.match(/^Bearer\s+(.+)$/i);

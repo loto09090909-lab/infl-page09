@@ -1,4 +1,4 @@
-import { createSessionToken, getBearerToken, verifySessionToken } from "./auth";
+import { createSessionToken, getBearerToken, revokeSessionToken, verifySessionToken } from "./auth";
 import { resolvePageId } from "./slug";
 import {
   findConflictingSlug,
@@ -10,6 +10,12 @@ import {
 import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
 import { authenticateExistingUser } from "./users";
 import { enforcePlanLimit, hasPrivateLinks, PlanLimitError } from "./plan-limits";
+import {
+  buildLoginIdentifier,
+  clearLoginAttempts,
+  getLoginThrottle,
+  recordFailedLogin,
+} from "./login-throttle";
 
 type LoginBody = {
   email?: string;
@@ -149,6 +155,17 @@ export async function pageAdminLogin(
     return errorResponse("이메일을 입력하세요", 400, headers);
   }
 
+  const loginIdentifier = buildLoginIdentifier(req, body.email);
+  const throttleState = await getLoginThrottle(env, "page", loginIdentifier);
+  if (throttleState.blocked) {
+    const waitSeconds = Math.max(1, Math.ceil((throttleState.resetAt - Date.now()) / 1000));
+    return errorResponse(
+      `로그인 시도가 너무 많습니다. ${waitSeconds}초 후 다시 시도하세요`,
+      429,
+      headers
+    );
+  }
+
   const canonicalPageId = await resolvePageId(env, pageId);
 
   const adminRow = await env.DB.prepare(
@@ -169,15 +186,45 @@ export async function pageAdminLogin(
   });
 
   if ("error" in result) {
+    await recordFailedLogin(env, "page", loginIdentifier);
     return errorResponse(result.error, result.status, headers);
   }
 
   if (result.user.id !== adminRow.user_id) {
+    await recordFailedLogin(env, "page", loginIdentifier);
     return errorResponse("페이지 관리자 권한이 없습니다", 403, headers);
   }
 
+  await clearLoginAttempts(env, "page", loginIdentifier);
   const session = await createSessionToken(env, "page", canonicalPageId);
   return jsonResponse(session, 200, headers);
+}
+
+export async function pageAdminLogout(
+  req: Request,
+  env: any,
+  pageId: string,
+  headers: HeadersInit
+) {
+  const token = getBearerToken(req);
+  const canonicalPageId = await resolvePageId(env, pageId);
+
+  const pageTokenValid = await verifySessionToken(env, "page", token, canonicalPageId);
+  const superTokenValid = await verifySessionToken(env, "super", token);
+
+  if (!pageTokenValid && !superTokenValid) {
+    return errorResponse("유효한 로그인 세션이 없습니다", 401, headers);
+  }
+
+  if (pageTokenValid) {
+    await revokeSessionToken(env, "page", token);
+  }
+
+  if (superTokenValid) {
+    await revokeSessionToken(env, "super", token);
+  }
+
+  return jsonResponse({ success: true, message: "로그아웃되었습니다" }, 200, headers);
 }
 
 export async function verifyPageSession(

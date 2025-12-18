@@ -1075,6 +1075,24 @@ async function login() {
     }
 }
 
+async function logoutSuperAdmin() {
+    const token = sessionStorage.getItem('super_admin_token');
+
+    if (token) {
+        try {
+            await apiFetch('/api/admin/logout', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+            }, [401]);
+        } catch (error) {
+            console.warn('슈퍼 관리자 로그아웃 요청 실패', error);
+        }
+    }
+
+    sessionStorage.removeItem('super_admin_token');
+    window.location.href = '/login.html';
+}
+
 async function bootstrapSuperAdmin() {
     const usernameInput = document.getElementById('username');
     const passwordInput = document.getElementById('password');
@@ -1187,10 +1205,26 @@ async function pageAdminLogin() {
 }
 
 // 로그아웃 함수
-function logout() {
+async function logout() {
+    const token = sessionStorage.getItem('page_admin_token');
+    const redirectTarget = derivedPageId
+        ? `/page-admin-login.html?pageId=${encodeURIComponent(derivedPageId)}`
+        : '/page-admin-login.html';
+
+    if (token && derivedPageId) {
+        try {
+            await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/logout`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+            }, [401]);
+        } catch (error) {
+            console.warn('페이지 관리자 로그아웃 요청 실패', error);
+        }
+    }
+
     sessionStorage.removeItem('page_admin_token');
     document.cookie = "session=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/";  // 세션 쿠키 삭제
-    window.location.href = "/page-admin-login.html";  // 로그인 페이지로 리디렉션
+    window.location.href = redirectTarget;  // 로그인 페이지로 리디렉션
 }
 
 function renderUserLinks(links) {

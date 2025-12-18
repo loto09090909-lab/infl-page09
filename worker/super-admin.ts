@@ -1,4 +1,4 @@
-import { createSessionToken, getBearerToken, verifySessionToken } from "./auth";
+import { createSessionToken, getBearerToken, revokeSessionToken, verifySessionToken } from "./auth";
 import { resolvePageId } from "./slug";
 import {
   findConflictingSlug,
@@ -10,6 +10,12 @@ import {
 import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
 import { enforcePlanLimit, hasPrivateLinks, PlanLimitError } from "./plan-limits";
 import { findOrCreateUser, hashPassword, updateUserPassword } from "./users";
+import {
+  buildLoginIdentifier,
+  clearLoginAttempts,
+  getLoginThrottle,
+  recordFailedLogin,
+} from "./login-throttle";
 
 type CreatePageBody = {
   pageId: string;
@@ -317,6 +323,17 @@ export async function superAdminLogin(
       ? body.username.trim()
       : "admin"; // 기본 슈퍼 관리자 호환
 
+  const loginIdentifier = buildLoginIdentifier(req, username);
+  const throttleState = await getLoginThrottle(env, "super", loginIdentifier);
+  if (throttleState.blocked) {
+    const waitSeconds = Math.max(1, Math.ceil((throttleState.resetAt - Date.now()) / 1000));
+    return errorResponse(
+      `로그인 시도가 너무 많습니다. ${waitSeconds}초 후 다시 시도하세요`,
+      429,
+      headers
+    );
+  }
+
   const hashedPassword = await hashPassword(body.password);
 
   const row = await env.DB.prepare(
@@ -326,11 +343,25 @@ export async function superAdminLogin(
     .first<{ username: string; password_hash: string }>();
 
   if (!row || row.password_hash !== hashedPassword) {
+    await recordFailedLogin(env, "super", loginIdentifier);
     return errorResponse("인증에 실패했습니다", 401, headers);
   }
 
+  await clearLoginAttempts(env, "super", loginIdentifier);
   const session = await createSessionToken(env, "super", "super-admin");
   return jsonResponse(session, 200, headers);
+}
+
+export async function superAdminLogout(req: Request, env: any, headers: HeadersInit) {
+  const token = getBearerToken(req);
+  const valid = await verifySessionToken(env, "super", token);
+
+  if (!valid) {
+    return errorResponse("유효한 슈퍼 관리자 세션이 없습니다", 401, headers);
+  }
+
+  await revokeSessionToken(env, "super", token);
+  return jsonResponse({ success: true, message: "로그아웃되었습니다" }, 200, headers);
 }
 
 export async function bootstrapSuperAdmin(

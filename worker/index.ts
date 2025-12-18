@@ -1,5 +1,5 @@
 import { getBearerToken, verifySessionToken } from "./auth";
-import { pageAdminLogin, savePage, verifyPageSession } from "./page-admin";
+import { pageAdminLogin, pageAdminLogout, savePage, verifyPageSession } from "./page-admin";
 import {
   createPage,
   bulkCreatePages,
@@ -8,6 +8,7 @@ import {
   listPages,
   bootstrapSuperAdmin,
   superAdminLogin,
+  superAdminLogout,
   updatePage,
 } from "./super-admin";
 import { getPage } from "./page-view";
@@ -72,6 +73,13 @@ export default {
       return superAdminLogin(req, env, corsHeaders);
     }
 
+    if (
+      method === "POST" &&
+      (path === "/api/super-admin/logout" || path === "/api/admin/logout")
+    ) {
+      return superAdminLogout(req, env, corsHeaders);
+    }
+
     const adminToken = getBearerToken(req);
     const isAdmin = await verifySessionToken(env, "super", adminToken);
 
@@ -133,6 +141,10 @@ export default {
 
       if (method === "POST" && action === "login") {
         return pageAdminLogin(req, env, pageId, corsHeaders);
+      }
+
+      if (method === "POST" && action === "logout") {
+        return pageAdminLogout(req, env, pageId, corsHeaders);
       }
 
       if (method === "GET" && action === "session") {
