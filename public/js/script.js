@@ -839,7 +839,9 @@ async function showD1SeedSql() {
 
 // 인플루언서 페이지 관리자 로그인
 async function pageAdminLogin() {
+    const emailInput = document.getElementById('page-admin-email');
     const passwordInput = document.getElementById('page-admin-password');
+    const email = emailInput ? emailInput.value.trim() : '';
     const password = passwordInput ? passwordInput.value : '';
     const inputPageIdEl = document.getElementById('page-admin-id');
     const pageIdFromInput = inputPageIdEl ? inputPageIdEl.value : '';
@@ -852,6 +854,11 @@ async function pageAdminLogin() {
         return;
     }
 
+    if (!email) {
+        alert('관리자 이메일을 입력하세요.');
+        return;
+    }
+
     if (!password) {
         alert('비밀번호를 입력하세요.');
         return;
@@ -860,7 +867,7 @@ async function pageAdminLogin() {
     const res = await apiFetch(`/api/page/${encodeURIComponent(pageId)}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password })
+        body: JSON.stringify({ email, password })
     });
 
     if (res.ok) {
@@ -868,12 +875,14 @@ async function pageAdminLogin() {
         sessionStorage.setItem('page_admin_token', session.token);
         window.location.href = `/admin.html?pageId=${encodeURIComponent(pageId)}`;
     } else {
-        alert('로그인 실패: 비밀번호를 확인하세요.');
+        const message = await res.text();
+        alert(`로그인 실패: ${message || res.status}`);
     }
 }
 
 // 로그아웃 함수
 function logout() {
+    sessionStorage.removeItem('page_admin_token');
     document.cookie = "session=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/";  // 세션 쿠키 삭제
     window.location.href = "/page-admin-login.html";  // 로그인 페이지로 리디렉션
 }
