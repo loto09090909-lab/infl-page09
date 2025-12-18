@@ -33,3 +33,17 @@ CREATE TABLE IF NOT EXISTS slug_map (
   display_name TEXT PRIMARY KEY,
   page_id TEXT
 );
+
+-- pages
+CREATE TABLE IF NOT EXISTS pages (
+  page_id TEXT PRIMARY KEY,
+  owner_user_id TEXT NOT NULL
+);
+
+-- page_admins
+CREATE TABLE IF NOT EXISTS page_admins (
+  page_id TEXT,
+  user_id TEXT,
+  role TEXT CHECK(role IN ('owner', 'admin')),
+  PRIMARY KEY (page_id, user_id)
+);

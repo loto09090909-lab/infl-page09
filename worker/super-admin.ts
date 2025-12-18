@@ -9,6 +9,7 @@ type CreatePageBody = {
   plan?: unknown;
   links?: unknown;
   slugs?: unknown;
+  ownerUserId?: string;
 };
 
 type UpdatePageBody = {
@@ -31,6 +32,7 @@ type NormalizedCreatePage = {
   plan: unknown;
   links: unknown[];
   slugs: string[];
+  ownerUserId: string;
 };
 
 type BulkCreateBody = {
@@ -51,7 +53,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function normalizeCreatePageBody(
-  body: CreatePageBody | null
+  body: CreatePageBody | null,
+  fallbackOwnerId?: string | null
 ): NormalizedCreatePage {
   if (!body || typeof body.pageId !== "string" || !body.pageId.trim()) {
     throw new CreatePageError("pageId와 adminPassword는 필수입니다", 400);
@@ -64,6 +67,12 @@ function normalizeCreatePageBody(
   const pageId = body.pageId.trim();
   const profile = isRecord(body.profile) ? body.profile : {};
   const links = Array.isArray((body as any).links) ? (body as any).links : [];
+  const ownerUserId =
+    typeof body.ownerUserId === "string" && body.ownerUserId.trim()
+      ? body.ownerUserId.trim()
+      : fallbackOwnerId && fallbackOwnerId.trim()
+        ? fallbackOwnerId.trim()
+        : pageId;
 
   return {
     pageId,
@@ -72,6 +81,7 @@ function normalizeCreatePageBody(
     plan: body.plan ?? null,
     links,
     slugs: normalizeSlugs(body.slugs, pageId),
+    ownerUserId,
   };
 }
 
@@ -98,6 +108,8 @@ async function persistCreatePage(env: any, data: NormalizedCreatePage) {
   )
     .bind(data.pageId, data.adminPassword)
     .run();
+
+  await ensureOwnerRecords(env, data.pageId, data.ownerUserId);
 
   await env.DB.prepare(
     "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
@@ -146,11 +158,20 @@ export async function superAdminLogin(
 export async function createPage(
   req: Request,
   env: any,
-  headers: HeadersInit
+  headers: HeadersInit,
+  options: { actingUserId?: string | null; isSuperAdmin?: boolean } = {}
 ): Promise<Response> {
   try {
     const body = await parseJsonBody<CreatePageBody>(req);
-    const normalized = normalizeCreatePageBody(body);
+    const normalized = normalizeCreatePageBody(
+      body,
+      options.actingUserId || null
+    );
+
+    if (!options.isSuperAdmin && (!options.actingUserId || !normalized.ownerUserId)) {
+      return errorResponse("소유자 권한이 필요합니다", 403, headers);
+    }
+
     await persistCreatePage(env, normalized);
     return jsonResponse({ success: true, message: "Page created" }, 201, headers);
   } catch (error) {
@@ -311,9 +332,20 @@ export async function listPages(
 export async function getAdminPage(
   env: any,
   pageId: string,
-  headers: HeadersInit
+  headers: HeadersInit,
+  options: { actingUserId?: string | null; isSuperAdmin?: boolean } = {}
 ): Promise<Response> {
   const canonicalPageId = await resolvePageId(env, pageId);
+  await ensureOwnerRecords(env, canonicalPageId, options.actingUserId || null);
+
+  const authorized =
+    options.isSuperAdmin ||
+    (!!options.actingUserId &&
+      (await isPageAdmin(env, canonicalPageId, options.actingUserId, ["owner", "admin"])));
+
+  if (!authorized) {
+    return errorResponse("접근 권한이 없습니다", 403, headers);
+  }
   const row = await env.DB.prepare(
     "SELECT page_id, name, photo_url, description, links FROM page_meta WHERE page_id = ? LIMIT 1"
   )
@@ -360,9 +392,20 @@ export async function getAdminPage(
 export async function deletePage(
   env: any,
   pageId: string,
-  headers: HeadersInit
+  headers: HeadersInit,
+  options: { actingUserId?: string | null; isSuperAdmin?: boolean } = {}
 ): Promise<Response> {
   const canonicalPageId = await resolvePageId(env, pageId);
+  await ensureOwnerRecords(env, canonicalPageId, options.actingUserId || null);
+
+  const authorized =
+    options.isSuperAdmin ||
+    (!!options.actingUserId &&
+      (await isPageAdmin(env, canonicalPageId, options.actingUserId, ["owner"])));
+
+  if (!authorized) {
+    return errorResponse("삭제 권한이 없습니다", 403, headers);
+  }
 
   const exists = await env.PAGE_KV.get(`page:${canonicalPageId}`);
   if (!exists) {
@@ -384,6 +427,14 @@ export async function deletePage(
     .bind(canonicalPageId)
     .run();
 
+  await env.DB.prepare("DELETE FROM page_admins WHERE page_id = ?")
+    .bind(canonicalPageId)
+    .run();
+
+  await env.DB.prepare("DELETE FROM pages WHERE page_id = ?")
+    .bind(canonicalPageId)
+    .run();
+
   return jsonResponse({ success: true, message: "Page deleted" }, 200, headers);
 }
 
@@ -391,13 +442,24 @@ export async function updatePage(
   req: Request,
   env: any,
   pageId: string,
-  headers: HeadersInit
+  headers: HeadersInit,
+  options: { actingUserId?: string | null; isSuperAdmin?: boolean } = {}
 ): Promise<Response> {
   const canonicalPageId = await resolvePageId(env, pageId);
+  await ensureOwnerRecords(env, canonicalPageId, options.actingUserId || null);
 
   const existingPage = await env.PAGE_KV.get(`page:${canonicalPageId}`);
   if (!existingPage) {
     return errorResponse("Page not found", 404, headers);
+  }
+
+  const authorized =
+    options.isSuperAdmin ||
+    (!!options.actingUserId &&
+      (await isPageAdmin(env, canonicalPageId, options.actingUserId, ["owner", "admin"])));
+
+  if (!authorized) {
+    return errorResponse("수정 권한이 없습니다", 403, headers);
   }
 
   const body = await parseJsonBody<UpdatePageBody>(req);
@@ -551,4 +613,141 @@ async function hasSlugMap(env: any, pageId: string) {
     .first();
 
   return !!row;
+}
+
+async function ensureOwnerRecords(env: any, pageId: string, incomingOwnerId: string | null) {
+  const existingOwnerRow = await env.DB.prepare(
+    "SELECT owner_user_id FROM pages WHERE page_id = ? LIMIT 1"
+  )
+    .bind(pageId)
+    .first<{ owner_user_id: string }>();
+
+  const resolvedOwner =
+    (incomingOwnerId && incomingOwnerId.trim()) || existingOwnerRow?.owner_user_id || pageId;
+
+  await env.DB.prepare("INSERT OR REPLACE INTO pages (page_id, owner_user_id) VALUES (?, ?)")
+    .bind(pageId, resolvedOwner)
+    .run();
+
+  const ownerAdminRow = await env.DB.prepare(
+    "SELECT role FROM page_admins WHERE page_id = ? AND user_id = ? LIMIT 1"
+  )
+    .bind(pageId, resolvedOwner)
+    .first<{ role: string }>();
+
+  if (!ownerAdminRow || ownerAdminRow.role !== "owner") {
+    await env.DB.prepare(
+      "INSERT OR REPLACE INTO page_admins (page_id, user_id, role) VALUES (?, ?, 'owner')"
+    )
+      .bind(pageId, resolvedOwner)
+      .run();
+  }
+
+  return resolvedOwner;
+}
+
+async function isPageAdmin(
+  env: any,
+  pageId: string,
+  userId: string,
+  roles: ("owner" | "admin")[]
+) {
+  if (!userId) return false;
+
+  const placeholders = roles.map(() => "?").join(",");
+  const row = await env.DB.prepare(
+    `SELECT role FROM page_admins WHERE page_id = ? AND user_id = ? AND role IN (${placeholders}) LIMIT 1`
+  )
+    .bind(pageId, userId, ...roles)
+    .first<{ role: string }>();
+
+  return !!row;
+}
+
+type InviteAdminBody = {
+  userId?: string;
+  role?: "owner" | "admin";
+};
+
+export async function invitePageAdmin(
+  req: Request,
+  env: any,
+  pageId: string,
+  headers: HeadersInit,
+  options: { actingUserId?: string | null; isSuperAdmin?: boolean } = {}
+): Promise<Response> {
+  const canonicalPageId = await resolvePageId(env, pageId);
+  const ownerId = await ensureOwnerRecords(env, canonicalPageId, options.actingUserId || null);
+
+  const canManage =
+    options.isSuperAdmin ||
+    (!!options.actingUserId &&
+      (await isPageAdmin(env, canonicalPageId, options.actingUserId, ["owner"])));
+
+  if (!canManage) {
+    return errorResponse("소유자 권한이 필요합니다", 403, headers);
+  }
+
+  const body = await parseJsonBody<InviteAdminBody>(req);
+  const userId = body?.userId?.trim();
+  const role: "owner" | "admin" = body?.role === "owner" ? "owner" : "admin";
+
+  if (!userId) {
+    return errorResponse("userId를 입력하세요", 400, headers);
+  }
+
+  await env.DB.prepare(
+    "INSERT OR REPLACE INTO page_admins (page_id, user_id, role) VALUES (?, ?, ?)"
+  )
+    .bind(canonicalPageId, userId, role)
+    .run();
+
+  if (role === "owner") {
+    await ensureOwnerRecords(env, canonicalPageId, userId);
+  } else if (!ownerId) {
+    await ensureOwnerRecords(env, canonicalPageId, userId);
+  }
+
+  return jsonResponse(
+    { success: true, pageId: canonicalPageId, userId, role },
+    200,
+    headers
+  );
+}
+
+export async function revokePageAdmin(
+  env: any,
+  pageId: string,
+  targetUserId: string,
+  headers: HeadersInit,
+  options: { actingUserId?: string | null; isSuperAdmin?: boolean } = {}
+): Promise<Response> {
+  const canonicalPageId = await resolvePageId(env, pageId);
+  const ownerId = await ensureOwnerRecords(env, canonicalPageId, options.actingUserId || null);
+
+  const canManage =
+    options.isSuperAdmin ||
+    (!!options.actingUserId &&
+      (await isPageAdmin(env, canonicalPageId, options.actingUserId, ["owner"])));
+
+  if (!canManage) {
+    return errorResponse("소유자 권한이 필요합니다", 403, headers);
+  }
+
+  const normalizedTarget = targetUserId?.trim();
+  if (!normalizedTarget) {
+    return errorResponse("userId가 필요합니다", 400, headers);
+  }
+
+  if (normalizedTarget === ownerId) {
+    return errorResponse("현재 소유자는 해지할 수 없습니다", 400, headers);
+  }
+
+  await env.DB.prepare(
+    "DELETE FROM page_admins WHERE page_id = ? AND user_id = ?"
+  )
+    .bind(canonicalPageId, normalizedTarget)
+    .run();
+
+  return jsonResponse({ success: true, pageId: canonicalPageId, userId: normalizedTarget }, 200, headers);
 }

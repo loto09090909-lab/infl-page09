@@ -6,6 +6,8 @@ import {
   deletePage,
   getAdminPage,
   listPages,
+  invitePageAdmin,
+  revokePageAdmin,
   superAdminLogin,
   updatePage,
 } from "./super-admin";
@@ -24,6 +26,7 @@ export default {
         .filter(Boolean),
     };
     const corsHeaders = buildCorsHeaders(corsOptions, req.headers.get("Origin"));
+    const actingUserId = req.headers.get("x-user-id")?.trim() || null;
 
     // Preflight 처리
     if (method === "OPTIONS") {
@@ -52,8 +55,12 @@ export default {
     }
 
     if (path === "/api/admin/pages" && method === "POST") {
-      if (!isAdmin) return errorResponse("인증이 필요합니다", 401, corsHeaders);
-      return createPage(req, env, corsHeaders);
+      if (!isAdmin && !actingUserId)
+        return errorResponse("인증이 필요합니다", 401, corsHeaders);
+      return createPage(req, env, corsHeaders, {
+        actingUserId,
+        isSuperAdmin: isAdmin,
+      });
     }
 
     if (path === "/api/admin/pages" && method === "GET") {
@@ -64,18 +71,29 @@ export default {
     const adminPageMatch = path.match(/^\/api\/admin\/pages\/(.+)$/);
     if (adminPageMatch) {
       const pageId = adminPageMatch[1];
-      if (!isAdmin) return errorResponse("인증이 필요합니다", 401, corsHeaders);
+      if (!isAdmin && !actingUserId) {
+        return errorResponse("인증이 필요합니다", 401, corsHeaders);
+      }
 
       if (method === "GET") {
-        return getAdminPage(env, decodeURIComponent(pageId), corsHeaders);
+        return getAdminPage(env, decodeURIComponent(pageId), corsHeaders, {
+          actingUserId,
+          isSuperAdmin: isAdmin,
+        });
       }
 
       if (method === "DELETE") {
-        return deletePage(env, pageId, corsHeaders);
+        return deletePage(env, pageId, corsHeaders, {
+          actingUserId,
+          isSuperAdmin: isAdmin,
+        });
       }
 
       if (method === "PUT") {
-        return updatePage(req, env, pageId, corsHeaders);
+        return updatePage(req, env, pageId, corsHeaders, {
+          actingUserId,
+          isSuperAdmin: isAdmin,
+        });
       }
     }
 
@@ -91,6 +109,22 @@ export default {
 
       if (method === "POST" && action === "save") {
         return savePage(req, env, pageId, corsHeaders);
+      }
+
+      if (action === "admins") {
+        if (method === "POST") {
+          return invitePageAdmin(req, env, pageId, corsHeaders, {
+            actingUserId,
+            isSuperAdmin: isAdmin,
+          });
+        }
+
+        if (method === "DELETE" && pathSegments[4]) {
+          return revokePageAdmin(env, pageId, pathSegments[4], corsHeaders, {
+            actingUserId,
+            isSuperAdmin: isAdmin,
+          });
+        }
       }
     }
 
