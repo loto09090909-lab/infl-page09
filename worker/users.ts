@@ -21,7 +21,7 @@ export type AuthBody = {
 const MAX_ATTEMPTS = 5;
 const LOCK_MILLISECONDS = 15 * 60 * 1000;
 
-const PBKDF2_ITERATIONS = 120_000;
+const PBKDF2_ITERATIONS = 70_000;
 const PBKDF2_KEY_LENGTH = 32; // bytes
 const PBKDF2_PREFIX = "pbkdf2";
 
