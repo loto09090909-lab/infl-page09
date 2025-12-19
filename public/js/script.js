@@ -69,7 +69,11 @@ function resolveApiBases() {
     }
 
     if (APP_CONFIG.useCurrentOriginBase !== false) {
-        pushBase(window.location.origin);
+        const origin = window.location.origin;
+        // 현재 도메인이 pages.dev라면 API 베이스 후보에서 제외 (Workers만 API를 담당하므로)
+        if (!origin.endsWith('pages.dev')) {
+            pushBase(origin);
+        }
     }
 
     return bases;
