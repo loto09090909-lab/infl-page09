@@ -14,6 +14,7 @@ import {
 import { getPage } from "./page-view";
 import { buildCorsHeaders, CorsOptions, errorResponse, jsonResponse } from "./utils";
 import { login as userLogin, signup as userSignup } from "./users";
+import { createUserPage, listUserPages } from "./user-pages";
 
 export default {
   async fetch(req: Request, env: any): Promise<Response> {
@@ -66,6 +67,14 @@ export default {
 
     if (method === "POST" && path === "/api/users/login") {
       return userLogin(req, env, corsHeaders);
+    }
+
+    if (method === "POST" && path === "/api/user/pages") {
+      return createUserPage(req, env, corsHeaders);
+    }
+
+    if (method === "GET" && path === "/api/user/pages") {
+      return listUserPages(req, env, corsHeaders);
     }
 
     // --- 1. 관리자 API ---
