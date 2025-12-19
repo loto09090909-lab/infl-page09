@@ -40,7 +40,7 @@ export async function getMemberRole(env: any, pageId: string, userId: string) {
     "SELECT 1 FROM page_admins WHERE page_id = ? AND user_id = ? LIMIT 1"
   )
     .bind(pageId, userId)
-    .first<{ \"1\": number }>();
+    .first<{ "1": number }>();
   return legacy ? "owner" : null;
 }
 
