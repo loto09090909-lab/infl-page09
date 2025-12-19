@@ -7,15 +7,22 @@ import {
   normalizeSlugs,
   replaceSlugMap,
 } from "./slug-map";
-import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
+import { errorResponse, errorResponseWithCode, jsonResponse, parseJsonBody } from "./utils";
 import { authenticateExistingUser } from "./users";
-import { enforcePlanLimit, hasPrivateLinks, PlanLimitError } from "./plan-limits";
+import {
+  enforceContactFieldLimit,
+  enforcePlanLimit,
+  enforcePrivateLinkLimit,
+  hasPrivateLinks,
+  PlanLimitError,
+} from "./plan-limits";
 import {
   buildLoginIdentifier,
   clearLoginAttempts,
   getLoginThrottle,
   recordFailedLogin,
 } from "./login-throttle";
+import { ensurePageMemberBridge } from "./page-members";
 
 type LoginBody = {
   email?: string;
@@ -31,6 +38,7 @@ type SavePageBody = {
   privateLinks?: unknown;
   contactSchema?: unknown;
   contactSettings?: unknown;
+  accessControl?: unknown;
   slugs?: unknown;
   theme?: unknown;
 };
@@ -145,6 +153,27 @@ function validateContactSettings(raw: unknown) {
   };
 }
 
+function validateAccessControl(raw: unknown) {
+  if (raw === undefined) return { accessControl: undefined };
+  if (!raw || typeof raw !== "object") {
+    return { error: "accessControl은 객체여야 합니다" };
+  }
+
+  const enabled = (raw as any).enabled === true;
+  const code = sanitizeString((raw as any).code, 80);
+
+  if (enabled && !code) {
+    return { error: "accessControl.enabled가 true이면 code가 필요합니다" };
+  }
+
+  return {
+    accessControl: {
+      enabled,
+      ...(code ? { code } : {}),
+    },
+  };
+}
+
 function validateLinks(rawLinks: unknown) {
   if (rawLinks === undefined) return { publicLinks: undefined, privateLinks: undefined, provided: false };
   if (!Array.isArray(rawLinks)) {
@@ -191,6 +220,10 @@ function validateLinks(rawLinks: unknown) {
   return { publicLinks, privateLinks, provided: true };
 }
 
+function generateAccessCode() {
+  return crypto.randomUUID().replace(/-/g, "").slice(0, 10);
+}
+
 export async function pageAdminLogin(
   req: Request,
   env: any,
@@ -222,7 +255,14 @@ export async function pageAdminLogin(
     .first<{ user_id: string }>();
 
   if (!adminRow?.user_id) {
-    return errorResponse("페이지 관리자 계정을 찾을 수 없습니다", 404, headers);
+    const memberExists = await env.DB.prepare(
+      "SELECT 1 FROM page_members WHERE page_id = ? LIMIT 1"
+    )
+      .bind(canonicalPageId)
+      .first<{ \"1\": number }>();
+    if (!memberExists) {
+      return errorResponseWithCode("페이지 관리자 계정을 찾을 수 없습니다", "NOT_FOUND", 404, headers);
+    }
   }
 
   const result = await authenticateExistingUser(env, {
@@ -234,14 +274,22 @@ export async function pageAdminLogin(
 
   if ("error" in result) {
     await recordFailedLogin(env, "page", loginIdentifier);
-    return errorResponse(result.error, result.status, headers);
+    const code = result.status === 404 ? "NOT_FOUND" : "FORBIDDEN";
+    return errorResponseWithCode(result.error, code, result.status, headers);
   }
 
-  if (result.user.id !== adminRow.user_id) {
+  const memberRow = await env.DB.prepare(
+    "SELECT 1 FROM page_members WHERE page_id = ? AND user_id = ? LIMIT 1"
+  )
+    .bind(canonicalPageId, result.user.id)
+    .first<{ \"1\": number }>();
+
+  if (!memberRow && result.user.id !== adminRow?.user_id) {
     await recordFailedLogin(env, "page", loginIdentifier);
-    return errorResponse("페이지 관리자 권한이 없습니다", 403, headers);
+    return errorResponseWithCode("페이지 관리자 권한이 없습니다", "FORBIDDEN", 403, headers);
   }
 
+  await ensurePageMemberBridge(env, canonicalPageId, result.user.id);
   await clearLoginAttempts(env, "page", loginIdentifier);
   const session = await createSessionToken(env, "page", canonicalPageId);
   return jsonResponse(session, 200, headers);
@@ -349,6 +397,11 @@ export async function savePage(
     return errorResponse(contactSettingsError, 400, headers);
   }
 
+  const { error: accessError, accessControl } = validateAccessControl(body.accessControl);
+  if (accessError) {
+    return errorResponse(accessError, 400, headers);
+  }
+
   const { error: themeError, theme } = validateTheme(body.theme);
   if (themeError) {
     return errorResponse(themeError, 400, headers);
@@ -405,6 +458,7 @@ export async function savePage(
     contactSchema:
       contactProvided || schema !== undefined ? schema ?? [] : existingData.contactSchema ?? [],
     contactSettings: contactSettings ?? existingData.contactSettings ?? { enabled: false },
+    accessControl: accessControl ?? existingData.accessControl ?? { enabled: false },
     slugs: normalizedSlugs,
     plan:
       typeof body.plan === "string"
@@ -418,13 +472,28 @@ export async function savePage(
         : "classic",
   };
 
+  const effectivePlan = typeof pageData.plan === "string" ? pageData.plan : "free";
+  if (contactProvided || schema !== undefined) {
+    try {
+      await enforceContactFieldLimit(env, effectivePlan, pageData.contactSchema?.length ?? 0);
+    } catch (error) {
+      if (error instanceof PlanLimitError) {
+        return errorResponseWithCode(error.message, "PLAN_LIMIT_EXCEEDED", error.status, headers);
+      }
+      throw error;
+    }
+  }
+
   const linksForPlan = [...pageData.links, ...(pageData.privateLinks ?? [])];
   if (hasPrivateLinks(linksForPlan)) {
     try {
-      await enforcePlanLimit(env, pageData.plan, "create_private_link");
+      await enforcePlanLimit(env, effectivePlan, "create_private_link");
+      if (providedPrivate.provided || linksProvided) {
+        await enforcePrivateLinkLimit(env, effectivePlan, pageData.privateLinks?.length ?? 0);
+      }
     } catch (error) {
       if (error instanceof PlanLimitError) {
-        return errorResponse(error.message, error.status, headers);
+        return errorResponseWithCode(error.message, "PLAN_LIMIT_EXCEEDED", error.status, headers);
       }
       throw error;
     }
@@ -432,14 +501,15 @@ export async function savePage(
   await env.PAGE_KV.put(`page:${canonicalPageId}`, JSON.stringify(pageData));
 
   await env.DB.prepare(
-    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
+    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links, plan_id) VALUES (?, ?, ?, ?, ?, ?)"
   )
     .bind(
       canonicalPageId,
       (pageData.profile as any)?.name ?? null,
       (pageData.profile as any)?.photoUrl ?? null,
       (pageData.profile as any)?.description ?? null,
-      JSON.stringify(pageData.links)
+      JSON.stringify(pageData.links),
+      typeof pageData.plan === "string" ? pageData.plan : "free"
     )
     .run();
 
@@ -450,3 +520,78 @@ export async function savePage(
   return jsonResponse({ success: true, message: "Page saved" }, 200, headers);
 }
 
+export async function rotateAccessCode(
+  req: Request,
+  env: any,
+  pageId: string,
+  headers: HeadersInit
+) {
+  const token = getBearerToken(req);
+  const canonicalPageId = await resolvePageId(env, pageId);
+  const pageTokenValid = await verifySessionToken(env, "page", token, canonicalPageId);
+  const superTokenValid = await verifySessionToken(env, "super", token);
+  if (!pageTokenValid && !superTokenValid) {
+    return errorResponse("인증이 필요합니다", 401, headers);
+  }
+
+  const existingRaw = await env.PAGE_KV.get(`page:${canonicalPageId}`);
+  if (!existingRaw) {
+    return errorResponse("Page not found", 404, headers);
+  }
+
+  let existingData: any = {};
+  try {
+    existingData = JSON.parse(existingRaw);
+  } catch (error) {
+    existingData = {};
+  }
+
+  const code = generateAccessCode();
+  const updated = {
+    ...existingData,
+    accessControl: {
+      enabled: true,
+      code,
+    },
+  };
+
+  await env.PAGE_KV.put(`page:${canonicalPageId}`, JSON.stringify(updated));
+
+  return jsonResponse({ pageId: canonicalPageId, accessControl: updated.accessControl }, 200, headers);
+}
+
+export async function disableAccessCode(
+  req: Request,
+  env: any,
+  pageId: string,
+  headers: HeadersInit
+) {
+  const token = getBearerToken(req);
+  const canonicalPageId = await resolvePageId(env, pageId);
+  const pageTokenValid = await verifySessionToken(env, "page", token, canonicalPageId);
+  const superTokenValid = await verifySessionToken(env, "super", token);
+  if (!pageTokenValid && !superTokenValid) {
+    return errorResponse("인증이 필요합니다", 401, headers);
+  }
+
+  const existingRaw = await env.PAGE_KV.get(`page:${canonicalPageId}`);
+  if (!existingRaw) {
+    return errorResponse("Page not found", 404, headers);
+  }
+
+  let existingData: any = {};
+  try {
+    existingData = JSON.parse(existingRaw);
+  } catch (error) {
+    existingData = {};
+  }
+
+  const updated = {
+    ...existingData,
+    accessControl: { enabled: false },
+  };
+
+  await env.PAGE_KV.put(`page:${canonicalPageId}`, JSON.stringify(updated));
+
+  return jsonResponse({ pageId: canonicalPageId, accessControl: updated.accessControl }, 200, headers);
+}

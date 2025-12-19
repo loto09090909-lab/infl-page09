@@ -1,6 +1,7 @@
 import { getBearerToken, verifySessionToken } from "./auth";
 import { resolvePageId } from "./slug";
-import { errorResponse, jsonResponse } from "./utils";
+import { errorResponse, errorResponseWithCode, jsonResponse } from "./utils";
+import { enforcePlanLimit, getPagePlanId, PlanLimitError } from "./plan-limits";
 
 type ContactField = {
   label: string;
@@ -49,9 +50,10 @@ const ALLOWED_CONTACT_TYPES = new Set([
 async function readContactSchema(env: any, pageId: string): Promise<{
   schema: ContactField[];
   settings: ContactSettings;
+  accessControl: { enabled?: boolean; code?: string };
 }> {
   const kvRaw = await env.PAGE_KV.get(`page:${pageId}`);
-  if (!kvRaw) return { schema: [], settings: {} };
+  if (!kvRaw) return { schema: [], settings: {}, accessControl: { enabled: false } };
   try {
     const parsed = JSON.parse(kvRaw);
     const schema = Array.isArray(parsed?.contactSchema)
@@ -94,9 +96,13 @@ async function readContactSchema(env: any, pageId: string): Promise<{
 
       settings.enabled = parsed.contactSettings.enabled === true;
     }
-    return { schema, settings };
+    const accessControl =
+      parsed?.accessControl && typeof parsed.accessControl === "object"
+        ? parsed.accessControl
+        : { enabled: false };
+    return { schema, settings, accessControl };
   } catch (error) {
-    return { schema: [], settings: { enabled: false } };
+    return { schema: [], settings: { enabled: false }, accessControl: { enabled: false } };
   }
 }
 
@@ -193,13 +199,22 @@ export async function submitContact(
     return errorResponse("페이지를 찾을 수 없습니다", 404, headers);
   }
 
-  const { schema, settings } = await readContactSchema(env, canonicalPageId);
+  const { schema, settings, accessControl } = await readContactSchema(env, canonicalPageId);
   if (!settings.enabled) {
     return errorResponse("컨택트 폼이 비활성화되었습니다", 404, headers);
   }
 
   if (!schema.length) {
     return errorResponse("컨택트 폼이 설정되지 않았습니다", 404, headers);
+  }
+
+  if (accessControl?.enabled) {
+    const urlCode = new URL(req.url).searchParams.get("code");
+    const headerCode = req.headers.get("X-Page-Code");
+    const provided = headerCode || urlCode;
+    if (!provided || provided !== accessControl.code) {
+      return errorResponseWithCode("접근 코드가 필요합니다", "FORBIDDEN", 401, headers);
+    }
   }
 
   let body: any;
@@ -291,7 +306,20 @@ export async function submitContact(
   return jsonResponse({ ok: true, id: submission.id }, 201, headers);
 }
 
-async function fetchSubmissions(env: any, pageId: string, limit = 50): Promise<ContactSubmission[]> {
+export async function countSubmissions(env: any, pageId: string): Promise<number> {
+  const indexKey = `contact:${pageId}:index`;
+  const indexRaw = await env.PAGE_KV.get(indexKey);
+  if (!indexRaw) return 0;
+
+  try {
+    const parsed = JSON.parse(indexRaw);
+    return Array.isArray(parsed) ? parsed.length : 0;
+  } catch (error) {
+    return 0;
+  }
+}
+
+export async function fetchSubmissions(env: any, pageId: string, limit = 50): Promise<ContactSubmission[]> {
   const indexKey = `contact:${pageId}:index`;
   const indexRaw = await env.PAGE_KV.get(indexKey);
   if (!indexRaw) return [];
@@ -352,6 +380,16 @@ export async function exportContactSubmissions(
 
   if (!pageTokenValid && !superTokenValid) {
     return errorResponse("인증이 필요합니다", 401, headers);
+  }
+
+  try {
+    const planId = (await getPagePlanId(env, canonicalPageId)) ?? "free";
+    await enforcePlanLimit(env, planId, "export_csv");
+  } catch (error) {
+    if (error instanceof PlanLimitError) {
+      return errorResponseWithCode(error.message, "PLAN_LIMIT_EXCEEDED", error.status, headers);
+    }
+    throw error;
   }
 
   const submissions = await fetchSubmissions(env, canonicalPageId, 200);

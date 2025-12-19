@@ -1,7 +1,8 @@
 import { getBearerToken, verifySessionToken } from "./auth";
 import { getSlugsForPage } from "./slug-map";
 import { resolvePageId } from "./slug";
-import { errorResponse, jsonResponse } from "./utils";
+import { recordPageView } from "./stats";
+import { errorResponse, errorResponseWithCode, jsonResponse } from "./utils";
 
 type PageMetaRow = {
   page_id: string;
@@ -22,6 +23,7 @@ export async function getPage(
   const isPageAdmin = await verifySessionToken(env, "page", token, resolvedPageId);
   const isSuperAdmin = await verifySessionToken(env, "super", token);
   const includePrivate = isPageAdmin || isSuperAdmin;
+  await recordPageView(env, resolvedPageId, includePrivate);
   const kvRaw = await env.PAGE_KV.get(`page:${resolvedPageId}`);
   let kvParsed: any = null;
   if (kvRaw) {
@@ -40,6 +42,15 @@ export async function getPage(
 
   if (dbRow) {
     const contactSettings = kvParsed?.contactSettings ?? {};
+    const accessControl = kvParsed?.accessControl ?? {};
+    if (accessControl?.enabled && !includePrivate) {
+      const urlCode = new URL(req.url).searchParams.get("code");
+      const headerCode = req.headers.get("X-Page-Code");
+      const provided = headerCode || urlCode;
+      if (!provided || provided !== accessControl.code) {
+        return errorResponseWithCode("접근 코드가 필요합니다", "FORBIDDEN", 401, headers);
+      }
+    }
     const safeContactSettings = includePrivate
       ? {
           enabled: contactSettings?.enabled === true,
@@ -58,6 +69,9 @@ export async function getPage(
         plan: kvParsed?.plan ?? null,
         contactSchema: kvParsed?.contactSchema ?? [],
         contactSettings: safeContactSettings,
+        accessControl: includePrivate
+          ? accessControl ?? { enabled: false }
+          : { enabled: accessControl?.enabled === true },
         theme: typeof kvParsed?.theme === "string" ? kvParsed.theme : "classic",
         privateLinks: includePrivate ? kvParsed?.privateLinks ?? [] : undefined,
         slugs: includePrivate
@@ -80,6 +94,15 @@ export async function getPage(
       : [];
 
     const contactSettings = parsed?.contactSettings ?? {};
+    const accessControl = parsed?.accessControl ?? {};
+    if (accessControl?.enabled && !includePrivate) {
+      const urlCode = new URL(req.url).searchParams.get("code");
+      const headerCode = req.headers.get("X-Page-Code");
+      const provided = headerCode || urlCode;
+      if (!provided || provided !== accessControl.code) {
+        return errorResponseWithCode("접근 코드가 필요합니다", "FORBIDDEN", 401, headers);
+      }
+    }
     const safeContactSettings = includePrivate
       ? {
           enabled: contactSettings?.enabled === true,
@@ -94,6 +117,9 @@ export async function getPage(
         privateLinks: includePrivate ? parsed.privateLinks ?? [] : undefined,
         contactSchema: parsed.contactSchema ?? [],
         contactSettings: safeContactSettings,
+        accessControl: includePrivate
+          ? accessControl ?? { enabled: false }
+          : { enabled: accessControl?.enabled === true },
         theme: typeof parsed.theme === "string" ? parsed.theme : "classic",
         slugs: includePrivate
           ? parsed.slugs ?? (await getSlugsForPage(env, resolvedPageId))
@@ -116,4 +142,3 @@ function safeParseLinks(raw: string | null) {
     return [];
   }
 }
-
