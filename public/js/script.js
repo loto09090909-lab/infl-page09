@@ -1,9 +1,9 @@
-const APP_CONFIG = {
-    preferredApiBase: "https://infl-worker.loto09090909.workers.dev", // 본인의 Worker 주소
-    allowQueryApiBase: true
-};
+window.APP_CONFIG = window.APP_CONFIG || {};
 
-const APP_CONFIG = window.APP_CONFIG || {};
+window.APP_CONFIG.preferredApiBase = "https://infl-worker.loto09090909.workers.dev";
+window.APP_CONFIG.allowQueryApiBase = true;
+
+const APP_CONFIG = window.APP_CONFIG;
 
 const urlParams = new URLSearchParams(window.location.search);
 const queryApiBase = urlParams.get("api_base") || urlParams.get("apiBase");
