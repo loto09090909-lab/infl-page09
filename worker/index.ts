@@ -35,8 +35,14 @@ import {
   disableUserAccessCode,
   rotateUserAccessCode,
   updateUserPage,
+  acceptUserInvite,
+  createUserPageInvite,
+  listUserPageInvites,
+  listUserPageMembers,
+  removeUserPageMember,
+  revokeUserPageInvite,
 } from "./user-pages";
-import { getPrivatePage } from "./private-links";
+import { createRandomPrivateLink, getPrivatePage } from "./private-links";
 
 export default {
   async fetch(req: Request, env: any): Promise<Response> {
@@ -57,7 +63,12 @@ export default {
         return new Response(null, { status: 204, headers: corsHeaders });
       }
 
-    if (method === "GET" && path.startsWith("/api/pages/")) {
+    if (
+      method === "GET" &&
+      path.startsWith("/api/pages/") &&
+      !path.includes("/private/") &&
+      !path.endsWith("/random")
+    ) {
       const pageId = path.replace("/api/pages/", "");
       if (!pageId) {
         return errorResponse("pageId가 필요합니다", 400, corsHeaders);
@@ -99,6 +110,15 @@ export default {
       const pageId = decodeURIComponent(match[1]);
       const token = decodeURIComponent(match[2]);
       return getPrivatePage(req, env, corsHeaders, pageId, token);
+    }
+
+    if (method === "GET" && path.startsWith("/api/pages/") && path.endsWith("/random")) {
+      const match = path.match(/^\/api\/pages\/(.+)\/random$/);
+      if (!match) {
+        return errorResponse("Not Found", 404, corsHeaders);
+      }
+      const pageId = decodeURIComponent(match[1]);
+      return createRandomPrivateLink(req, env, corsHeaders, pageId);
     }
 
     if (method === "POST" && path === "/api/user/pages") {
@@ -144,6 +164,49 @@ export default {
       if (method === "DELETE") {
         return deleteUserPrivateLink(req, env, corsHeaders, pageId, token);
       }
+    }
+
+    const userMembersMatch = path.match(/^\/api\/user\/pages\/(.+)\/members$/);
+    if (userMembersMatch) {
+      const pageId = decodeURIComponent(userMembersMatch[1]);
+      if (method === "GET") {
+        return listUserPageMembers(req, env, corsHeaders, pageId);
+      }
+    }
+
+    const userMemberMatch = path.match(/^\/api\/user\/pages\/(.+)\/members\/(.+)$/);
+    if (userMemberMatch) {
+      const pageId = decodeURIComponent(userMemberMatch[1]);
+      const memberUserId = decodeURIComponent(userMemberMatch[2]);
+      if (method === "DELETE") {
+        return removeUserPageMember(req, env, corsHeaders, pageId, memberUserId);
+      }
+    }
+
+    const userInvitesMatch = path.match(/^\/api\/user\/pages\/(.+)\/invites$/);
+    if (userInvitesMatch) {
+      const pageId = decodeURIComponent(userInvitesMatch[1]);
+      if (method === "POST") {
+        return createUserPageInvite(req, env, corsHeaders, pageId);
+      }
+      if (method === "GET") {
+        return listUserPageInvites(req, env, corsHeaders, pageId);
+      }
+    }
+
+    const userInviteMatch = path.match(/^\/api\/user\/pages\/(.+)\/invites\/(.+)$/);
+    if (userInviteMatch) {
+      const pageId = decodeURIComponent(userInviteMatch[1]);
+      const token = decodeURIComponent(userInviteMatch[2]);
+      if (method === "DELETE") {
+        return revokeUserPageInvite(req, env, corsHeaders, pageId, token);
+      }
+    }
+
+    const userInviteAcceptMatch = path.match(/^\/api\/user\/invites\/(.+)\/accept$/);
+    if (userInviteAcceptMatch && method === "POST") {
+      const token = decodeURIComponent(userInviteAcceptMatch[1]);
+      return acceptUserInvite(req, env, corsHeaders, token);
     }
 
     const userContactMatch = path.match(/^\/api\/user\/pages\/(.+)\/contact-submissions$/);

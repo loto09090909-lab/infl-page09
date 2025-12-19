@@ -9,7 +9,14 @@ import {
 } from "./slug-map";
 import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
 import { authenticateExistingUser } from "./users";
-import { enforcePlanLimit, hasPrivateLinks, PlanLimitError } from "./plan-limits";
+import {
+  enforceContactFieldLimit,
+  enforcePlanLimit,
+  enforcePrivateLinkLimit,
+  hasPrivateLinks,
+  PlanLimitError,
+} from "./plan-limits";
+import { countActivePrivateLinks } from "./private-links";
 import {
   buildLoginIdentifier,
   clearLoginAttempts,
@@ -248,7 +255,14 @@ export async function pageAdminLogin(
     .first<{ user_id: string }>();
 
   if (!adminRow?.user_id) {
-    return errorResponse("페이지 관리자 계정을 찾을 수 없습니다", 404, headers);
+    const memberExists = await env.DB.prepare(
+      "SELECT 1 FROM page_members WHERE page_id = ? LIMIT 1"
+    )
+      .bind(canonicalPageId)
+      .first<{ \"1\": number }>();
+    if (!memberExists) {
+      return errorResponse("페이지 관리자 계정을 찾을 수 없습니다", 404, headers);
+    }
   }
 
   const result = await authenticateExistingUser(env, {
@@ -263,7 +277,13 @@ export async function pageAdminLogin(
     return errorResponse(result.error, result.status, headers);
   }
 
-  if (result.user.id !== adminRow.user_id) {
+  const memberRow = await env.DB.prepare(
+    "SELECT 1 FROM page_members WHERE page_id = ? AND user_id = ? LIMIT 1"
+  )
+    .bind(canonicalPageId, result.user.id)
+    .first<{ \"1\": number }>();
+
+  if (!memberRow && result.user.id !== adminRow?.user_id) {
     await recordFailedLogin(env, "page", loginIdentifier);
     return errorResponse("페이지 관리자 권한이 없습니다", 403, headers);
   }
@@ -450,10 +470,33 @@ export async function savePage(
         : "classic",
   };
 
+  const effectivePlan = typeof pageData.plan === "string" ? pageData.plan : "free";
+  try {
+    await enforceContactFieldLimit(env, effectivePlan, pageData.contactSchema?.length ?? 0);
+  } catch (error) {
+    if (error instanceof PlanLimitError) {
+      return errorResponse(error.message, error.status, headers);
+    }
+    throw error;
+  }
+
+  if (typeof body.plan === "string" && body.plan !== existingData.plan) {
+    try {
+      const activePrivateLinks = await countActivePrivateLinks(env, canonicalPageId);
+      await enforcePrivateLinkLimit(env, effectivePlan, activePrivateLinks);
+    } catch (error) {
+      if (error instanceof PlanLimitError) {
+        return errorResponse(error.message, error.status, headers);
+      }
+      throw error;
+    }
+  }
+
   const linksForPlan = [...pageData.links, ...(pageData.privateLinks ?? [])];
   if (hasPrivateLinks(linksForPlan)) {
     try {
-      await enforcePlanLimit(env, pageData.plan, "create_private_link");
+      await enforcePlanLimit(env, effectivePlan, "create_private_link");
+      await enforcePrivateLinkLimit(env, effectivePlan, pageData.privateLinks?.length ?? 0);
     } catch (error) {
       if (error instanceof PlanLimitError) {
         return errorResponse(error.message, error.status, headers);

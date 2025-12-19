@@ -110,6 +110,12 @@ async function provisionDefaultPage(env: any, userId: string, email: string) {
     .bind(pageId, userId)
     .run();
 
+  await env.DB.prepare(
+    "INSERT OR IGNORE INTO page_members (page_id, user_id, role) VALUES (?, ?, 'owner')"
+  )
+    .bind(pageId, userId)
+    .run();
+
   await replaceSlugMap(env, pageId, slugs);
 
   return pageId;
@@ -207,14 +213,15 @@ async function createUser(env: any, data: AuthBody): Promise<UserRow> {
   const userId = crypto.randomUUID();
   const passwordHash = data.password ? await hashPassword(data.password) : null;
   await env.DB.prepare(
-    "INSERT INTO users (id, email, password_hash, oauth_provider, oauth_id) VALUES (?, ?, ?, ?, ?)"
+    "INSERT INTO users (id, email, password_hash, oauth_provider, oauth_id, plan_id) VALUES (?, ?, ?, ?, ?, ?)"
   )
     .bind(
       userId,
       data.email!,
       passwordHash,
       data.oauthProvider ?? null,
-      data.oauthId ?? null
+      data.oauthId ?? null,
+      DEFAULT_PLAN
     )
     .run();
 

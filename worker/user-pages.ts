@@ -1,15 +1,34 @@
 import { getBearerToken, getSessionSubject } from "./auth";
 import { resolvePageId } from "./slug";
 import { findConflictingSlug, getSlugsForPage, normalizeSlugs, replaceSlugMap } from "./slug-map";
-import { enforcePlanLimit, hasPrivateLinks, PlanLimitError } from "./plan-limits";
+import {
+  enforceContactFieldLimit,
+  enforceMaxPages,
+  enforcePlanLimit,
+  enforcePrivateLinkLimit,
+  getPlanLimits,
+  getPagePlanId,
+  hasPrivateLinks,
+  PlanLimitError,
+} from "./plan-limits";
 import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
 import { countSubmissions, fetchSubmissions } from "./contact";
 import { getPageStats } from "./stats";
 import {
   createPrivateLink,
+  countActivePrivateLinks,
   listPrivateLinks,
   revokePrivateLink,
 } from "./private-links";
+import {
+  acceptInvite,
+  createInvite,
+  listInvites,
+  listMembers,
+  removeMember,
+  revokeInvite,
+} from "./page-members";
+import { recordAuditEvent } from "./audit";
 
 type CreatePageBody = {
   pageId?: string;
@@ -230,28 +249,58 @@ async function requireUserPageAccess(
   if ("error" in session) return session;
 
   const canonicalPageId = await resolvePageId(env, pageId);
-  const adminRow = await env.DB.prepare(
-    "SELECT 1 FROM page_admins WHERE page_id = ? AND user_id = ? LIMIT 1"
+  const memberRow = await env.DB.prepare(
+    "SELECT role FROM page_members WHERE page_id = ? AND user_id = ? LIMIT 1"
   )
     .bind(canonicalPageId, session.userId)
-    .first<{ "1": number }>();
+    .first<{ role: string }>();
 
-  if (!adminRow) {
-    return { error: errorResponse("페이지 관리자 권한이 없습니다", 403, headers) } as const;
+  if (!memberRow) {
+    const adminRow = await env.DB.prepare(
+      "SELECT 1 FROM page_admins WHERE page_id = ? AND user_id = ? LIMIT 1"
+    )
+      .bind(canonicalPageId, session.userId)
+      .first<{ "1": number }>();
+    if (!adminRow) {
+      return { error: errorResponse("페이지 관리자 권한이 없습니다", 403, headers) } as const;
+    }
+    return { userId: session.userId, pageId: canonicalPageId, role: "owner" } as const;
   }
 
-  return { userId: session.userId, pageId: canonicalPageId } as const;
+  return {
+    userId: session.userId,
+    pageId: canonicalPageId,
+    role: memberRow.role as "owner" | "editor" | "viewer",
+  } as const;
 }
 
 async function getPagePlan(env: any, pageId: string) {
-  const kvRaw = await env.PAGE_KV.get(`page:${pageId}`);
-  if (!kvRaw) return "free";
-  try {
-    const parsed = JSON.parse(kvRaw);
-    return typeof parsed?.plan === "string" ? parsed.plan : "free";
-  } catch (error) {
-    return "free";
+  const planId = await getPagePlanId(env, pageId);
+  return planId ?? "free";
+}
+
+async function getUserPlanId(env: any, userId: string) {
+  const row = await env.DB.prepare("SELECT plan_id FROM users WHERE id = ? LIMIT 1")
+    .bind(userId)
+    .first<{ plan_id: string | null }>();
+  return row?.plan_id ?? "free";
+}
+
+async function countOwnedPages(env: any, userId: string) {
+  const row = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM page_members WHERE user_id = ? AND role = 'owner'"
+  )
+    .bind(userId)
+    .first<{ count: number }>();
+  if (row && typeof row.count === "number") {
+    return Number(row.count);
   }
+  const fallback = await env.DB.prepare(
+    "SELECT COUNT(DISTINCT page_id) AS count FROM page_admins WHERE user_id = ?"
+  )
+    .bind(userId)
+    .first<{ count: number }>();
+  return Number(fallback?.count ?? 0);
 }
 
 function generateAccessCode() {
@@ -261,6 +310,18 @@ function generateAccessCode() {
 export async function createUserPage(req: Request, env: any, headers: HeadersInit) {
   const session = await requireUserSession(req, env, headers);
   if ("error" in session) return session.error;
+
+  const userPlan = await getUserPlanId(env, session.userId);
+  try {
+    await enforcePlanLimit(env, userPlan, "create_page");
+    const ownedCount = await countOwnedPages(env, session.userId);
+    await enforceMaxPages(env, userPlan, ownedCount);
+  } catch (error) {
+    if (error instanceof PlanLimitError) {
+      return errorResponse(error.message, error.status, headers);
+    }
+    throw error;
+  }
 
   const body = await parseJsonBody<CreatePageBody>(req);
   if (!body || typeof body.pageId !== "string" || !body.pageId.trim()) {
@@ -302,6 +363,15 @@ export async function createUserPage(req: Request, env: any, headers: HeadersIni
     return errorResponse(contactError, 400, headers);
   }
 
+  try {
+    await enforceContactFieldLimit(env, userPlan, contactSchema?.length ?? 0);
+  } catch (error) {
+    if (error instanceof PlanLimitError) {
+      return errorResponse(error.message, error.status, headers);
+    }
+    throw error;
+  }
+
   const { error: contactSettingsError, settings: contactSettings } =
     validateContactSettings(body.contactSettings);
   if (contactSettingsError) {
@@ -318,15 +388,7 @@ export async function createUserPage(req: Request, env: any, headers: HeadersIni
     return errorResponse(themeError, 400, headers);
   }
 
-  const plan = "free";
-  try {
-    await enforcePlanLimit(env, plan, "create_page");
-  } catch (error) {
-    if (error instanceof PlanLimitError) {
-      return errorResponse(error.message, error.status, headers);
-    }
-    throw error;
-  }
+  const plan = userPlan;
 
   const slugs = normalizeSlugs(body.slugs, pageId);
   if (body.slugs !== undefined) {
@@ -352,6 +414,7 @@ export async function createUserPage(req: Request, env: any, headers: HeadersIni
   if (hasPrivateLinks([...(publicLinks ?? []), ...combinedPrivateLinks])) {
     try {
       await enforcePlanLimit(env, plan, "create_private_link");
+      await enforcePrivateLinkLimit(env, plan, combinedPrivateLinks.length);
     } catch (error) {
       if (error instanceof PlanLimitError) {
         return errorResponse(error.message, error.status, headers);
@@ -393,7 +456,20 @@ export async function createUserPage(req: Request, env: any, headers: HeadersIni
     .bind(pageId, session.userId)
     .run();
 
+  await env.DB.prepare(
+    "INSERT OR IGNORE INTO page_members (page_id, user_id, role) VALUES (?, ?, 'owner')"
+  )
+    .bind(pageId, session.userId)
+    .run();
+
   await replaceSlugMap(env, pageId, slugs);
+
+  await recordAuditEvent(env, {
+    pageId,
+    actorUserId: session.userId,
+    action: "page.created",
+    metadata: { plan },
+  });
 
   return jsonResponse({ success: true, pageId }, 201, headers);
 }
@@ -455,6 +531,10 @@ export async function updateUserPage(
 ) {
   const access = await requireUserPageAccess(req, env, headers, pageId);
   if ("error" in access) return access.error;
+
+  if (access.role === "viewer") {
+    return errorResponse("페이지 편집 권한이 없습니다", 403, headers);
+  }
 
   const existingRaw = await env.PAGE_KV.get(`page:${access.pageId}`);
   if (!existingRaw) {
@@ -564,9 +644,20 @@ export async function updateUserPage(
         : "classic",
   };
 
+  const effectivePlan = typeof nextPage.plan === "string" ? nextPage.plan : "free";
+  try {
+    await enforceContactFieldLimit(env, effectivePlan, nextPage.contactSchema?.length ?? 0);
+  } catch (error) {
+    if (error instanceof PlanLimitError) {
+      return errorResponse(error.message, error.status, headers);
+    }
+    throw error;
+  }
+
   if (hasPrivateLinks([...nextPage.links, ...(nextPage.privateLinks ?? [])])) {
     try {
-      await enforcePlanLimit(env, nextPage.plan, "create_private_link");
+      await enforcePlanLimit(env, effectivePlan, "create_private_link");
+      await enforcePrivateLinkLimit(env, effectivePlan, nextPage.privateLinks?.length ?? 0);
     } catch (error) {
       if (error instanceof PlanLimitError) {
         return errorResponse(error.message, error.status, headers);
@@ -594,6 +685,12 @@ export async function updateUserPage(
     await replaceSlugMap(env, access.pageId, slugs);
   }
 
+  await recordAuditEvent(env, {
+    pageId: access.pageId,
+    actorUserId: access.userId,
+    action: "page.updated",
+  });
+
   return jsonResponse({ success: true, pageId: access.pageId }, 200, headers);
 }
 
@@ -605,6 +702,10 @@ export async function deleteUserPage(
 ) {
   const access = await requireUserPageAccess(req, env, headers, pageId);
   if ("error" in access) return access.error;
+
+  if (access.role !== "owner") {
+    return errorResponse("페이지 삭제 권한이 없습니다", 403, headers);
+  }
 
   const existing = await env.PAGE_KV.get(`page:${access.pageId}`);
   if (!existing) {
@@ -622,7 +723,112 @@ export async function deleteUserPage(
     .bind(access.pageId)
     .run();
 
+  await recordAuditEvent(env, {
+    pageId: access.pageId,
+    actorUserId: access.userId,
+    action: "page.deleted",
+  });
+
   return jsonResponse({ success: true, message: "Page deleted" }, 200, headers);
+}
+
+export async function listUserPageMembers(
+  req: Request,
+  env: any,
+  headers: HeadersInit,
+  pageId: string
+) {
+  const access = await requireUserPageAccess(req, env, headers, pageId);
+  if ("error" in access) return access.error;
+
+  const result = await listMembers(env, access.pageId, access.userId);
+  if ("error" in result) {
+    return errorResponse(result.error, result.status, headers);
+  }
+
+  return jsonResponse(result, 200, headers);
+}
+
+export async function createUserPageInvite(
+  req: Request,
+  env: any,
+  headers: HeadersInit,
+  pageId: string
+) {
+  const access = await requireUserPageAccess(req, env, headers, pageId);
+  if ("error" in access) return access.error;
+
+  return createInvite(req, env, headers, access.pageId, access.userId);
+}
+
+export async function listUserPageInvites(
+  req: Request,
+  env: any,
+  headers: HeadersInit,
+  pageId: string
+) {
+  const access = await requireUserPageAccess(req, env, headers, pageId);
+  if ("error" in access) return access.error;
+
+  const result = await listInvites(env, access.pageId, access.userId);
+  if ("error" in result) {
+    return errorResponse(result.error, result.status, headers);
+  }
+
+  return jsonResponse(result, 200, headers);
+}
+
+export async function revokeUserPageInvite(
+  req: Request,
+  env: any,
+  headers: HeadersInit,
+  pageId: string,
+  token: string
+) {
+  const access = await requireUserPageAccess(req, env, headers, pageId);
+  if ("error" in access) return access.error;
+
+  const result = await revokeInvite(env, access.pageId, token, access.userId);
+  if ("error" in result) {
+    return errorResponse(result.error, result.status, headers);
+  }
+
+  return jsonResponse(result, 200, headers);
+}
+
+export async function acceptUserInvite(
+  req: Request,
+  env: any,
+  headers: HeadersInit,
+  token: string
+) {
+  const session = await requireUserSession(req, env, headers);
+  if ("error" in session) return session.error;
+
+  const result = await acceptInvite(env, token, session.userId);
+  if ("error" in result) {
+    return errorResponse(result.error, result.status, headers);
+  }
+
+  return jsonResponse(result, 200, headers);
+}
+
+export async function removeUserPageMember(
+  req: Request,
+  env: any,
+  headers: HeadersInit,
+  pageId: string,
+  memberUserId: string
+) {
+  const access = await requireUserPageAccess(req, env, headers, pageId);
+  if ("error" in access) return access.error;
+
+  const result = await removeMember(env, access.pageId, memberUserId, access.userId);
+  if ("error" in result) {
+    return errorResponse(result.error, result.status, headers);
+  }
+
+  return jsonResponse(result, 200, headers);
 }
 
 export async function listUserPageContactSubmissions(
@@ -646,6 +852,16 @@ export async function exportUserPageContactSubmissions(
 ) {
   const access = await requireUserPageAccess(req, env, headers, pageId);
   if ("error" in access) return access.error;
+
+  try {
+    const planId = (await getPagePlanId(env, access.pageId)) ?? "free";
+    await enforcePlanLimit(env, planId, "export_csv");
+  } catch (error) {
+    if (error instanceof PlanLimitError) {
+      return errorResponse(error.message, error.status, headers);
+    }
+    throw error;
+  }
 
   const submissions = await fetchSubmissions(env, access.pageId, 200);
   const header = ["id", "pageId", "submittedAt", "ip", "userAgent", "answers"].join(",");
@@ -676,6 +892,16 @@ export async function getUserPageStats(
   const access = await requireUserPageAccess(req, env, headers, pageId);
   if ("error" in access) return access.error;
 
+  try {
+    const planId = (await getPagePlanId(env, access.pageId)) ?? "free";
+    await enforcePlanLimit(env, planId, "view_stats");
+  } catch (error) {
+    if (error instanceof PlanLimitError) {
+      return errorResponse(error.message, error.status, headers);
+    }
+    throw error;
+  }
+
   const stats = await getPageStats(env, access.pageId);
   if (!stats) {
     return errorResponse("Stats not found", 404, headers);
@@ -693,9 +919,15 @@ export async function createUserPrivateLink(
   const access = await requireUserPageAccess(req, env, headers, pageId);
   if ("error" in access) return access.error;
 
+  if (access.role === "viewer") {
+    return errorResponse("프라이빗 링크 생성 권한이 없습니다", 403, headers);
+  }
+
   const plan = await getPagePlan(env, access.pageId);
   try {
     await enforcePlanLimit(env, plan, "create_private_link");
+    const activeCount = await countActivePrivateLinks(env, access.pageId);
+    await enforcePrivateLinkLimit(env, plan, activeCount);
   } catch (error) {
     if (error instanceof PlanLimitError) {
       return errorResponse(error.message, error.status, headers);
@@ -703,7 +935,13 @@ export async function createUserPrivateLink(
     throw error;
   }
 
-  return createPrivateLink(req, env, headers, access.pageId);
+  const response = await createPrivateLink(req, env, headers, access.pageId);
+  await recordAuditEvent(env, {
+    pageId: access.pageId,
+    actorUserId: access.userId,
+    action: "private_link.created",
+  });
+  return response;
 }
 
 export async function listUserPrivateLinks(
@@ -728,7 +966,18 @@ export async function deleteUserPrivateLink(
   const access = await requireUserPageAccess(req, env, headers, pageId);
   if ("error" in access) return access.error;
 
-  return revokePrivateLink(req, env, headers, access.pageId, token);
+  if (access.role === "viewer") {
+    return errorResponse("프라이빗 링크 삭제 권한이 없습니다", 403, headers);
+  }
+
+  const response = await revokePrivateLink(req, env, headers, access.pageId, token);
+  await recordAuditEvent(env, {
+    pageId: access.pageId,
+    actorUserId: access.userId,
+    action: "private_link.revoked",
+    metadata: { token },
+  });
+  return response;
 }
 
 export async function rotateUserAccessCode(
@@ -739,6 +988,10 @@ export async function rotateUserAccessCode(
 ) {
   const access = await requireUserPageAccess(req, env, headers, pageId);
   if ("error" in access) return access.error;
+
+  if (access.role === "viewer") {
+    return errorResponse("접근 코드 변경 권한이 없습니다", 403, headers);
+  }
 
   const existingRaw = await env.PAGE_KV.get(`page:${access.pageId}`);
   if (!existingRaw) {
@@ -762,6 +1015,11 @@ export async function rotateUserAccessCode(
   };
 
   await env.PAGE_KV.put(`page:${access.pageId}`, JSON.stringify(updated));
+  await recordAuditEvent(env, {
+    pageId: access.pageId,
+    actorUserId: access.userId,
+    action: "access_code.rotated",
+  });
   return jsonResponse({ pageId: access.pageId, accessControl: updated.accessControl }, 200, headers);
 }
 
@@ -773,6 +1031,10 @@ export async function disableUserAccessCode(
 ) {
   const access = await requireUserPageAccess(req, env, headers, pageId);
   if ("error" in access) return access.error;
+
+  if (access.role === "viewer") {
+    return errorResponse("접근 코드 변경 권한이 없습니다", 403, headers);
+  }
 
   const existingRaw = await env.PAGE_KV.get(`page:${access.pageId}`);
   if (!existingRaw) {
@@ -792,6 +1054,11 @@ export async function disableUserAccessCode(
   };
 
   await env.PAGE_KV.put(`page:${access.pageId}`, JSON.stringify(updated));
+  await recordAuditEvent(env, {
+    pageId: access.pageId,
+    actorUserId: access.userId,
+    action: "access_code.disabled",
+  });
   return jsonResponse({ pageId: access.pageId, accessControl: updated.accessControl }, 200, headers);
 }
 
@@ -800,7 +1067,11 @@ export async function listUserPages(req: Request, env: any, headers: HeadersInit
   if ("error" in session) return session.error;
 
   const rows = await env.DB.prepare(
-    "SELECT pm.page_id, pm.name, pm.photo_url, pm.description, pm.links, pm.plan_id FROM page_admins pa JOIN page_meta pm ON pa.page_id = pm.page_id WHERE pa.user_id = ? ORDER BY pm.created_at DESC"
+    "SELECT pm.page_id, pm.name, pm.photo_url, pm.description, pm.links, pm.plan_id, pmem.role AS member_role " +
+      "FROM page_admins pa " +
+      "JOIN page_meta pm ON pa.page_id = pm.page_id " +
+      "LEFT JOIN page_members pmem ON pmem.page_id = pm.page_id AND pmem.user_id = pa.user_id " +
+      "WHERE pa.user_id = ? ORDER BY pm.created_at DESC"
   )
     .bind(session.userId)
     .all<{
@@ -810,6 +1081,7 @@ export async function listUserPages(req: Request, env: any, headers: HeadersInit
       description: string | null;
       links: string | null;
       plan_id: string | null;
+      member_role: string | null;
     }>();
 
   const items = await Promise.all(
@@ -824,11 +1096,17 @@ export async function listUserPages(req: Request, env: any, headers: HeadersInit
         }
       }
 
-      const [slugs, submissionsCount, stats] = await Promise.all([
+      const [slugs, submissionsCount, stats, planLimits] = await Promise.all([
         getSlugsForPage(env, row.page_id),
         countSubmissions(env, row.page_id),
         getPageStats(env, row.page_id),
+        getPlanLimits(env, plan ?? "free"),
       ]);
+
+      const safeStats =
+        planLimits.stats_retention_days && planLimits.stats_retention_days > 0
+          ? stats ?? { views: 0, admin_views: 0 }
+          : null;
 
       return {
         pageId: row.page_id,
@@ -841,7 +1119,8 @@ export async function listUserPages(req: Request, env: any, headers: HeadersInit
         plan,
         slugs,
         contactSubmissions: submissionsCount,
-        stats: stats ?? { views: 0, admin_views: 0 },
+        stats: safeStats,
+        role: row.member_role ?? "owner",
       };
     })
   );

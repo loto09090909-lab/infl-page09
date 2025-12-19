@@ -1,6 +1,7 @@
 import { getBearerToken, verifySessionToken } from "./auth";
 import { resolvePageId } from "./slug";
 import { errorResponse, jsonResponse } from "./utils";
+import { enforcePlanLimit, getPagePlanId, PlanLimitError } from "./plan-limits";
 
 type ContactField = {
   label: string;
@@ -379,6 +380,16 @@ export async function exportContactSubmissions(
 
   if (!pageTokenValid && !superTokenValid) {
     return errorResponse("인증이 필요합니다", 401, headers);
+  }
+
+  try {
+    const planId = (await getPagePlanId(env, canonicalPageId)) ?? "free";
+    await enforcePlanLimit(env, planId, "export_csv");
+  } catch (error) {
+    if (error instanceof PlanLimitError) {
+      return errorResponse(error.message, error.status, headers);
+    }
+    throw error;
   }
 
   const submissions = await fetchSubmissions(env, canonicalPageId, 200);

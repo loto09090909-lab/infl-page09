@@ -1,6 +1,12 @@
 import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
 import { resolvePageId } from "./slug";
 import { getBearerToken, verifySessionToken } from "./auth";
+import {
+  enforcePlanLimit,
+  enforcePrivateLinkLimit,
+  getPagePlanId,
+  PlanLimitError,
+} from "./plan-limits";
 
 type PrivateLinkRecord = {
   token: string;
@@ -8,6 +14,9 @@ type PrivateLinkRecord = {
   expiresAt?: string;
   maxUses?: number;
   uses: number;
+  status: "active" | "expired" | "usedup" | "revoked";
+  revokedAt?: string;
+  lastUsedAt?: string;
   note?: string;
 };
 
@@ -56,6 +65,48 @@ async function writeTokenList(env: any, pageId: string, list: PrivateLinkRecord[
   await env.PAGE_KV.put(privateListKey(pageId), JSON.stringify(list));
 }
 
+function computeStatus(record: PrivateLinkRecord) {
+  if (record.status === "revoked") return "revoked";
+  if (record.expiresAt) {
+    const expiresTime = Date.parse(record.expiresAt);
+    if (Number.isFinite(expiresTime) && Date.now() > expiresTime) {
+      return "expired";
+    }
+  }
+  if (record.maxUses && record.uses >= record.maxUses) {
+    return "usedup";
+  }
+  return "active";
+}
+
+async function persistPrivateLink(env: any, pageId: string, record: PrivateLinkRecord) {
+  await env.DB.prepare(
+    "INSERT OR REPLACE INTO private_links (page_id, token, status, created_at, expires_at, max_uses, uses, revoked_at, last_used_at, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  )
+    .bind(
+      pageId,
+      record.token,
+      record.status,
+      record.createdAt,
+      record.expiresAt ?? null,
+      record.maxUses ?? null,
+      record.uses ?? 0,
+      record.revokedAt ?? null,
+      record.lastUsedAt ?? null,
+      record.note ?? null
+    )
+    .run();
+}
+
+export async function countActivePrivateLinks(env: any, pageId: string) {
+  const row = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM private_links WHERE page_id = ? AND status = 'active'"
+  )
+    .bind(pageId)
+    .first<{ count: number }>();
+  return Number(row?.count ?? 0);
+}
+
 export async function createPrivateLink(
   req: Request,
   env: any,
@@ -77,12 +128,14 @@ export async function createPrivateLink(
     ...(maxUses ? { maxUses } : {}),
     ...(note ? { note } : {}),
     uses: 0,
+    status: "active",
   };
 
   const list = await readTokenList(env, pageId);
   list.unshift(record);
   await writeTokenList(env, pageId, list.slice(0, 200));
   await env.PAGE_KV.put(privateTokenKey(pageId, token), JSON.stringify(record));
+  await persistPrivateLink(env, pageId, record);
 
   return jsonResponse({ token, record }, 201, headers);
 }
@@ -94,7 +147,19 @@ export async function listPrivateLinks(
   pageId: string
 ) {
   const list = await readTokenList(env, pageId);
-  return jsonResponse({ items: list }, 200, headers);
+  const refreshed = await Promise.all(
+    list.map(async (record) => {
+      const status = computeStatus(record);
+      if (status !== record.status) {
+        const updated = { ...record, status };
+        await env.PAGE_KV.put(privateTokenKey(pageId, record.token), JSON.stringify(updated));
+        await persistPrivateLink(env, pageId, updated);
+        return updated;
+      }
+      return record;
+    })
+  );
+  return jsonResponse({ items: refreshed }, 200, headers);
 }
 
 export async function revokePrivateLink(
@@ -105,10 +170,71 @@ export async function revokePrivateLink(
   token: string
 ) {
   const list = await readTokenList(env, pageId);
-  const next = list.filter((item) => item.token !== token);
+  const next = list.map((item) => {
+    if (item.token !== token) return item;
+    return {
+      ...item,
+      status: "revoked" as const,
+      revokedAt: new Date().toISOString(),
+    };
+  });
   await writeTokenList(env, pageId, next);
-  await env.PAGE_KV.delete(privateTokenKey(pageId, token));
+  const updated = next.find((item) => item.token === token);
+  if (updated) {
+    await env.PAGE_KV.put(privateTokenKey(pageId, token), JSON.stringify(updated));
+    await persistPrivateLink(env, pageId, updated);
+  }
   return jsonResponse({ success: true }, 200, headers);
+}
+
+export async function createRandomPrivateLink(
+  req: Request,
+  env: any,
+  headers: HeadersInit,
+  pageId: string
+) {
+  const resolvedPageId = await resolvePageId(env, pageId);
+  const kvRaw = await env.PAGE_KV.get(`page:${resolvedPageId}`);
+  if (!kvRaw) {
+    return errorResponse("Page not found", 404, headers);
+  }
+  let parsed: any = null;
+  try {
+    parsed = JSON.parse(kvRaw);
+  } catch (error) {
+    parsed = null;
+  }
+
+  const accessControl = parsed?.accessControl ?? {};
+  if (accessControl?.enabled) {
+    const urlCode = new URL(req.url).searchParams.get("code");
+    const headerCode = req.headers.get("X-Page-Code");
+    const provided = headerCode || urlCode;
+    if (!provided || provided !== accessControl.code) {
+      return errorResponse("접근 코드가 필요합니다", 401, headers);
+    }
+  }
+
+  const planId = (await getPagePlanId(env, resolvedPageId)) ?? "free";
+  try {
+    await enforcePlanLimit(env, planId, "create_private_link");
+    const activeCount = await countActivePrivateLinks(env, resolvedPageId);
+    await enforcePrivateLinkLimit(env, planId, activeCount);
+  } catch (error) {
+    if (error instanceof PlanLimitError) {
+      return errorResponse(error.message, error.status, headers);
+    }
+    throw error;
+  }
+
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+  const fakeReq = new Request(req.url, {
+    method: "POST",
+    headers: req.headers,
+    body: JSON.stringify({ expiresAt, maxUses: 1, note: "random" }),
+  });
+
+  return createPrivateLink(fakeReq, env, headers, resolvedPageId);
 }
 
 export async function getPrivatePage(
@@ -136,21 +262,30 @@ export async function getPrivatePage(
     return errorResponse("프라이빗 링크가 유효하지 않습니다", 404, headers);
   }
 
-  if (record.expiresAt) {
-    const expiresTime = Date.parse(record.expiresAt);
-    if (Number.isFinite(expiresTime) && Date.now() > expiresTime) {
-      await env.PAGE_KV.delete(tokenKey);
-      return errorResponse("프라이빗 링크가 만료되었습니다", 410, headers);
-    }
+  const status = computeStatus(record);
+  if (status === "expired") {
+    const updated = { ...record, status };
+    await env.PAGE_KV.put(tokenKey, JSON.stringify(updated));
+    await persistPrivateLink(env, resolvedPageId, updated);
+    return errorResponse("프라이빗 링크가 만료되었습니다", 410, headers);
   }
 
-  if (record.maxUses && record.uses >= record.maxUses) {
-    await env.PAGE_KV.delete(tokenKey);
+  if (status === "usedup") {
+    const updated = { ...record, status };
+    await env.PAGE_KV.put(tokenKey, JSON.stringify(updated));
+    await persistPrivateLink(env, resolvedPageId, updated);
     return errorResponse("프라이빗 링크 사용 횟수가 초과되었습니다", 410, headers);
   }
 
+  if (status === "revoked") {
+    return errorResponse("프라이빗 링크가 비활성화되었습니다", 410, headers);
+  }
+
   record.uses += 1;
+  record.lastUsedAt = new Date().toISOString();
+  record.status = computeStatus(record);
   await env.PAGE_KV.put(tokenKey, JSON.stringify(record));
+  await persistPrivateLink(env, resolvedPageId, record);
 
   const kvRaw = await env.PAGE_KV.get(`page:${resolvedPageId}`);
   if (!kvRaw) {

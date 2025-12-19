@@ -8,7 +8,14 @@ import {
   replaceSlugMap,
 } from "./slug-map";
 import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
-import { enforcePlanLimit, hasPrivateLinks, PlanLimitError } from "./plan-limits";
+import {
+  enforceContactFieldLimit,
+  enforcePlanLimit,
+  enforcePrivateLinkLimit,
+  hasPrivateLinks,
+  PlanLimitError,
+} from "./plan-limits";
+import { countActivePrivateLinks } from "./private-links";
 import { findOrCreateUser, hashPassword, updateUserPassword, verifyPassword } from "./users";
 import {
   buildLoginIdentifier,
@@ -344,13 +351,16 @@ function normalizeCreatePageBody(
 }
 
 async function persistCreatePage(env: any, data: NormalizedCreatePage) {
-  await enforcePlanLimit(env, data.plan, "create_page");
+  const planId = typeof data.plan === "string" ? data.plan : "free";
+  await enforcePlanLimit(env, planId, "create_page");
+  await enforceContactFieldLimit(env, planId, data.contactSchema?.length ?? 0);
   if (data.slugs.length) {
-    await enforcePlanLimit(env, data.plan, "update_slug");
+    await enforcePlanLimit(env, planId, "update_slug");
   }
   const allLinks = [...(data.links ?? []), ...(data.privateLinks ?? [])];
   if (hasPrivateLinks(allLinks)) {
-    await enforcePlanLimit(env, data.plan, "create_private_link");
+    await enforcePlanLimit(env, planId, "create_private_link");
+    await enforcePrivateLinkLimit(env, planId, data.privateLinks?.length ?? 0);
   }
 
   const conflictingSlug = await findConflictingSlug(env, data.slugs, data.pageId);
@@ -921,9 +931,32 @@ export async function updatePage(
         : "classic",
   };
 
+  const effectivePlan = typeof updatedPage.plan === "string" ? updatedPage.plan : "free";
+  try {
+    await enforceContactFieldLimit(env, effectivePlan, updatedPage.contactSchema?.length ?? 0);
+  } catch (error) {
+    if (error instanceof PlanLimitError) {
+      return errorResponse(error.message, error.status, headers);
+    }
+    throw error;
+  }
+
+  if (body.plan !== undefined && body.plan !== existingPlan) {
+    try {
+      const activePrivateLinks = await countActivePrivateLinks(env, canonicalPageId);
+      await enforcePrivateLinkLimit(env, effectivePlan, activePrivateLinks);
+    } catch (error) {
+      if (error instanceof PlanLimitError) {
+        return errorResponse(error.message, error.status, headers);
+      }
+      throw error;
+    }
+  }
+
   if (hasPrivateLinks([...updatedPage.links, ...(updatedPage.privateLinks ?? [])])) {
     try {
-      await enforcePlanLimit(env, updatedPage.plan, "create_private_link");
+      await enforcePlanLimit(env, effectivePlan, "create_private_link");
+      await enforcePrivateLinkLimit(env, effectivePlan, updatedPage.privateLinks?.length ?? 0);
     } catch (error) {
       if (error instanceof PlanLimitError) {
         return errorResponse(error.message, error.status, headers);
