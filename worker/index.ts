@@ -17,21 +17,24 @@ import { login as userLogin, signup as userSignup } from "./users";
 
 export default {
   async fetch(req: Request, env: any): Promise<Response> {
-    const url = new URL(req.url);
-    const path = url.pathname;
-    const method = req.method;
-    const corsOptions: CorsOptions = {
-      allowedOrigins: (env.ALLOWED_ORIGINS ?? "*")
-        .split(",")
-        .map((origin: string) => origin.trim())
-        .filter(Boolean),
-    };
-    const corsHeaders = buildCorsHeaders(corsOptions, req.headers.get("Origin"));
+    // 1. 전역 에러 핸들러 추가
+    try {
+      const url = new URL(req.url);
+      const path = url.pathname;
+      const method = req.method;
 
-    // Preflight 처리
-    if (method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: corsHeaders });
-    }
+      // 2. CORS 안전하게 처리
+      const rawOrigins = env.ALLOWED_ORIGINS || "*";
+      const corsOptions: CorsOptions = {
+        allowedOrigins: typeof rawOrigins === 'string' 
+          ? rawOrigins.split(",").map(o => o.trim()).filter(Boolean)
+          : ["*"],
+      };
+      const corsHeaders = buildCorsHeaders(corsOptions, req.headers.get("Origin"));
+
+      if (method === "OPTIONS") {
+        return new Response(null, { status: 204, headers: corsHeaders });
+      }
 
     if (method === "GET" && path.startsWith("/api/pages/")) {
       const pageId = path.replace("/api/pages/", "");
