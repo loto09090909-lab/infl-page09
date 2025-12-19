@@ -1,4 +1,7 @@
 import { createSessionToken } from "./auth";
+import { enforcePlanLimit, PlanLimitError } from "./plan-limits";
+import { normalizeSlugs, replaceSlugMap, findConflictingSlug } from "./slug-map";
+import { slugify } from "./slug";
 import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
 
 export type UserRow = {
@@ -24,6 +27,8 @@ const LOCK_MILLISECONDS = 15 * 60 * 1000;
 const PBKDF2_ITERATIONS = 70_000;
 const PBKDF2_KEY_LENGTH = 32; // bytes
 const PBKDF2_PREFIX = "pbkdf2";
+const DEFAULT_PLAN = "free";
+const MAX_PAGE_ID_ATTEMPTS = 6;
 
 function bufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
@@ -41,6 +46,73 @@ function base64ToBuffer(value: string): ArrayBuffer {
     bytes[i] = binary.charCodeAt(i);
   }
   return bytes.buffer;
+}
+
+async function pageExists(env: any, pageId: string) {
+  const kv = await env.PAGE_KV.get(`page:${pageId}`);
+  if (kv) return true;
+  const row = await env.DB.prepare(
+    "SELECT page_id FROM page_meta WHERE page_id = ? LIMIT 1"
+  )
+    .bind(pageId)
+    .first<{ page_id: string }>();
+  return !!row;
+}
+
+function buildBasePageId(email: string) {
+  const localPart = email.split("@")[0] || "page";
+  return slugify(localPart) || "page";
+}
+
+async function generateUniquePageId(env: any, email: string) {
+  const base = buildBasePageId(email);
+  for (let i = 0; i < MAX_PAGE_ID_ATTEMPTS; i += 1) {
+    const suffix = i === 0 ? "" : `-${Math.floor(Math.random() * 10000)}`;
+    const candidate = `${base}${suffix}`;
+    if (!(await pageExists(env, candidate))) {
+      return candidate;
+    }
+  }
+  return `page-${crypto.randomUUID().slice(0, 8)}`;
+}
+
+async function provisionDefaultPage(env: any, userId: string, email: string) {
+  await enforcePlanLimit(env, DEFAULT_PLAN, "create_page");
+  const pageId = await generateUniquePageId(env, email);
+  const slugs = normalizeSlugs([], pageId);
+  const conflict = await findConflictingSlug(env, slugs, pageId);
+  if (conflict) {
+    throw new Error(`이미 다른 페이지에 사용 중인 슬러그입니다: ${conflict}`);
+  }
+
+  const profile = { name: email.split("@")[0] || "User" };
+  const pageData = {
+    profile,
+    links: [],
+    privateLinks: [],
+    contactSchema: [],
+    contactSettings: { enabled: false },
+    accessControl: { enabled: false },
+    slugs,
+    plan: DEFAULT_PLAN,
+    theme: "classic",
+  };
+
+  await env.PAGE_KV.put(`page:${pageId}`, JSON.stringify(pageData));
+
+  await env.DB.prepare(
+    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links, plan_id) VALUES (?, ?, ?, ?, ?, ?)"
+  )
+    .bind(pageId, profile.name ?? null, null, null, JSON.stringify([]), DEFAULT_PLAN)
+    .run();
+
+  await env.DB.prepare("INSERT OR IGNORE INTO page_admins (page_id, user_id) VALUES (?, ?)")
+    .bind(pageId, userId)
+    .run();
+
+  await replaceSlugMap(env, pageId, slugs);
+
+  return pageId;
 }
 
 export async function hashPassword(password: string) {
@@ -198,8 +270,17 @@ export async function signup(req: Request, env: any, headers: HeadersInit) {
   }
 
   const created = await createUser(env, { ...body, email });
+  let pageId: string | null = null;
+  try {
+    pageId = await provisionDefaultPage(env, created.id, email);
+  } catch (error) {
+    if (error instanceof PlanLimitError) {
+      return errorResponse(error.message, error.status, headers);
+    }
+    throw error;
+  }
   const session = await createSessionToken(env, "user", created.id);
-  return jsonResponse(session, 201, headers);
+  return jsonResponse({ ...session, pageId }, 201, headers);
 }
 
 export async function login(req: Request, env: any, headers: HeadersInit) {
