@@ -5,6 +5,7 @@ compatibility_date = "2025-12-14"
 # 환경 변수 추가 (CORS 에러 방지용)
 [vars]
 ALLOWED_ORIGINS = "https://infl-page09.pages.dev"
+TOKEN_SECRET = " ffqweirofjiodfpjq9tipodjdiogjqwjifpwiejropcvxnxcbncskdl"
 
 [[kv_namespaces]]
 binding = "PAGE_KV"
