@@ -18,6 +18,7 @@ import {
   createUserPage,
   deleteUserPage,
   getUserPage,
+  getUserPageStats,
   exportUserPageContactSubmissions,
   listUserPages,
   listUserPageContactSubmissions,
@@ -112,6 +113,12 @@ export default {
     if (userContactCsvMatch && method === "GET") {
       const pageId = decodeURIComponent(userContactCsvMatch[1]);
       return exportUserPageContactSubmissions(req, env, corsHeaders, pageId);
+    }
+
+    const userStatsMatch = path.match(/^\/api\/user\/pages\/(.+)\/stats$/);
+    if (userStatsMatch && method === "GET") {
+      const pageId = decodeURIComponent(userStatsMatch[1]);
+      return getUserPageStats(req, env, corsHeaders, pageId);
     }
 
     // --- 1. 관리자 API ---

@@ -1,6 +1,7 @@
 import { getBearerToken, verifySessionToken } from "./auth";
 import { getSlugsForPage } from "./slug-map";
 import { resolvePageId } from "./slug";
+import { recordPageView } from "./stats";
 import { errorResponse, jsonResponse } from "./utils";
 
 type PageMetaRow = {
@@ -22,6 +23,7 @@ export async function getPage(
   const isPageAdmin = await verifySessionToken(env, "page", token, resolvedPageId);
   const isSuperAdmin = await verifySessionToken(env, "super", token);
   const includePrivate = isPageAdmin || isSuperAdmin;
+  await recordPageView(env, resolvedPageId, includePrivate);
   const kvRaw = await env.PAGE_KV.get(`page:${resolvedPageId}`);
   let kvParsed: any = null;
   if (kvRaw) {
@@ -116,4 +118,3 @@ function safeParseLinks(raw: string | null) {
     return [];
   }
 }
-

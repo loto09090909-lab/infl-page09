@@ -4,6 +4,7 @@ import { findConflictingSlug, getSlugsForPage, normalizeSlugs, replaceSlugMap } 
 import { enforcePlanLimit, hasPrivateLinks, PlanLimitError } from "./plan-limits";
 import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
 import { fetchSubmissions } from "./contact";
+import { getPageStats } from "./stats";
 
 type CreatePageBody = {
   pageId?: string;
@@ -607,6 +608,23 @@ export async function exportUserPageContactSubmissions(
       "Content-Disposition": `attachment; filename="contact-submissions-${access.pageId}.csv"`,
     },
   });
+}
+
+export async function getUserPageStats(
+  req: Request,
+  env: any,
+  headers: HeadersInit,
+  pageId: string
+) {
+  const access = await requireUserPageAccess(req, env, headers, pageId);
+  if ("error" in access) return access.error;
+
+  const stats = await getPageStats(env, access.pageId);
+  if (!stats) {
+    return errorResponse("Stats not found", 404, headers);
+  }
+
+  return jsonResponse({ pageId: access.pageId, ...stats }, 200, headers);
 }
 
 export async function listUserPages(req: Request, env: any, headers: HeadersInit) {
