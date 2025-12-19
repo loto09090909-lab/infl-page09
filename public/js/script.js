@@ -64,7 +64,7 @@ function resolveApiBases() {
     }
 
     if (APP_CONFIG.usePagesDerivedBase !== false && window.location.hostname.endsWith('pages.dev')) {
-        const guessedWorker = window.location.origin.replace('.pages.dev', '.workers.dev');
+        const guessedWorker = window.location.origin.replace('.workers.dev');
         pushBase(guessedWorker);
     }
 
