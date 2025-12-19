@@ -5,6 +5,11 @@ import { enforcePlanLimit, hasPrivateLinks, PlanLimitError } from "./plan-limits
 import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
 import { countSubmissions, fetchSubmissions } from "./contact";
 import { getPageStats } from "./stats";
+import {
+  createPrivateLink,
+  listPrivateLinks,
+  revokePrivateLink,
+} from "./private-links";
 
 type CreatePageBody = {
   pageId?: string;
@@ -213,6 +218,17 @@ async function requireUserPageAccess(
   }
 
   return { userId: session.userId, pageId: canonicalPageId } as const;
+}
+
+async function getPagePlan(env: any, pageId: string) {
+  const kvRaw = await env.PAGE_KV.get(`page:${pageId}`);
+  if (!kvRaw) return "free";
+  try {
+    const parsed = JSON.parse(kvRaw);
+    return typeof parsed?.plan === "string" ? parsed.plan : "free";
+  } catch (error) {
+    return "free";
+  }
 }
 
 export async function createUserPage(req: Request, env: any, headers: HeadersInit) {
@@ -625,6 +641,53 @@ export async function getUserPageStats(
   }
 
   return jsonResponse({ pageId: access.pageId, ...stats }, 200, headers);
+}
+
+export async function createUserPrivateLink(
+  req: Request,
+  env: any,
+  headers: HeadersInit,
+  pageId: string
+) {
+  const access = await requireUserPageAccess(req, env, headers, pageId);
+  if ("error" in access) return access.error;
+
+  const plan = await getPagePlan(env, access.pageId);
+  try {
+    await enforcePlanLimit(env, plan, "create_private_link");
+  } catch (error) {
+    if (error instanceof PlanLimitError) {
+      return errorResponse(error.message, error.status, headers);
+    }
+    throw error;
+  }
+
+  return createPrivateLink(req, env, headers, access.pageId);
+}
+
+export async function listUserPrivateLinks(
+  req: Request,
+  env: any,
+  headers: HeadersInit,
+  pageId: string
+) {
+  const access = await requireUserPageAccess(req, env, headers, pageId);
+  if ("error" in access) return access.error;
+
+  return listPrivateLinks(req, env, headers, access.pageId);
+}
+
+export async function deleteUserPrivateLink(
+  req: Request,
+  env: any,
+  headers: HeadersInit,
+  pageId: string,
+  token: string
+) {
+  const access = await requireUserPageAccess(req, env, headers, pageId);
+  if ("error" in access) return access.error;
+
+  return revokePrivateLink(req, env, headers, access.pageId, token);
 }
 
 export async function listUserPages(req: Request, env: any, headers: HeadersInit) {

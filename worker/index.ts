@@ -19,11 +19,15 @@ import {
   deleteUserPage,
   getUserPage,
   getUserPageStats,
+  createUserPrivateLink,
+  deleteUserPrivateLink,
   exportUserPageContactSubmissions,
   listUserPages,
   listUserPageContactSubmissions,
+  listUserPrivateLinks,
   updateUserPage,
 } from "./user-pages";
+import { getPrivatePage } from "./private-links";
 
 export default {
   async fetch(req: Request, env: any): Promise<Response> {
@@ -78,6 +82,16 @@ export default {
       return userLogin(req, env, corsHeaders);
     }
 
+    if (method === "GET" && path.startsWith("/api/pages/") && path.includes("/private/")) {
+      const match = path.match(/^\/api\/pages\/(.+)\/private\/(.+)$/);
+      if (!match) {
+        return errorResponse("Not Found", 404, corsHeaders);
+      }
+      const pageId = decodeURIComponent(match[1]);
+      const token = decodeURIComponent(match[2]);
+      return getPrivatePage(req, env, corsHeaders, pageId, token);
+    }
+
     if (method === "POST" && path === "/api/user/pages") {
       return createUserPage(req, env, corsHeaders);
     }
@@ -100,6 +114,26 @@ export default {
 
       if (method === "DELETE") {
         return deleteUserPage(req, env, corsHeaders, pageId);
+      }
+    }
+
+    const userPrivateMatch = path.match(/^\/api\/user\/pages\/(.+)\/private-links$/);
+    if (userPrivateMatch) {
+      const pageId = decodeURIComponent(userPrivateMatch[1]);
+      if (method === "POST") {
+        return createUserPrivateLink(req, env, corsHeaders, pageId);
+      }
+      if (method === "GET") {
+        return listUserPrivateLinks(req, env, corsHeaders, pageId);
+      }
+    }
+
+    const userPrivateTokenMatch = path.match(/^\/api\/user\/pages\/(.+)\/private-links\/(.+)$/);
+    if (userPrivateTokenMatch) {
+      const pageId = decodeURIComponent(userPrivateTokenMatch[1]);
+      const token = decodeURIComponent(userPrivateTokenMatch[2]);
+      if (method === "DELETE") {
+        return deleteUserPrivateLink(req, env, corsHeaders, pageId, token);
       }
     }
 
