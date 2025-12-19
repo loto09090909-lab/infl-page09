@@ -58,6 +58,7 @@ export async function getPage(
         plan: kvParsed?.plan ?? null,
         contactSchema: kvParsed?.contactSchema ?? [],
         contactSettings: safeContactSettings,
+        theme: typeof kvParsed?.theme === "string" ? kvParsed.theme : "classic",
         privateLinks: includePrivate ? kvParsed?.privateLinks ?? [] : undefined,
         slugs: includePrivate
           ? kvParsed?.slugs ?? (await getSlugsForPage(env, resolvedPageId))
@@ -93,6 +94,7 @@ export async function getPage(
         privateLinks: includePrivate ? parsed.privateLinks ?? [] : undefined,
         contactSchema: parsed.contactSchema ?? [],
         contactSettings: safeContactSettings,
+        theme: typeof parsed.theme === "string" ? parsed.theme : "classic",
         slugs: includePrivate
           ? parsed.slugs ?? (await getSlugsForPage(env, resolvedPageId))
           : undefined,

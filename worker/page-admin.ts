@@ -32,14 +32,29 @@ type SavePageBody = {
   contactSchema?: unknown;
   contactSettings?: unknown;
   slugs?: unknown;
+  theme?: unknown;
 };
 
 const MAX_LINKS = 100;
+const ALLOWED_THEMES = new Set(["classic", "midnight", "sunset", "mint"]);
 
 function sanitizeString(value: unknown, maxLength: number): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed ? trimmed.slice(0, maxLength) : undefined;
+}
+
+function validateTheme(raw: unknown) {
+  if (raw === undefined) return { theme: undefined };
+  if (typeof raw !== "string") return { error: "theme은 문자열이어야 합니다" };
+
+  const trimmed = raw.trim();
+  if (!trimmed) return { theme: "classic" };
+  if (!ALLOWED_THEMES.has(trimmed)) {
+    return { error: "지원하지 않는 테마입니다" };
+  }
+
+  return { theme: trimmed };
 }
 
 function isHttpUrl(value: string): boolean {
@@ -334,6 +349,11 @@ export async function savePage(
     return errorResponse(contactSettingsError, 400, headers);
   }
 
+  const { error: themeError, theme } = validateTheme(body.theme);
+  if (themeError) {
+    return errorResponse(themeError, 400, headers);
+  }
+
   const existingRaw = await env.PAGE_KV.get(`page:${canonicalPageId}`);
   let existingData: any = {};
   if (existingRaw) {
@@ -390,6 +410,12 @@ export async function savePage(
       typeof body.plan === "string"
         ? sanitizeString(body.plan, 30)
         : existingData.plan ?? null,
+    theme:
+      typeof theme === "string"
+        ? theme
+        : typeof existingData.theme === "string"
+        ? existingData.theme
+        : "classic",
   };
 
   const linksForPlan = [...pageData.links, ...(pageData.privateLinks ?? [])];

@@ -30,6 +30,7 @@ type CreatePageBody = {
   links?: unknown;
   privateLinks?: unknown;
   slugs?: unknown;
+  theme?: unknown;
 };
 
 type UpdatePageBody = {
@@ -41,6 +42,7 @@ type UpdatePageBody = {
   contactSettings?: unknown;
   adminPassword?: string;
   slugs?: unknown;
+  theme?: unknown;
 };
 
 type LoginBody = {
@@ -61,6 +63,7 @@ type NormalizedCreatePage = {
   links: unknown[];
   privateLinks: unknown[];
   slugs: string[];
+  theme?: string;
 };
 
 type BulkCreateBody = {
@@ -77,6 +80,7 @@ class CreatePageError extends Error {
 }
 
 const MAX_LINKS = 100;
+const ALLOWED_THEMES = new Set(["classic", "midnight", "sunset", "mint"]);
 
 function sanitizeString(value: unknown, maxLength: number): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -222,6 +226,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+function validateTheme(raw: unknown) {
+  if (raw === undefined) return { theme: undefined };
+  if (typeof raw !== "string") return { error: "theme은 문자열이어야 합니다" };
+
+  const trimmed = raw.trim();
+  if (!trimmed) return { theme: "classic" };
+  if (!ALLOWED_THEMES.has(trimmed)) {
+    return { error: "지원하지 않는 테마입니다" };
+  }
+
+  return { theme: trimmed };
+}
+
 function normalizeCreatePageBody(
   body: CreatePageBody | null
 ): NormalizedCreatePage {
@@ -270,6 +287,11 @@ function normalizeCreatePageBody(
     throw new CreatePageError(contactSettingsError, 400);
   }
 
+  const { error: themeError, theme } = validateTheme(body.theme);
+  if (themeError) {
+    throw new CreatePageError(themeError, 400);
+  }
+
   return {
     pageId,
     profile: profile ?? {},
@@ -287,6 +309,7 @@ function normalizeCreatePageBody(
       ...(providedPrivate?.privateLinks ?? []),
     ],
     slugs: normalizeSlugs(body.slugs, pageId),
+    theme: typeof theme === "string" ? theme : "classic",
   };
 }
 
@@ -316,6 +339,7 @@ async function persistCreatePage(env: any, data: NormalizedCreatePage) {
     contactSettings: data.contactSettings ?? { enabled: false },
     slugs: data.slugs ?? [],
     plan: data.plan ?? null,
+    theme: typeof data.theme === "string" ? data.theme : "classic",
   };
 
   await env.PAGE_KV.put(`page:${data.pageId}`, JSON.stringify(pageData));
@@ -664,6 +688,7 @@ export async function getAdminPage(
   let contactSchema: unknown[] = [];
   let contactSettings: Record<string, unknown> | undefined;
   let slugs = await getSlugsForPage(env, row.page_id);
+  let theme: string | null = null;
   if (kvValue) {
     try {
       const parsed = JSON.parse(kvValue);
@@ -678,6 +703,7 @@ export async function getAdminPage(
       if (Array.isArray(parsed.slugs) && parsed.slugs.length) {
         slugs = parsed.slugs;
       }
+      theme = typeof parsed.theme === "string" ? parsed.theme : null;
     } catch (error) {
       plan = null;
     }
@@ -697,6 +723,7 @@ export async function getAdminPage(
       privateLinks,
       contactSchema,
       contactSettings,
+      theme: theme ?? "classic",
     },
     200,
     headers
@@ -820,6 +847,11 @@ export async function updatePage(
     return errorResponse(contactSettingsError, 400, headers);
   }
 
+  const { error: themeError, theme } = validateTheme(body.theme);
+  if (themeError) {
+    return errorResponse(themeError, 400, headers);
+  }
+
   const nextPublicLinks = linksProvided ? publicLinks ?? [] : existingData.links ?? [];
   const nextPrivateLinks = providedPrivate.provided
     ? providedPrivate.privateLinks ?? []
@@ -841,6 +873,12 @@ export async function updatePage(
         ? sanitizeString(body.plan, 30) ?? existingPlan ?? null
         : body.plan ?? existingPlan ?? null,
     slugs: slugs ?? existingData.slugs ?? [],
+    theme:
+      typeof theme === "string"
+        ? theme
+        : typeof existingData.theme === "string"
+        ? existingData.theme
+        : "classic",
   };
 
   if (hasPrivateLinks([...updatedPage.links, ...(updatedPage.privateLinks ?? [])])) {

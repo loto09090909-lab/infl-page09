@@ -64,6 +64,18 @@
             </div>
         </section>
 
+        <section class="card theme-card">
+            <div class="card-header">
+                <div>
+                    <p class="eyebrow">테마</p>
+                    <h3>페이지 색상/스타일 선택</h3>
+                    <p class="help-text">방문자가 보는 사용자 페이지의 배경·버튼 색상을 미리 골라 적용하세요.</p>
+                </div>
+            </div>
+            <div id="theme-options" class="theme-grid"></div>
+            <p class="help-text">테마는 저장 후 실사용 페이지에도 즉시 반영됩니다.</p>
+        </section>
+
         <section class="card slug-card">
             <div class="card-header">
                 <div>
@@ -198,15 +210,25 @@
                     <h3>사용자에게 보이는 모습</h3>
                 </div>
             </div>
-            <div class="preview">
-                <div class="profile">
+            <div class="preview theme-scope">
+                <section class="user-card preview-user-card">
+                <div class="profile user-profile">
                     <img class="profile-photo" alt="프로필 사진">
                     <p class="profile-description"></p>
                 </div>
-                <div class="links">
+                <div class="links user-links">
                     <h3>링크</h3>
                     <ul id="links-list"></ul>
                 </div>
+                <section class="contact user-contact" id="user-contact-section" style="display: none;">
+                    <h3>문의하기</h3>
+                    <p class="help-text" id="user-contact-help"></p>
+                    <form id="user-contact-form" class="contact-form" style="display: none;">
+                        <div id="user-contact-fields" class="contact-field-stack"></div>
+                    </form>
+                    <div id="user-contact-status" class="status-banner" style="display: none;"></div>
+                </section>
+                </section>
             </div>
         </section>
     </main>
