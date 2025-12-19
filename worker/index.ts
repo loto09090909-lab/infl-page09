@@ -179,5 +179,5 @@ export default {
     }
 
     return errorResponse("Not Found", 404, corsHeaders);
-  },
+  }
 };
