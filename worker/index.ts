@@ -179,5 +179,20 @@ export default {
     }
 
     return errorResponse("Not Found", 404, corsHeaders);
-  }
+
+    } catch (err: any) {
+      // 에러 발생 시 상세 메시지 반환 (디버깅용)
+      return new Response(JSON.stringify({ 
+        error: "Worker Runtime Error", 
+        message: err.message,
+        stack: err.stack 
+      }), {
+        status: 500,
+        headers: { 
+          "Content-Type": "application/json", 
+          "Access-Control-Allow-Origin": "*" 
+        }
+      });
+    }
+  },
 };
