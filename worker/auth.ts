@@ -65,12 +65,8 @@ async function parseAndVerifyToken(secret: string, token: string): Promise<Signe
   }
 }
 
-function getSessionSecret(env: any) {
-  const secret = env.TOKEN_SECRET || env.SESSION_SECRET;
-  if (!secret) {
-    throw new Error("TOKEN_SECRET 환경변수가 설정되어야 합니다");
-  }
-  return secret;
+function getSessionSecret(env: any): string | null {
+  return env.TOKEN_SECRET || env.SESSION_SECRET || null;
 }
 
 async function verifyLegacySession(
@@ -86,7 +82,12 @@ async function verifyLegacySession(
 
   try {
     const parsed = JSON.parse(record);
-    return parsed.subject === expectedSubject;
+    if (parsed.subject !== expectedSubject) return false;
+    if (parsed.exp && typeof parsed.exp === "number") {
+      const now = Math.floor(Date.now() / 1000);
+      if (parsed.exp <= now) return false;
+    }
+    return true;
   } catch (error) {
     return false;
   }
@@ -104,15 +105,27 @@ export async function createSessionToken(
 ): Promise<{ token: string; expiresIn: number }> {
   const secret = getSessionSecret(env);
   const now = Math.floor(Date.now() / 1000);
-  const payload: SignedPayload = {
-    role,
-    sub: subject,
-    iat: now,
-    exp: now + ttlSeconds,
-    jti: crypto.randomUUID(),
-  };
+  const exp = now + ttlSeconds;
 
-  const token = await signToken(secret, payload);
+  if (secret) {
+    const payload: SignedPayload = {
+      role,
+      sub: subject,
+      iat: now,
+      exp,
+      jti: crypto.randomUUID(),
+    };
+
+    const token = await signToken(secret, payload);
+    return { token, expiresIn: ttlSeconds };
+  }
+
+  const token = crypto.randomUUID();
+  await env.PAGE_KV.put(
+    `session:${role}:${token}`,
+    JSON.stringify({ subject, exp }),
+    { expirationTtl: ttlSeconds }
+  );
   return { token, expiresIn: ttlSeconds };
 }
 
@@ -125,14 +138,16 @@ export async function verifySessionToken(
   if (!token) return false;
 
   const secret = getSessionSecret(env);
-  const payload = await parseAndVerifyToken(secret, token);
-  if (payload) {
-    const now = Math.floor(Date.now() / 1000);
-    if (payload.exp <= now) return false;
-    if (payload.role !== role) return false;
-    if (expectedSubject && payload.sub !== expectedSubject) return false;
-    if (await isRevoked(env, payload.jti)) return false;
-    return true;
+  if (secret) {
+    const payload = await parseAndVerifyToken(secret, token);
+    if (payload) {
+      const now = Math.floor(Date.now() / 1000);
+      if (payload.exp <= now) return false;
+      if (payload.role !== role) return false;
+      if (expectedSubject && payload.sub !== expectedSubject) return false;
+      if (await isRevoked(env, payload.jti)) return false;
+      return true;
+    }
   }
 
   return verifyLegacySession(env, role, token, expectedSubject);
@@ -141,10 +156,12 @@ export async function verifySessionToken(
 export async function revokeSessionToken(env: any, role: SessionRole, token: string | null) {
   if (!token) return;
   const secret = getSessionSecret(env);
-  const payload = await parseAndVerifyToken(secret, token);
-  if (payload) {
-    await env.PAGE_KV.put(`revoked:${payload.jti}`, "1", { expiration: payload.exp });
-    return;
+  if (secret) {
+    const payload = await parseAndVerifyToken(secret, token);
+    if (payload) {
+      await env.PAGE_KV.put(`revoked:${payload.jti}`, "1", { expiration: payload.exp });
+      return;
+    }
   }
 
   await env.PAGE_KV.delete(`session:${role}:${token}`);
