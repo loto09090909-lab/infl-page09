@@ -3,7 +3,7 @@ import { resolvePageId } from "./slug";
 import { findConflictingSlug, getSlugsForPage, normalizeSlugs, replaceSlugMap } from "./slug-map";
 import { enforcePlanLimit, hasPrivateLinks, PlanLimitError } from "./plan-limits";
 import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
-import { fetchSubmissions } from "./contact";
+import { countSubmissions, fetchSubmissions } from "./contact";
 import { getPageStats } from "./stats";
 
 type CreatePageBody = {
@@ -654,6 +654,13 @@ export async function listUserPages(req: Request, env: any, headers: HeadersInit
           plan = null;
         }
       }
+
+      const [slugs, submissionsCount, stats] = await Promise.all([
+        getSlugsForPage(env, row.page_id),
+        countSubmissions(env, row.page_id),
+        getPageStats(env, row.page_id),
+      ]);
+
       return {
         pageId: row.page_id,
         profile: {
@@ -663,7 +670,9 @@ export async function listUserPages(req: Request, env: any, headers: HeadersInit
         },
         links: safeParseLinks(row.links),
         plan,
-        slugs: await getSlugsForPage(env, row.page_id),
+        slugs,
+        contactSubmissions: submissionsCount,
+        stats: stats ?? { views: 0, admin_views: 0 },
       };
     })
   );
