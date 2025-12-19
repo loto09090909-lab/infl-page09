@@ -65,6 +65,39 @@ async function parseAndVerifyToken(secret: string, token: string): Promise<Signe
   }
 }
 
+export async function getSessionSubject(
+  env: any,
+  role: SessionRole,
+  token: string | null
+): Promise<string | null> {
+  if (!token) return null;
+
+  const secret = getSessionSecret(env);
+  if (secret) {
+    const payload = await parseAndVerifyToken(secret, token);
+    if (!payload) return null;
+    const now = Math.floor(Date.now() / 1000);
+    if (payload.exp <= now) return null;
+    if (payload.role !== role) return null;
+    if (await isRevoked(env, payload.jti)) return null;
+    return payload.sub;
+  }
+
+  const record = await env.PAGE_KV.get(`session:${role}:${token}`);
+  if (!record) return null;
+  try {
+    const parsed = JSON.parse(record);
+    if (!parsed?.subject) return null;
+    if (parsed.exp && typeof parsed.exp === "number") {
+      const now = Math.floor(Date.now() / 1000);
+      if (parsed.exp <= now) return null;
+    }
+    return parsed.subject;
+  } catch (error) {
+    return null;
+  }
+}
+
 function getSessionSecret(env: any): string | null {
   return env.TOKEN_SECRET || env.SESSION_SECRET || null;
 }

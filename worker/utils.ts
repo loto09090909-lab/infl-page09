@@ -38,6 +38,15 @@ export function errorResponse(message: string, status = 400, headers: HeadersIni
   return jsonResponse({ error: message }, status, headers);
 }
 
+export function errorResponseWithCode(
+  message: string,
+  code: string,
+  status = 400,
+  headers: HeadersInit = {}
+): Response {
+  return jsonResponse({ error: message, code }, status, headers);
+}
+
 export async function parseJsonBody<T>(req: Request): Promise<T | null> {
   try {
     return await req.json<T>();

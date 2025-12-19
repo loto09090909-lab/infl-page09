@@ -7,8 +7,14 @@ import {
   normalizeSlugs,
   replaceSlugMap,
 } from "./slug-map";
-import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
-import { enforcePlanLimit, hasPrivateLinks, PlanLimitError } from "./plan-limits";
+import { errorResponse, errorResponseWithCode, jsonResponse, parseJsonBody } from "./utils";
+import {
+  enforceContactFieldLimit,
+  enforcePlanLimit,
+  enforcePrivateLinkLimit,
+  hasPrivateLinks,
+  PlanLimitError,
+} from "./plan-limits";
 import { findOrCreateUser, hashPassword, updateUserPassword, verifyPassword } from "./users";
 import {
   buildLoginIdentifier,
@@ -22,6 +28,7 @@ type CreatePageBody = {
   profile?: unknown;
   contactSchema?: unknown;
   contactSettings?: unknown;
+  accessControl?: unknown;
   adminEmail: string;
   adminPassword?: string;
   adminOauthProvider?: string;
@@ -40,6 +47,7 @@ type UpdatePageBody = {
   privateLinks?: unknown;
   contactSchema?: unknown;
   contactSettings?: unknown;
+  accessControl?: unknown;
   adminPassword?: string;
   slugs?: unknown;
   theme?: unknown;
@@ -55,6 +63,7 @@ type NormalizedCreatePage = {
   profile: Record<string, unknown>;
   contactSchema: unknown[];
   contactSettings: Record<string, unknown>;
+  accessControl: Record<string, unknown>;
   adminEmail: string;
   adminPassword?: string;
   adminOauthProvider?: string;
@@ -175,6 +184,27 @@ function validateContactSettings(raw: unknown) {
   };
 }
 
+function validateAccessControl(raw: unknown) {
+  if (raw === undefined) return { accessControl: undefined };
+  if (!raw || typeof raw !== "object") {
+    return { error: "accessControl은 객체여야 합니다" };
+  }
+
+  const enabled = (raw as any).enabled === true;
+  const code = sanitizeString((raw as any).code, 80);
+
+  if (enabled && !code) {
+    return { error: "accessControl.enabled가 true이면 code가 필요합니다" };
+  }
+
+  return {
+    accessControl: {
+      enabled,
+      ...(code ? { code } : {}),
+    },
+  };
+}
+
 function validateLinks(rawLinks: unknown, defaultPrivate = false) {
   if (rawLinks === undefined) return { publicLinks: undefined, privateLinks: undefined, provided: false };
   if (!Array.isArray(rawLinks)) {
@@ -287,6 +317,11 @@ function normalizeCreatePageBody(
     throw new CreatePageError(contactSettingsError, 400);
   }
 
+  const { error: accessError, accessControl } = validateAccessControl(body.accessControl);
+  if (accessError) {
+    throw new CreatePageError(accessError, 400);
+  }
+
   const { error: themeError, theme } = validateTheme(body.theme);
   if (themeError) {
     throw new CreatePageError(themeError, 400);
@@ -297,6 +332,7 @@ function normalizeCreatePageBody(
     profile: profile ?? {},
     contactSchema: contactSchema ?? [],
     contactSettings: contactSettings ?? { enabled: false },
+    accessControl: accessControl ?? { enabled: false },
     adminEmail: body.adminEmail.trim().toLowerCase(),
     adminPassword: body.adminPassword,
     adminOauthProvider: body.adminOauthProvider,
@@ -314,13 +350,16 @@ function normalizeCreatePageBody(
 }
 
 async function persistCreatePage(env: any, data: NormalizedCreatePage) {
-  await enforcePlanLimit(env, data.plan, "create_page");
+  const planId = typeof data.plan === "string" ? data.plan : "free";
+  await enforcePlanLimit(env, planId, "create_page");
+  await enforceContactFieldLimit(env, planId, data.contactSchema?.length ?? 0);
   if (data.slugs.length) {
-    await enforcePlanLimit(env, data.plan, "update_slug");
+    await enforcePlanLimit(env, planId, "update_slug");
   }
   const allLinks = [...(data.links ?? []), ...(data.privateLinks ?? [])];
   if (hasPrivateLinks(allLinks)) {
-    await enforcePlanLimit(env, data.plan, "create_private_link");
+    await enforcePlanLimit(env, planId, "create_private_link");
+    await enforcePrivateLinkLimit(env, planId, data.privateLinks?.length ?? 0);
   }
 
   const conflictingSlug = await findConflictingSlug(env, data.slugs, data.pageId);
@@ -337,6 +376,7 @@ async function persistCreatePage(env: any, data: NormalizedCreatePage) {
     privateLinks: Array.isArray(data.privateLinks) ? data.privateLinks : [],
     contactSchema: Array.isArray(data.contactSchema) ? data.contactSchema : [],
     contactSettings: data.contactSettings ?? { enabled: false },
+    accessControl: data.accessControl ?? { enabled: false },
     slugs: data.slugs ?? [],
     plan: data.plan ?? null,
     theme: typeof data.theme === "string" ? data.theme : "classic",
@@ -360,14 +400,15 @@ async function persistCreatePage(env: any, data: NormalizedCreatePage) {
     .run();
 
   await env.DB.prepare(
-    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
+    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links, plan_id) VALUES (?, ?, ?, ?, ?, ?)"
   )
     .bind(
       data.pageId,
       (data.profile as any)?.name ?? null,
       (data.profile as any)?.photoUrl ?? null,
       (data.profile as any)?.description ?? null,
-      JSON.stringify((data as any).links ?? [])
+      JSON.stringify((data as any).links ?? []),
+      typeof data.plan === "string" ? data.plan : "free"
     )
     .run();
 
@@ -501,7 +542,7 @@ export async function createPage(
       return errorResponse(error.message, error.status, headers);
     }
     if (error instanceof PlanLimitError) {
-      return errorResponse(error.message, error.status, headers);
+      return errorResponseWithCode(error.message, "PLAN_LIMIT_EXCEEDED", error.status, headers);
     }
     throw error;
   }
@@ -608,7 +649,7 @@ export async function listPages(
     : [pageSize, offset];
 
   let dataStmt = env.DB.prepare(
-    `SELECT DISTINCT pm.page_id, pm.name, pm.photo_url, pm.description, pm.links ${baseQuery} ORDER BY pm.page_id LIMIT ? OFFSET ?`
+    `SELECT DISTINCT pm.page_id, pm.name, pm.photo_url, pm.description, pm.links, pm.plan_id ${baseQuery} ORDER BY pm.page_id LIMIT ? OFFSET ?`
   );
   if (dataParams.length) {
     dataStmt = dataStmt.bind(...dataParams);
@@ -620,17 +661,18 @@ export async function listPages(
     photo_url: string | null;
     description: string | null;
     links: string | null;
+    plan_id: string | null;
   }>();
 
   const mapped = await Promise.all(
     (dbRows?.results ?? []).map(async (row) => {
       const kvValue = await env.PAGE_KV.get(`page:${row.page_id}`);
-      let plan: string | null = null;
+      let plan: string | null = (row as any).plan_id ?? null;
       if (kvValue) {
         try {
-          plan = JSON.parse(kvValue).plan ?? null;
+          plan = JSON.parse(kvValue).plan ?? plan;
         } catch (error) {
-          plan = null;
+          plan = plan ?? null;
         }
       }
 
@@ -667,7 +709,7 @@ export async function getAdminPage(
 ): Promise<Response> {
   const canonicalPageId = await resolvePageId(env, pageId);
   const row = await env.DB.prepare(
-    "SELECT page_id, name, photo_url, description, links FROM page_meta WHERE page_id = ? LIMIT 1"
+    "SELECT page_id, name, photo_url, description, links, plan_id FROM page_meta WHERE page_id = ? LIMIT 1"
   )
     .bind(canonicalPageId)
     .first<{
@@ -676,6 +718,7 @@ export async function getAdminPage(
       photo_url: string | null;
       description: string | null;
       links: string | null;
+      plan_id: string | null;
     }>();
 
   if (!row) {
@@ -683,7 +726,7 @@ export async function getAdminPage(
   }
 
   const kvValue = await env.PAGE_KV.get(`page:${row.page_id}`);
-  let plan: string | null = null;
+  let plan: string | null = row?.plan_id ?? null;
   let privateLinks: unknown[] = [];
   let contactSchema: unknown[] = [];
   let contactSettings: Record<string, unknown> | undefined;
@@ -718,7 +761,7 @@ export async function getAdminPage(
         description: row.description,
       },
       links: safeParseLinks(row.links),
-      plan,
+      plan: plan ?? row.plan_id ?? null,
       slugs,
       privateLinks,
       contactSchema,
@@ -802,7 +845,7 @@ export async function updatePage(
       await enforcePlanLimit(env, body.plan ?? existingPlan, "update_slug");
     } catch (error) {
       if (error instanceof PlanLimitError) {
-        return errorResponse(error.message, error.status, headers);
+        return errorResponseWithCode(error.message, "PLAN_LIMIT_EXCEEDED", error.status, headers);
       }
       throw error;
     }
@@ -847,6 +890,11 @@ export async function updatePage(
     return errorResponse(contactSettingsError, 400, headers);
   }
 
+  const { error: accessError, accessControl } = validateAccessControl(body.accessControl);
+  if (accessError) {
+    return errorResponse(accessError, 400, headers);
+  }
+
   const { error: themeError, theme } = validateTheme(body.theme);
   if (themeError) {
     return errorResponse(themeError, 400, headers);
@@ -868,6 +916,7 @@ export async function updatePage(
         ? schema ?? []
         : existingData.contactSchema ?? [],
     contactSettings: contactSettings ?? existingData.contactSettings ?? { enabled: false },
+    accessControl: accessControl ?? existingData.accessControl ?? { enabled: false },
     plan:
       typeof body.plan === "string"
         ? sanitizeString(body.plan, 30) ?? existingPlan ?? null
@@ -881,12 +930,27 @@ export async function updatePage(
         : "classic",
   };
 
-  if (hasPrivateLinks([...updatedPage.links, ...(updatedPage.privateLinks ?? [])])) {
+  const effectivePlan = typeof updatedPage.plan === "string" ? updatedPage.plan : "free";
+  if (contactProvided || schema !== undefined) {
     try {
-      await enforcePlanLimit(env, updatedPage.plan, "create_private_link");
+      await enforceContactFieldLimit(env, effectivePlan, updatedPage.contactSchema?.length ?? 0);
     } catch (error) {
       if (error instanceof PlanLimitError) {
-        return errorResponse(error.message, error.status, headers);
+        return errorResponseWithCode(error.message, "PLAN_LIMIT_EXCEEDED", error.status, headers);
+      }
+      throw error;
+    }
+  }
+
+  if (hasPrivateLinks([...updatedPage.links, ...(updatedPage.privateLinks ?? [])])) {
+    try {
+      await enforcePlanLimit(env, effectivePlan, "create_private_link");
+      if (providedPrivate.provided || linksProvided) {
+        await enforcePrivateLinkLimit(env, effectivePlan, updatedPage.privateLinks?.length ?? 0);
+      }
+    } catch (error) {
+      if (error instanceof PlanLimitError) {
+        return errorResponseWithCode(error.message, "PLAN_LIMIT_EXCEEDED", error.status, headers);
       }
       throw error;
     }
@@ -907,15 +971,16 @@ export async function updatePage(
   }
 
   await env.DB.prepare(
-    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
+    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links, plan_id) VALUES (?, ?, ?, ?, ?, ?)"
   )
     .bind(
       canonicalPageId,
       (updatedPage.profile as any)?.name ?? null,
       (updatedPage.profile as any)?.photoUrl ?? null,
       (updatedPage.profile as any)?.description ?? null,
-      JSON.stringify(updatedPage.links)
-  )
+      JSON.stringify(updatedPage.links),
+      typeof updatedPage.plan === "string" ? updatedPage.plan : "free"
+    )
     .run();
 
   if (slugs) {

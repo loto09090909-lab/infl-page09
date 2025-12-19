@@ -1,5 +1,12 @@
 import { getBearerToken, verifySessionToken } from "./auth";
-import { pageAdminLogin, pageAdminLogout, savePage, verifyPageSession } from "./page-admin";
+import {
+  pageAdminLogin,
+  pageAdminLogout,
+  disableAccessCode,
+  rotateAccessCode,
+  savePage,
+  verifyPageSession,
+} from "./page-admin";
 import {
   createPage,
   bulkCreatePages,
@@ -14,6 +21,29 @@ import {
 import { getPage } from "./page-view";
 import { buildCorsHeaders, CorsOptions, errorResponse, jsonResponse } from "./utils";
 import { login as userLogin, signup as userSignup } from "./users";
+import {
+  createUserPage,
+  deleteUserPage,
+  getUserPage,
+  getUserPageStats,
+  createUserPrivateLink,
+  deleteUserPrivateLink,
+  exportUserPageContactSubmissions,
+  listUserPages,
+  listUserPageContactSubmissions,
+  listUserPrivateLinks,
+  disableUserAccessCode,
+  rotateUserAccessCode,
+  updateUserPage,
+  acceptUserInvite,
+  createUserPageInvite,
+  listUserPageInvites,
+  listUserPageMembers,
+  removeUserPageMember,
+  revokeUserPageInvite,
+  getUserPagePlanStatus,
+} from "./user-pages";
+import { createRandomPrivateLink, getPrivatePage } from "./private-links";
 
 export default {
   async fetch(req: Request, env: any): Promise<Response> {
@@ -34,7 +64,12 @@ export default {
         return new Response(null, { status: 204, headers: corsHeaders });
       }
 
-    if (method === "GET" && path.startsWith("/api/pages/")) {
+    if (
+      method === "GET" &&
+      path.startsWith("/api/pages/") &&
+      !path.includes("/private/") &&
+      !path.endsWith("/random")
+    ) {
       const pageId = path.replace("/api/pages/", "");
       if (!pageId) {
         return errorResponse("pageId가 필요합니다", 400, corsHeaders);
@@ -66,6 +101,149 @@ export default {
 
     if (method === "POST" && path === "/api/users/login") {
       return userLogin(req, env, corsHeaders);
+    }
+
+    if (method === "GET" && path.startsWith("/api/pages/") && path.includes("/private/")) {
+      const match = path.match(/^\/api\/pages\/(.+)\/private\/(.+)$/);
+      if (!match) {
+        return errorResponse("Not Found", 404, corsHeaders);
+      }
+      const pageId = decodeURIComponent(match[1]);
+      const token = decodeURIComponent(match[2]);
+      return getPrivatePage(req, env, corsHeaders, pageId, token);
+    }
+
+    if (method === "GET" && path.startsWith("/api/pages/") && path.endsWith("/random")) {
+      const match = path.match(/^\/api\/pages\/(.+)\/random$/);
+      if (!match) {
+        return errorResponse("Not Found", 404, corsHeaders);
+      }
+      const pageId = decodeURIComponent(match[1]);
+      return createRandomPrivateLink(req, env, corsHeaders, pageId);
+    }
+
+    if (method === "POST" && path === "/api/user/pages") {
+      return createUserPage(req, env, corsHeaders);
+    }
+
+    if (method === "GET" && path === "/api/user/pages") {
+      return listUserPages(req, env, corsHeaders);
+    }
+
+    const userPageMatch = path.match(/^\/api\/user\/pages\/(.+)$/);
+    if (userPageMatch) {
+      const pageId = decodeURIComponent(userPageMatch[1]);
+
+      if (method === "GET") {
+        return getUserPage(req, env, corsHeaders, pageId);
+      }
+
+      if (method === "PUT") {
+        return updateUserPage(req, env, corsHeaders, pageId);
+      }
+
+      if (method === "DELETE") {
+        return deleteUserPage(req, env, corsHeaders, pageId);
+      }
+    }
+
+    const userPrivateMatch = path.match(/^\/api\/user\/pages\/(.+)\/private-links$/);
+    if (userPrivateMatch) {
+      const pageId = decodeURIComponent(userPrivateMatch[1]);
+      if (method === "POST") {
+        return createUserPrivateLink(req, env, corsHeaders, pageId);
+      }
+      if (method === "GET") {
+        return listUserPrivateLinks(req, env, corsHeaders, pageId);
+      }
+    }
+
+    const userPrivateTokenMatch = path.match(/^\/api\/user\/pages\/(.+)\/private-links\/(.+)$/);
+    if (userPrivateTokenMatch) {
+      const pageId = decodeURIComponent(userPrivateTokenMatch[1]);
+      const token = decodeURIComponent(userPrivateTokenMatch[2]);
+      if (method === "DELETE") {
+        return deleteUserPrivateLink(req, env, corsHeaders, pageId, token);
+      }
+    }
+
+    const userMembersMatch = path.match(/^\/api\/user\/pages\/(.+)\/members$/);
+    if (userMembersMatch) {
+      const pageId = decodeURIComponent(userMembersMatch[1]);
+      if (method === "GET") {
+        return listUserPageMembers(req, env, corsHeaders, pageId);
+      }
+    }
+
+    const userMemberMatch = path.match(/^\/api\/user\/pages\/(.+)\/members\/(.+)$/);
+    if (userMemberMatch) {
+      const pageId = decodeURIComponent(userMemberMatch[1]);
+      const memberUserId = decodeURIComponent(userMemberMatch[2]);
+      if (method === "DELETE") {
+        return removeUserPageMember(req, env, corsHeaders, pageId, memberUserId);
+      }
+    }
+
+    const userInvitesMatch = path.match(/^\/api\/user\/pages\/(.+)\/invites$/);
+    if (userInvitesMatch) {
+      const pageId = decodeURIComponent(userInvitesMatch[1]);
+      if (method === "POST") {
+        return createUserPageInvite(req, env, corsHeaders, pageId);
+      }
+      if (method === "GET") {
+        return listUserPageInvites(req, env, corsHeaders, pageId);
+      }
+    }
+
+    const userInviteMatch = path.match(/^\/api\/user\/pages\/(.+)\/invites\/(.+)$/);
+    if (userInviteMatch) {
+      const pageId = decodeURIComponent(userInviteMatch[1]);
+      const token = decodeURIComponent(userInviteMatch[2]);
+      if (method === "DELETE") {
+        return revokeUserPageInvite(req, env, corsHeaders, pageId, token);
+      }
+    }
+
+    const userInviteAcceptMatch = path.match(/^\/api\/user\/invites\/(.+)\/accept$/);
+    if (userInviteAcceptMatch && method === "POST") {
+      const token = decodeURIComponent(userInviteAcceptMatch[1]);
+      return acceptUserInvite(req, env, corsHeaders, token);
+    }
+
+    const userContactMatch = path.match(/^\/api\/user\/pages\/(.+)\/contact-submissions$/);
+    if (userContactMatch && method === "GET") {
+      const pageId = decodeURIComponent(userContactMatch[1]);
+      return listUserPageContactSubmissions(req, env, corsHeaders, pageId);
+    }
+
+    const userContactCsvMatch = path.match(/^\/api\/user\/pages\/(.+)\/contact-submissions\.csv$/);
+    if (userContactCsvMatch && method === "GET") {
+      const pageId = decodeURIComponent(userContactCsvMatch[1]);
+      return exportUserPageContactSubmissions(req, env, corsHeaders, pageId);
+    }
+
+    const userStatsMatch = path.match(/^\/api\/user\/pages\/(.+)\/stats$/);
+    if (userStatsMatch && method === "GET") {
+      const pageId = decodeURIComponent(userStatsMatch[1]);
+      return getUserPageStats(req, env, corsHeaders, pageId);
+    }
+
+    const userPlanStatusMatch = path.match(/^\/api\/user\/pages\/(.+)\/plan-status$/);
+    if (userPlanStatusMatch && method === "GET") {
+      const pageId = decodeURIComponent(userPlanStatusMatch[1]);
+      return getUserPagePlanStatus(req, env, corsHeaders, pageId);
+    }
+
+    const userAccessCodeMatch = path.match(/^\/api\/user\/pages\/(.+)\/access-code\/rotate$/);
+    if (userAccessCodeMatch && method === "POST") {
+      const pageId = decodeURIComponent(userAccessCodeMatch[1]);
+      return rotateUserAccessCode(req, env, corsHeaders, pageId);
+    }
+
+    const userAccessCodeDisableMatch = path.match(/^\/api\/user\/pages\/(.+)\/access-code\/disable$/);
+    if (userAccessCodeDisableMatch && method === "POST") {
+      const pageId = decodeURIComponent(userAccessCodeDisableMatch[1]);
+      return disableUserAccessCode(req, env, corsHeaders, pageId);
     }
 
     // --- 1. 관리자 API ---
@@ -163,6 +341,14 @@ export default {
 
       if (method === "POST" && action === "save") {
         return savePage(req, env, pageId, corsHeaders);
+      }
+
+      if (method === "POST" && action === "access-code" && pathSegments[4] === "rotate") {
+        return rotateAccessCode(req, env, pageId, corsHeaders);
+      }
+
+      if (method === "POST" && action === "access-code" && pathSegments[4] === "disable") {
+        return disableAccessCode(req, env, pageId, corsHeaders);
       }
 
       if (method === "GET" && action === "contact-submissions") {

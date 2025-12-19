@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT,
   oauth_provider TEXT,
   oauth_id TEXT,
+  plan_id TEXT NOT NULL DEFAULT 'free',
 
   failed_attempts INTEGER NOT NULL DEFAULT 0,
   locked_until INTEGER, -- epoch seconds
@@ -62,6 +63,74 @@ CREATE TABLE IF NOT EXISTS page_admins (
 CREATE INDEX IF NOT EXISTS idx_page_admins_user ON page_admins(user_id);
 
 -- =========================
+-- page_members (권한 고도화)
+-- =========================
+CREATE TABLE IF NOT EXISTS page_members (
+  page_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('owner','editor','viewer')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (page_id, user_id),
+  FOREIGN KEY (page_id) REFERENCES page_meta(page_id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_page_members_user ON page_members(user_id);
+
+-- =========================
+-- page_invites
+-- =========================
+CREATE TABLE IF NOT EXISTS page_invites (
+  token TEXT PRIMARY KEY,
+  page_id TEXT NOT NULL,
+  email TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('owner','editor','viewer')),
+  created_by TEXT NOT NULL,
+  expires_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (page_id) REFERENCES page_meta(page_id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_page_invites_page ON page_invites(page_id);
+
+-- =========================
+-- audit_logs
+-- =========================
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id TEXT PRIMARY KEY,
+  page_id TEXT NOT NULL,
+  actor_user_id TEXT NOT NULL,
+  action TEXT NOT NULL,
+  metadata TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (page_id) REFERENCES page_meta(page_id) ON DELETE CASCADE,
+  FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_page ON audit_logs(page_id);
+
+-- =========================
+-- private_links
+-- =========================
+CREATE TABLE IF NOT EXISTS private_links (
+  page_id TEXT NOT NULL,
+  token TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('active','expired','usedup','revoked')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at TEXT,
+  max_uses INTEGER,
+  uses INTEGER NOT NULL DEFAULT 0,
+  revoked_at TEXT,
+  last_used_at TEXT,
+  note TEXT,
+  PRIMARY KEY (page_id, token),
+  FOREIGN KEY (page_id) REFERENCES page_meta(page_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_private_links_page ON private_links(page_id);
+
+-- =========================
 -- slug_map
 --  - display_name은 실질적으로 slug 역할(유니크)
 -- =========================
@@ -99,12 +168,17 @@ CREATE TABLE IF NOT EXISTS plan_limits (
   plan_id TEXT PRIMARY KEY,
   can_create_pages INTEGER NOT NULL DEFAULT 1 CHECK (can_create_pages IN (0,1)),
   can_change_slug INTEGER NOT NULL DEFAULT 1 CHECK (can_change_slug IN (0,1)),
-  can_create_private_links INTEGER NOT NULL DEFAULT 1 CHECK (can_create_private_links IN (0,1))
+  can_create_private_links INTEGER NOT NULL DEFAULT 1 CHECK (can_create_private_links IN (0,1)),
+  max_pages INTEGER NOT NULL DEFAULT 1,
+  max_private_links INTEGER NOT NULL DEFAULT 5,
+  max_contact_fields INTEGER NOT NULL DEFAULT 10,
+  can_export_csv INTEGER NOT NULL DEFAULT 1 CHECK (can_export_csv IN (0,1)),
+  stats_retention_days INTEGER NOT NULL DEFAULT 30
 );
 
 -- 기본값 시드(원하는 값으로 조정)
-INSERT OR IGNORE INTO plan_limits(plan_id, can_create_pages, can_change_slug, can_create_private_links)
+INSERT OR IGNORE INTO plan_limits(plan_id, can_create_pages, can_change_slug, can_create_private_links, max_pages, max_private_links, max_contact_fields, can_export_csv, stats_retention_days)
 VALUES
-('free',    1, 0, 0),
-('basic',   1, 1, 1),
-('premium', 1, 1, 1);
+('free',    1, 0, 0, 1, 3, 5, 0, 7),
+('basic',   1, 1, 1, 3, 10, 15, 1, 30),
+('premium', 1, 1, 1, 10, 50, 50, 1, 365);

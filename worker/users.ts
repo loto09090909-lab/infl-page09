@@ -1,5 +1,8 @@
 import { createSessionToken } from "./auth";
-import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
+import { enforcePlanLimit, PlanLimitError } from "./plan-limits";
+import { normalizeSlugs, replaceSlugMap, findConflictingSlug } from "./slug-map";
+import { slugify } from "./slug";
+import { errorResponse, errorResponseWithCode, jsonResponse, parseJsonBody } from "./utils";
 
 export type UserRow = {
   id: string;
@@ -7,6 +10,7 @@ export type UserRow = {
   password_hash: string | null;
   oauth_provider: string | null;
   oauth_id: string | null;
+  plan_id?: string | null;
   failed_attempts: number;
   locked_until: number | null;
 };
@@ -24,6 +28,8 @@ const LOCK_MILLISECONDS = 15 * 60 * 1000;
 const PBKDF2_ITERATIONS = 70_000;
 const PBKDF2_KEY_LENGTH = 32; // bytes
 const PBKDF2_PREFIX = "pbkdf2";
+const DEFAULT_PLAN = "free";
+const MAX_PAGE_ID_ATTEMPTS = 6;
 
 function bufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
@@ -41,6 +47,79 @@ function base64ToBuffer(value: string): ArrayBuffer {
     bytes[i] = binary.charCodeAt(i);
   }
   return bytes.buffer;
+}
+
+async function pageExists(env: any, pageId: string) {
+  const kv = await env.PAGE_KV.get(`page:${pageId}`);
+  if (kv) return true;
+  const row = await env.DB.prepare(
+    "SELECT page_id FROM page_meta WHERE page_id = ? LIMIT 1"
+  )
+    .bind(pageId)
+    .first<{ page_id: string }>();
+  return !!row;
+}
+
+function buildBasePageId(email: string) {
+  const localPart = email.split("@")[0] || "page";
+  return slugify(localPart) || "page";
+}
+
+async function generateUniquePageId(env: any, email: string) {
+  const base = buildBasePageId(email);
+  for (let i = 0; i < MAX_PAGE_ID_ATTEMPTS; i += 1) {
+    const suffix = i === 0 ? "" : `-${Math.floor(Math.random() * 10000)}`;
+    const candidate = `${base}${suffix}`;
+    if (!(await pageExists(env, candidate))) {
+      return candidate;
+    }
+  }
+  return `page-${crypto.randomUUID().slice(0, 8)}`;
+}
+
+async function provisionDefaultPage(env: any, userId: string, email: string) {
+  await enforcePlanLimit(env, DEFAULT_PLAN, "create_page");
+  const pageId = await generateUniquePageId(env, email);
+  const slugs = normalizeSlugs([], pageId);
+  const conflict = await findConflictingSlug(env, slugs, pageId);
+  if (conflict) {
+    throw new Error(`이미 다른 페이지에 사용 중인 슬러그입니다: ${conflict}`);
+  }
+
+  const profile = { name: email.split("@")[0] || "User" };
+  const pageData = {
+    profile,
+    links: [],
+    privateLinks: [],
+    contactSchema: [],
+    contactSettings: { enabled: false },
+    accessControl: { enabled: false },
+    slugs,
+    plan: DEFAULT_PLAN,
+    theme: "classic",
+  };
+
+  await env.PAGE_KV.put(`page:${pageId}`, JSON.stringify(pageData));
+
+  await env.DB.prepare(
+    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links, plan_id) VALUES (?, ?, ?, ?, ?, ?)"
+  )
+    .bind(pageId, profile.name ?? null, null, null, JSON.stringify([]), DEFAULT_PLAN)
+    .run();
+
+  await env.DB.prepare("INSERT OR IGNORE INTO page_admins (page_id, user_id) VALUES (?, ?)")
+    .bind(pageId, userId)
+    .run();
+
+  await env.DB.prepare(
+    "INSERT OR IGNORE INTO page_members (page_id, user_id, role) VALUES (?, ?, 'owner')"
+  )
+    .bind(pageId, userId)
+    .run();
+
+  await replaceSlugMap(env, pageId, slugs);
+
+  return pageId;
 }
 
 export async function hashPassword(password: string) {
@@ -117,7 +196,7 @@ export async function verifyPassword(password: string, stored: string | null) {
 
 async function getUserByEmail(env: any, email: string) {
   return env.DB.prepare(
-    "SELECT id, email, password_hash, oauth_provider, oauth_id, failed_attempts, locked_until FROM users WHERE email = ? LIMIT 1"
+    "SELECT id, email, password_hash, oauth_provider, oauth_id, plan_id, failed_attempts, locked_until FROM users WHERE email = ? LIMIT 1"
   )
     .bind(email)
     .first<UserRow>();
@@ -125,24 +204,35 @@ async function getUserByEmail(env: any, email: string) {
 
 export async function getUserById(env: any, id: string) {
   return env.DB.prepare(
-    "SELECT id, email, password_hash, oauth_provider, oauth_id, failed_attempts, locked_until FROM users WHERE id = ? LIMIT 1"
+    "SELECT id, email, password_hash, oauth_provider, oauth_id, plan_id, failed_attempts, locked_until FROM users WHERE id = ? LIMIT 1"
   )
     .bind(id)
     .first<UserRow>();
+}
+
+async function ensureUserPlan(env: any, user: UserRow | null) {
+  if (!user) return null;
+  if (user.plan_id) return user;
+
+  await env.DB.prepare("UPDATE users SET plan_id = ? WHERE id = ?")
+    .bind(DEFAULT_PLAN, user.id)
+    .run();
+  return { ...user, plan_id: DEFAULT_PLAN };
 }
 
 async function createUser(env: any, data: AuthBody): Promise<UserRow> {
   const userId = crypto.randomUUID();
   const passwordHash = data.password ? await hashPassword(data.password) : null;
   await env.DB.prepare(
-    "INSERT INTO users (id, email, password_hash, oauth_provider, oauth_id) VALUES (?, ?, ?, ?, ?)"
+    "INSERT INTO users (id, email, password_hash, oauth_provider, oauth_id, plan_id) VALUES (?, ?, ?, ?, ?, ?)"
   )
     .bind(
       userId,
       data.email!,
       passwordHash,
       data.oauthProvider ?? null,
-      data.oauthId ?? null
+      data.oauthId ?? null,
+      DEFAULT_PLAN
     )
     .run();
 
@@ -198,8 +288,17 @@ export async function signup(req: Request, env: any, headers: HeadersInit) {
   }
 
   const created = await createUser(env, { ...body, email });
+  let pageId: string | null = null;
+  try {
+    pageId = await provisionDefaultPage(env, created.id, email);
+  } catch (error) {
+    if (error instanceof PlanLimitError) {
+      return errorResponseWithCode(error.message, "PLAN_LIMIT_EXCEEDED", error.status, headers);
+    }
+    throw error;
+  }
   const session = await createSessionToken(env, "user", created.id);
-  return jsonResponse(session, 201, headers);
+  return jsonResponse({ ...session, pageId }, 201, headers);
 }
 
 export async function login(req: Request, env: any, headers: HeadersInit) {
@@ -210,22 +309,23 @@ export async function login(req: Request, env: any, headers: HeadersInit) {
 
   const email = body.email.trim().toLowerCase();
   const user = await getUserByEmail(env, email);
-  if (!user) {
+  const normalized = await ensureUserPlan(env, user);
+  if (!normalized) {
     return errorResponse("계정을 찾을 수 없습니다", 404, headers);
   }
 
-  if (isLocked(user)) {
+  if (isLocked(normalized)) {
     return errorResponse("로그인 시도가 일시적으로 제한되었습니다", 423, headers);
   }
 
-  const authResult = await authenticateUser(user, body);
+  const authResult = await authenticateUser(normalized, body);
   if (!authResult) {
-    await recordFailure(env, user.id);
+    await recordFailure(env, normalized.id);
     return errorResponse("인증에 실패했습니다", 401, headers);
   }
 
-  await clearFailures(env, user.id);
-  const session = await createSessionToken(env, "user", user.id);
+  await clearFailures(env, normalized.id);
+  const session = await createSessionToken(env, "user", normalized.id);
   return jsonResponse(session, 200, headers);
 }
 
@@ -236,8 +336,9 @@ export async function findOrCreateUser(env: any, data: AuthBody) {
   }
 
   const existing = await getUserByEmail(env, email);
-  if (existing) {
-    return existing;
+  const normalized = await ensureUserPlan(env, existing);
+  if (normalized) {
+    return normalized;
   }
 
   return createUser(env, { ...data, email });
@@ -257,22 +358,23 @@ export async function authenticateExistingUser(env: any, credentials: AuthBody) 
   }
 
   const user = await getUserByEmail(env, email);
-  if (!user) {
+  const normalized = await ensureUserPlan(env, user);
+  if (!normalized) {
     return { error: "계정을 찾을 수 없습니다", status: 404 } as const;
   }
 
-  if (isLocked(user)) {
+  if (isLocked(normalized)) {
     return { error: "로그인 시도가 일시적으로 제한되었습니다", status: 423 } as const;
   }
 
-  const authenticated = await authenticateUser(user, credentials);
+  const authenticated = await authenticateUser(normalized, credentials);
   if (!authenticated) {
-    await recordFailure(env, user.id);
+    await recordFailure(env, normalized.id);
     return { error: "인증에 실패했습니다", status: 401 } as const;
   }
 
-  await clearFailures(env, user.id);
-  return { user } as const;
+  await clearFailures(env, normalized.id);
+  return { user: normalized } as const;
 }
 
 async function authenticateUser(user: UserRow, credentials: AuthBody) {
