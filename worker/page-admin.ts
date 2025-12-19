@@ -213,6 +213,10 @@ function validateLinks(rawLinks: unknown) {
   return { publicLinks, privateLinks, provided: true };
 }
 
+function generateAccessCode() {
+  return crypto.randomUUID().replace(/-/g, "").slice(0, 10);
+}
+
 export async function pageAdminLogin(
   req: Request,
   env: any,
@@ -460,14 +464,15 @@ export async function savePage(
   await env.PAGE_KV.put(`page:${canonicalPageId}`, JSON.stringify(pageData));
 
   await env.DB.prepare(
-    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
+    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links, plan_id) VALUES (?, ?, ?, ?, ?, ?)"
   )
     .bind(
       canonicalPageId,
       (pageData.profile as any)?.name ?? null,
       (pageData.profile as any)?.photoUrl ?? null,
       (pageData.profile as any)?.description ?? null,
-      JSON.stringify(pageData.links)
+      JSON.stringify(pageData.links),
+      typeof pageData.plan === "string" ? pageData.plan : "free"
     )
     .run();
 
@@ -476,4 +481,44 @@ export async function savePage(
   }
 
   return jsonResponse({ success: true, message: "Page saved" }, 200, headers);
+}
+
+export async function rotateAccessCode(
+  req: Request,
+  env: any,
+  pageId: string,
+  headers: HeadersInit
+) {
+  const token = getBearerToken(req);
+  const canonicalPageId = await resolvePageId(env, pageId);
+  const pageTokenValid = await verifySessionToken(env, "page", token, canonicalPageId);
+  const superTokenValid = await verifySessionToken(env, "super", token);
+  if (!pageTokenValid && !superTokenValid) {
+    return errorResponse("인증이 필요합니다", 401, headers);
+  }
+
+  const existingRaw = await env.PAGE_KV.get(`page:${canonicalPageId}`);
+  if (!existingRaw) {
+    return errorResponse("Page not found", 404, headers);
+  }
+
+  let existingData: any = {};
+  try {
+    existingData = JSON.parse(existingRaw);
+  } catch (error) {
+    existingData = {};
+  }
+
+  const code = generateAccessCode();
+  const updated = {
+    ...existingData,
+    accessControl: {
+      enabled: true,
+      code,
+    },
+  };
+
+  await env.PAGE_KV.put(`page:${canonicalPageId}`, JSON.stringify(updated));
+
+  return jsonResponse({ pageId: canonicalPageId, accessControl: updated.accessControl }, 200, headers);
 }

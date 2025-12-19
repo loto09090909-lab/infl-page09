@@ -1,5 +1,11 @@
 import { getBearerToken, verifySessionToken } from "./auth";
-import { pageAdminLogin, pageAdminLogout, savePage, verifyPageSession } from "./page-admin";
+import {
+  pageAdminLogin,
+  pageAdminLogout,
+  rotateAccessCode,
+  savePage,
+  verifyPageSession,
+} from "./page-admin";
 import {
   createPage,
   bulkCreatePages,
@@ -25,6 +31,7 @@ import {
   listUserPages,
   listUserPageContactSubmissions,
   listUserPrivateLinks,
+  rotateUserAccessCode,
   updateUserPage,
 } from "./user-pages";
 import { getPrivatePage } from "./private-links";
@@ -155,6 +162,12 @@ export default {
       return getUserPageStats(req, env, corsHeaders, pageId);
     }
 
+    const userAccessCodeMatch = path.match(/^\/api\/user\/pages\/(.+)\/access-code\/rotate$/);
+    if (userAccessCodeMatch && method === "POST") {
+      const pageId = decodeURIComponent(userAccessCodeMatch[1]);
+      return rotateUserAccessCode(req, env, corsHeaders, pageId);
+    }
+
     // --- 1. 관리자 API ---
     if (
       method === "POST" &&
@@ -250,6 +263,10 @@ export default {
 
       if (method === "POST" && action === "save") {
         return savePage(req, env, pageId, corsHeaders);
+      }
+
+      if (method === "POST" && action === "access-code" && pathSegments[4] === "rotate") {
+        return rotateAccessCode(req, env, pageId, corsHeaders);
       }
 
       if (method === "GET" && action === "contact-submissions") {

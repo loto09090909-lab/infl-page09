@@ -391,14 +391,15 @@ async function persistCreatePage(env: any, data: NormalizedCreatePage) {
     .run();
 
   await env.DB.prepare(
-    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
+    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links, plan_id) VALUES (?, ?, ?, ?, ?, ?)"
   )
     .bind(
       data.pageId,
       (data.profile as any)?.name ?? null,
       (data.profile as any)?.photoUrl ?? null,
       (data.profile as any)?.description ?? null,
-      JSON.stringify((data as any).links ?? [])
+      JSON.stringify((data as any).links ?? []),
+      typeof data.plan === "string" ? data.plan : "free"
     )
     .run();
 
@@ -639,7 +640,7 @@ export async function listPages(
     : [pageSize, offset];
 
   let dataStmt = env.DB.prepare(
-    `SELECT DISTINCT pm.page_id, pm.name, pm.photo_url, pm.description, pm.links ${baseQuery} ORDER BY pm.page_id LIMIT ? OFFSET ?`
+    `SELECT DISTINCT pm.page_id, pm.name, pm.photo_url, pm.description, pm.links, pm.plan_id ${baseQuery} ORDER BY pm.page_id LIMIT ? OFFSET ?`
   );
   if (dataParams.length) {
     dataStmt = dataStmt.bind(...dataParams);
@@ -651,17 +652,18 @@ export async function listPages(
     photo_url: string | null;
     description: string | null;
     links: string | null;
+    plan_id: string | null;
   }>();
 
   const mapped = await Promise.all(
     (dbRows?.results ?? []).map(async (row) => {
       const kvValue = await env.PAGE_KV.get(`page:${row.page_id}`);
-      let plan: string | null = null;
+      let plan: string | null = (row as any).plan_id ?? null;
       if (kvValue) {
         try {
-          plan = JSON.parse(kvValue).plan ?? null;
+          plan = JSON.parse(kvValue).plan ?? plan;
         } catch (error) {
-          plan = null;
+          plan = plan ?? null;
         }
       }
 
@@ -698,7 +700,7 @@ export async function getAdminPage(
 ): Promise<Response> {
   const canonicalPageId = await resolvePageId(env, pageId);
   const row = await env.DB.prepare(
-    "SELECT page_id, name, photo_url, description, links FROM page_meta WHERE page_id = ? LIMIT 1"
+    "SELECT page_id, name, photo_url, description, links, plan_id FROM page_meta WHERE page_id = ? LIMIT 1"
   )
     .bind(canonicalPageId)
     .first<{
@@ -707,6 +709,7 @@ export async function getAdminPage(
       photo_url: string | null;
       description: string | null;
       links: string | null;
+      plan_id: string | null;
     }>();
 
   if (!row) {
@@ -714,7 +717,7 @@ export async function getAdminPage(
   }
 
   const kvValue = await env.PAGE_KV.get(`page:${row.page_id}`);
-  let plan: string | null = null;
+  let plan: string | null = row?.plan_id ?? null;
   let privateLinks: unknown[] = [];
   let contactSchema: unknown[] = [];
   let contactSettings: Record<string, unknown> | undefined;
@@ -749,7 +752,7 @@ export async function getAdminPage(
         description: row.description,
       },
       links: safeParseLinks(row.links),
-      plan,
+      plan: plan ?? row.plan_id ?? null,
       slugs,
       privateLinks,
       contactSchema,
@@ -944,15 +947,16 @@ export async function updatePage(
   }
 
   await env.DB.prepare(
-    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
+    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links, plan_id) VALUES (?, ?, ?, ?, ?, ?)"
   )
     .bind(
       canonicalPageId,
       (updatedPage.profile as any)?.name ?? null,
       (updatedPage.profile as any)?.photoUrl ?? null,
       (updatedPage.profile as any)?.description ?? null,
-      JSON.stringify(updatedPage.links)
-  )
+      JSON.stringify(updatedPage.links),
+      typeof updatedPage.plan === "string" ? updatedPage.plan : "free"
+    )
     .run();
 
   if (slugs) {

@@ -254,6 +254,10 @@ async function getPagePlan(env: any, pageId: string) {
   }
 }
 
+function generateAccessCode() {
+  return crypto.randomUUID().replace(/-/g, "").slice(0, 10);
+}
+
 export async function createUserPage(req: Request, env: any, headers: HeadersInit) {
   const session = await requireUserSession(req, env, headers);
   if ("error" in session) return session.error;
@@ -371,14 +375,15 @@ export async function createUserPage(req: Request, env: any, headers: HeadersIni
   await env.PAGE_KV.put(`page:${pageId}`, JSON.stringify(pageData));
 
   await env.DB.prepare(
-    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
+    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links, plan_id) VALUES (?, ?, ?, ?, ?, ?)"
   )
     .bind(
       pageId,
       (pageData.profile as any)?.name ?? null,
       (pageData.profile as any)?.photoUrl ?? null,
       (pageData.profile as any)?.description ?? null,
-      JSON.stringify(pageData.links)
+      JSON.stringify(pageData.links),
+      typeof pageData.plan === "string" ? pageData.plan : "free"
     )
     .run();
 
@@ -573,14 +578,15 @@ export async function updateUserPage(
   await env.PAGE_KV.put(`page:${access.pageId}`, JSON.stringify(nextPage));
 
   await env.DB.prepare(
-    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
+    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links, plan_id) VALUES (?, ?, ?, ?, ?, ?)"
   )
     .bind(
       access.pageId,
       (nextPage.profile as any)?.name ?? null,
       (nextPage.profile as any)?.photoUrl ?? null,
       (nextPage.profile as any)?.description ?? null,
-      JSON.stringify(nextPage.links)
+      JSON.stringify(nextPage.links),
+      typeof nextPage.plan === "string" ? nextPage.plan : "free"
     )
     .run();
 
@@ -725,12 +731,46 @@ export async function deleteUserPrivateLink(
   return revokePrivateLink(req, env, headers, access.pageId, token);
 }
 
+export async function rotateUserAccessCode(
+  req: Request,
+  env: any,
+  headers: HeadersInit,
+  pageId: string
+) {
+  const access = await requireUserPageAccess(req, env, headers, pageId);
+  if ("error" in access) return access.error;
+
+  const existingRaw = await env.PAGE_KV.get(`page:${access.pageId}`);
+  if (!existingRaw) {
+    return errorResponse("Page not found", 404, headers);
+  }
+
+  let existingData: any = {};
+  try {
+    existingData = JSON.parse(existingRaw);
+  } catch (error) {
+    existingData = {};
+  }
+
+  const code = generateAccessCode();
+  const updated = {
+    ...existingData,
+    accessControl: {
+      enabled: true,
+      code,
+    },
+  };
+
+  await env.PAGE_KV.put(`page:${access.pageId}`, JSON.stringify(updated));
+  return jsonResponse({ pageId: access.pageId, accessControl: updated.accessControl }, 200, headers);
+}
+
 export async function listUserPages(req: Request, env: any, headers: HeadersInit) {
   const session = await requireUserSession(req, env, headers);
   if ("error" in session) return session.error;
 
   const rows = await env.DB.prepare(
-    "SELECT pm.page_id, pm.name, pm.photo_url, pm.description, pm.links FROM page_admins pa JOIN page_meta pm ON pa.page_id = pm.page_id WHERE pa.user_id = ? ORDER BY pm.created_at DESC"
+    "SELECT pm.page_id, pm.name, pm.photo_url, pm.description, pm.links, pm.plan_id FROM page_admins pa JOIN page_meta pm ON pa.page_id = pm.page_id WHERE pa.user_id = ? ORDER BY pm.created_at DESC"
   )
     .bind(session.userId)
     .all<{
@@ -739,17 +779,18 @@ export async function listUserPages(req: Request, env: any, headers: HeadersInit
       photo_url: string | null;
       description: string | null;
       links: string | null;
+      plan_id: string | null;
     }>();
 
   const items = await Promise.all(
     (rows?.results ?? []).map(async (row) => {
       const kvRaw = await env.PAGE_KV.get(`page:${row.page_id}`);
-      let plan: string | null = null;
+      let plan: string | null = row.plan_id ?? null;
       if (kvRaw) {
         try {
-          plan = JSON.parse(kvRaw)?.plan ?? null;
+          plan = JSON.parse(kvRaw)?.plan ?? plan;
         } catch (error) {
-          plan = null;
+          plan = plan ?? null;
         }
       }
 
