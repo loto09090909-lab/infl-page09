@@ -18,6 +18,7 @@ type CreatePageBody = {
   privateLinks?: unknown;
   contactSchema?: unknown;
   contactSettings?: unknown;
+  accessControl?: unknown;
   slugs?: unknown;
   theme?: unknown;
 };
@@ -28,6 +29,7 @@ type UpdatePageBody = {
   privateLinks?: unknown;
   contactSchema?: unknown;
   contactSettings?: unknown;
+  accessControl?: unknown;
   slugs?: unknown;
   theme?: unknown;
 };
@@ -137,6 +139,27 @@ function validateContactSettings(raw: unknown) {
     settings: {
       ...(enabled ? { enabled: true } : { enabled: false }),
       ...(webhookUrl ? { webhookUrl } : {}),
+    },
+  };
+}
+
+function validateAccessControl(raw: unknown) {
+  if (raw === undefined) return { accessControl: undefined };
+  if (!raw || typeof raw !== "object") {
+    return { error: "accessControl은 객체여야 합니다" };
+  }
+
+  const enabled = (raw as any).enabled === true;
+  const code = sanitizeString((raw as any).code, 80);
+
+  if (enabled && !code) {
+    return { error: "accessControl.enabled가 true이면 code가 필요합니다" };
+  }
+
+  return {
+    accessControl: {
+      enabled,
+      ...(code ? { code } : {}),
     },
   };
 }
@@ -281,6 +304,11 @@ export async function createUserPage(req: Request, env: any, headers: HeadersIni
     return errorResponse(contactSettingsError, 400, headers);
   }
 
+  const { error: accessError, accessControl } = validateAccessControl(body.accessControl);
+  if (accessError) {
+    return errorResponse(accessError, 400, headers);
+  }
+
   const { error: themeError, theme } = validateTheme(body.theme);
   if (themeError) {
     return errorResponse(themeError, 400, headers);
@@ -334,6 +362,7 @@ export async function createUserPage(req: Request, env: any, headers: HeadersIni
     privateLinks: combinedPrivateLinks,
     contactSchema: contactSchema ?? [],
     contactSettings: contactSettings ?? { enabled: false },
+    accessControl: accessControl ?? { enabled: false },
     slugs,
     plan,
     theme: typeof theme === "string" ? theme : "classic",
@@ -473,6 +502,11 @@ export async function updateUserPage(
     return errorResponse(contactSettingsError, 400, headers);
   }
 
+  const { error: accessError, accessControl } = validateAccessControl(body.accessControl);
+  if (accessError) {
+    return errorResponse(accessError, 400, headers);
+  }
+
   const { error: themeError, theme } = validateTheme(body.theme);
   if (themeError) {
     return errorResponse(themeError, 400, headers);
@@ -514,6 +548,7 @@ export async function updateUserPage(
         ? schema ?? []
         : existingData.contactSchema ?? [],
     contactSettings: contactSettings ?? existingData.contactSettings ?? { enabled: false },
+    accessControl: accessControl ?? existingData.accessControl ?? { enabled: false },
     slugs: slugs ?? existingData.slugs ?? [],
     plan: existingData.plan ?? "free",
     theme:

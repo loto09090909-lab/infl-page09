@@ -182,6 +182,7 @@ export async function getPrivatePage(
       plan: parsed?.plan ?? null,
       contactSchema: parsed?.contactSchema ?? [],
       contactSettings: safeContactSettings,
+      accessControl: { enabled: false },
       theme: typeof parsed?.theme === "string" ? parsed.theme : "classic",
     },
     200,

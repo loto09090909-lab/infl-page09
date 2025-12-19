@@ -22,6 +22,7 @@ type CreatePageBody = {
   profile?: unknown;
   contactSchema?: unknown;
   contactSettings?: unknown;
+  accessControl?: unknown;
   adminEmail: string;
   adminPassword?: string;
   adminOauthProvider?: string;
@@ -40,6 +41,7 @@ type UpdatePageBody = {
   privateLinks?: unknown;
   contactSchema?: unknown;
   contactSettings?: unknown;
+  accessControl?: unknown;
   adminPassword?: string;
   slugs?: unknown;
   theme?: unknown;
@@ -55,6 +57,7 @@ type NormalizedCreatePage = {
   profile: Record<string, unknown>;
   contactSchema: unknown[];
   contactSettings: Record<string, unknown>;
+  accessControl: Record<string, unknown>;
   adminEmail: string;
   adminPassword?: string;
   adminOauthProvider?: string;
@@ -175,6 +178,27 @@ function validateContactSettings(raw: unknown) {
   };
 }
 
+function validateAccessControl(raw: unknown) {
+  if (raw === undefined) return { accessControl: undefined };
+  if (!raw || typeof raw !== "object") {
+    return { error: "accessControl은 객체여야 합니다" };
+  }
+
+  const enabled = (raw as any).enabled === true;
+  const code = sanitizeString((raw as any).code, 80);
+
+  if (enabled && !code) {
+    return { error: "accessControl.enabled가 true이면 code가 필요합니다" };
+  }
+
+  return {
+    accessControl: {
+      enabled,
+      ...(code ? { code } : {}),
+    },
+  };
+}
+
 function validateLinks(rawLinks: unknown, defaultPrivate = false) {
   if (rawLinks === undefined) return { publicLinks: undefined, privateLinks: undefined, provided: false };
   if (!Array.isArray(rawLinks)) {
@@ -287,6 +311,11 @@ function normalizeCreatePageBody(
     throw new CreatePageError(contactSettingsError, 400);
   }
 
+  const { error: accessError, accessControl } = validateAccessControl(body.accessControl);
+  if (accessError) {
+    throw new CreatePageError(accessError, 400);
+  }
+
   const { error: themeError, theme } = validateTheme(body.theme);
   if (themeError) {
     throw new CreatePageError(themeError, 400);
@@ -297,6 +326,7 @@ function normalizeCreatePageBody(
     profile: profile ?? {},
     contactSchema: contactSchema ?? [],
     contactSettings: contactSettings ?? { enabled: false },
+    accessControl: accessControl ?? { enabled: false },
     adminEmail: body.adminEmail.trim().toLowerCase(),
     adminPassword: body.adminPassword,
     adminOauthProvider: body.adminOauthProvider,
@@ -337,6 +367,7 @@ async function persistCreatePage(env: any, data: NormalizedCreatePage) {
     privateLinks: Array.isArray(data.privateLinks) ? data.privateLinks : [],
     contactSchema: Array.isArray(data.contactSchema) ? data.contactSchema : [],
     contactSettings: data.contactSettings ?? { enabled: false },
+    accessControl: data.accessControl ?? { enabled: false },
     slugs: data.slugs ?? [],
     plan: data.plan ?? null,
     theme: typeof data.theme === "string" ? data.theme : "classic",
@@ -847,6 +878,11 @@ export async function updatePage(
     return errorResponse(contactSettingsError, 400, headers);
   }
 
+  const { error: accessError, accessControl } = validateAccessControl(body.accessControl);
+  if (accessError) {
+    return errorResponse(accessError, 400, headers);
+  }
+
   const { error: themeError, theme } = validateTheme(body.theme);
   if (themeError) {
     return errorResponse(themeError, 400, headers);
@@ -868,6 +904,7 @@ export async function updatePage(
         ? schema ?? []
         : existingData.contactSchema ?? [],
     contactSettings: contactSettings ?? existingData.contactSettings ?? { enabled: false },
+    accessControl: accessControl ?? existingData.accessControl ?? { enabled: false },
     plan:
       typeof body.plan === "string"
         ? sanitizeString(body.plan, 30) ?? existingPlan ?? null
