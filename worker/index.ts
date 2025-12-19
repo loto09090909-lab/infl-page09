@@ -26,9 +26,7 @@ export default {
       // 2. CORS 안전하게 처리
       const rawOrigins = env.ALLOWED_ORIGINS || "*";
       const corsOptions: CorsOptions = {
-        allowedOrigins: typeof rawOrigins === 'string' 
-          ? rawOrigins.split(",").map(o => o.trim()).filter(Boolean)
-          : ["*"],
+        allowedOrigins: rawOrigins.split(",").map((o: string) => o.trim()).filter(Boolean),
       };
       const corsHeaders = buildCorsHeaders(corsOptions, req.headers.get("Origin"));
 
