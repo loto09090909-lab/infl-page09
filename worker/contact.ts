@@ -49,9 +49,10 @@ const ALLOWED_CONTACT_TYPES = new Set([
 async function readContactSchema(env: any, pageId: string): Promise<{
   schema: ContactField[];
   settings: ContactSettings;
+  accessControl: { enabled?: boolean; code?: string };
 }> {
   const kvRaw = await env.PAGE_KV.get(`page:${pageId}`);
-  if (!kvRaw) return { schema: [], settings: {} };
+  if (!kvRaw) return { schema: [], settings: {}, accessControl: { enabled: false } };
   try {
     const parsed = JSON.parse(kvRaw);
     const schema = Array.isArray(parsed?.contactSchema)
@@ -94,9 +95,13 @@ async function readContactSchema(env: any, pageId: string): Promise<{
 
       settings.enabled = parsed.contactSettings.enabled === true;
     }
-    return { schema, settings };
+    const accessControl =
+      parsed?.accessControl && typeof parsed.accessControl === "object"
+        ? parsed.accessControl
+        : { enabled: false };
+    return { schema, settings, accessControl };
   } catch (error) {
-    return { schema: [], settings: { enabled: false } };
+    return { schema: [], settings: { enabled: false }, accessControl: { enabled: false } };
   }
 }
 
@@ -193,13 +198,22 @@ export async function submitContact(
     return errorResponse("페이지를 찾을 수 없습니다", 404, headers);
   }
 
-  const { schema, settings } = await readContactSchema(env, canonicalPageId);
+  const { schema, settings, accessControl } = await readContactSchema(env, canonicalPageId);
   if (!settings.enabled) {
     return errorResponse("컨택트 폼이 비활성화되었습니다", 404, headers);
   }
 
   if (!schema.length) {
     return errorResponse("컨택트 폼이 설정되지 않았습니다", 404, headers);
+  }
+
+  if (accessControl?.enabled) {
+    const urlCode = new URL(req.url).searchParams.get("code");
+    const headerCode = req.headers.get("X-Page-Code");
+    const provided = headerCode || urlCode;
+    if (!provided || provided !== accessControl.code) {
+      return errorResponse("접근 코드가 필요합니다", 401, headers);
+    }
   }
 
   let body: any;

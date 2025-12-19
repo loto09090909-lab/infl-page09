@@ -2,6 +2,7 @@ import { getBearerToken, verifySessionToken } from "./auth";
 import {
   pageAdminLogin,
   pageAdminLogout,
+  disableAccessCode,
   rotateAccessCode,
   savePage,
   verifyPageSession,
@@ -31,6 +32,7 @@ import {
   listUserPages,
   listUserPageContactSubmissions,
   listUserPrivateLinks,
+  disableUserAccessCode,
   rotateUserAccessCode,
   updateUserPage,
 } from "./user-pages";
@@ -168,6 +170,12 @@ export default {
       return rotateUserAccessCode(req, env, corsHeaders, pageId);
     }
 
+    const userAccessCodeDisableMatch = path.match(/^\/api\/user\/pages\/(.+)\/access-code\/disable$/);
+    if (userAccessCodeDisableMatch && method === "POST") {
+      const pageId = decodeURIComponent(userAccessCodeDisableMatch[1]);
+      return disableUserAccessCode(req, env, corsHeaders, pageId);
+    }
+
     // --- 1. 관리자 API ---
     if (
       method === "POST" &&
@@ -267,6 +275,10 @@ export default {
 
       if (method === "POST" && action === "access-code" && pathSegments[4] === "rotate") {
         return rotateAccessCode(req, env, pageId, corsHeaders);
+      }
+
+      if (method === "POST" && action === "access-code" && pathSegments[4] === "disable") {
+        return disableAccessCode(req, env, pageId, corsHeaders);
       }
 
       if (method === "GET" && action === "contact-submissions") {

@@ -765,6 +765,36 @@ export async function rotateUserAccessCode(
   return jsonResponse({ pageId: access.pageId, accessControl: updated.accessControl }, 200, headers);
 }
 
+export async function disableUserAccessCode(
+  req: Request,
+  env: any,
+  headers: HeadersInit,
+  pageId: string
+) {
+  const access = await requireUserPageAccess(req, env, headers, pageId);
+  if ("error" in access) return access.error;
+
+  const existingRaw = await env.PAGE_KV.get(`page:${access.pageId}`);
+  if (!existingRaw) {
+    return errorResponse("Page not found", 404, headers);
+  }
+
+  let existingData: any = {};
+  try {
+    existingData = JSON.parse(existingRaw);
+  } catch (error) {
+    existingData = {};
+  }
+
+  const updated = {
+    ...existingData,
+    accessControl: { enabled: false },
+  };
+
+  await env.PAGE_KV.put(`page:${access.pageId}`, JSON.stringify(updated));
+  return jsonResponse({ pageId: access.pageId, accessControl: updated.accessControl }, 200, headers);
+}
+
 export async function listUserPages(req: Request, env: any, headers: HeadersInit) {
   const session = await requireUserSession(req, env, headers);
   if ("error" in session) return session.error;

@@ -522,3 +522,39 @@ export async function rotateAccessCode(
 
   return jsonResponse({ pageId: canonicalPageId, accessControl: updated.accessControl }, 200, headers);
 }
+
+export async function disableAccessCode(
+  req: Request,
+  env: any,
+  pageId: string,
+  headers: HeadersInit
+) {
+  const token = getBearerToken(req);
+  const canonicalPageId = await resolvePageId(env, pageId);
+  const pageTokenValid = await verifySessionToken(env, "page", token, canonicalPageId);
+  const superTokenValid = await verifySessionToken(env, "super", token);
+  if (!pageTokenValid && !superTokenValid) {
+    return errorResponse("인증이 필요합니다", 401, headers);
+  }
+
+  const existingRaw = await env.PAGE_KV.get(`page:${canonicalPageId}`);
+  if (!existingRaw) {
+    return errorResponse("Page not found", 404, headers);
+  }
+
+  let existingData: any = {};
+  try {
+    existingData = JSON.parse(existingRaw);
+  } catch (error) {
+    existingData = {};
+  }
+
+  const updated = {
+    ...existingData,
+    accessControl: { enabled: false },
+  };
+
+  await env.PAGE_KV.put(`page:${canonicalPageId}`, JSON.stringify(updated));
+
+  return jsonResponse({ pageId: canonicalPageId, accessControl: updated.accessControl }, 200, headers);
+}
