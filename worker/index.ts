@@ -14,7 +14,13 @@ import {
 import { getPage } from "./page-view";
 import { buildCorsHeaders, CorsOptions, errorResponse, jsonResponse } from "./utils";
 import { login as userLogin, signup as userSignup } from "./users";
-import { createUserPage, getUserPage, listUserPages, updateUserPage } from "./user-pages";
+import {
+  createUserPage,
+  deleteUserPage,
+  getUserPage,
+  listUserPages,
+  updateUserPage,
+} from "./user-pages";
 
 export default {
   async fetch(req: Request, env: any): Promise<Response> {
@@ -87,6 +93,10 @@ export default {
 
       if (method === "PUT") {
         return updateUserPage(req, env, corsHeaders, pageId);
+      }
+
+      if (method === "DELETE") {
+        return deleteUserPage(req, env, corsHeaders, pageId);
       }
     }
 

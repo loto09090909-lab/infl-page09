@@ -538,6 +538,34 @@ export async function updateUserPage(
   return jsonResponse({ success: true, pageId: access.pageId }, 200, headers);
 }
 
+export async function deleteUserPage(
+  req: Request,
+  env: any,
+  headers: HeadersInit,
+  pageId: string
+) {
+  const access = await requireUserPageAccess(req, env, headers, pageId);
+  if ("error" in access) return access.error;
+
+  const existing = await env.PAGE_KV.get(`page:${access.pageId}`);
+  if (!existing) {
+    return errorResponse("Page not found", 404, headers);
+  }
+
+  await env.PAGE_KV.delete(`page:${access.pageId}`);
+  await env.DB.prepare("DELETE FROM page_admins WHERE page_id = ?")
+    .bind(access.pageId)
+    .run();
+  await env.DB.prepare("DELETE FROM page_meta WHERE page_id = ?")
+    .bind(access.pageId)
+    .run();
+  await env.DB.prepare("DELETE FROM slug_map WHERE page_id = ?")
+    .bind(access.pageId)
+    .run();
+
+  return jsonResponse({ success: true, message: "Page deleted" }, 200, headers);
+}
+
 export async function listUserPages(req: Request, env: any, headers: HeadersInit) {
   const session = await requireUserSession(req, env, headers);
   if ("error" in session) return session.error;
