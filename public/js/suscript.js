@@ -759,6 +759,7 @@ function normalizeBulkRow(row, rowNumber) {
   const description = selectCellValue(row, ['description', '설명']);
   const photoUrl = selectCellValue(row, ['photoUrl', 'photo_url', '사진', '사진URL']);
   const plan = selectCellValue(row, ['plan', '요금제']);
+  const theme = selectCellValue(row, ['theme', '테마']);
   const slugCell = row.slugs ?? row['슬러그들'] ?? row['slugs[]'];
   const linksCell = row.links ?? row['링크'] ?? row['links[]'];
 
@@ -768,6 +769,7 @@ function normalizeBulkRow(row, rowNumber) {
     adminPassword: String(adminPassword).trim(),
     profile: { name: name || '', description: description || '', photoUrl: photoUrl || '' },
     plan: plan || null,
+    theme: theme || null,
     slugs: parseSlugCell(slugCell),
     links: parseLinksCell(linksCell),
   };
@@ -848,9 +850,9 @@ function renderBulkPreview() {
     html += ` · ${skipped}개 행은 필수 정보(pageId/관리자 이메일/비밀번호) 누락으로 건너뜀`;
   }
 
-  html += '<table><thead><tr><th>#</th><th>pageId</th><th>링크 수</th><th>추가 슬러그</th><th>요금제</th></tr></thead><tbody>';
+  html += '<table><thead><tr><th>#</th><th>pageId</th><th>링크 수</th><th>추가 슬러그</th><th>요금제</th><th>테마</th></tr></thead><tbody>';
   sample.forEach((page, idx) => {
-    html += `<tr><td>${idx + 1}</td><td>${page.pageId}</td><td>${page.links?.length || 0}</td><td>${page.slugs?.length || 0}</td><td>${page.plan || '-'} </td></tr>`;
+    html += `<tr><td>${idx + 1}</td><td>${page.pageId}</td><td>${page.links?.length || 0}</td><td>${page.slugs?.length || 0}</td><td>${page.plan || '-'} </td><td>${page.theme || '-'} </td></tr>`;
   });
   html += '</tbody></table>';
 
