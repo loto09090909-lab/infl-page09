@@ -18,7 +18,9 @@ import {
   createUserPage,
   deleteUserPage,
   getUserPage,
+  exportUserPageContactSubmissions,
   listUserPages,
+  listUserPageContactSubmissions,
   updateUserPage,
 } from "./user-pages";
 
@@ -98,6 +100,18 @@ export default {
       if (method === "DELETE") {
         return deleteUserPage(req, env, corsHeaders, pageId);
       }
+    }
+
+    const userContactMatch = path.match(/^\/api\/user\/pages\/(.+)\/contact-submissions$/);
+    if (userContactMatch && method === "GET") {
+      const pageId = decodeURIComponent(userContactMatch[1]);
+      return listUserPageContactSubmissions(req, env, corsHeaders, pageId);
+    }
+
+    const userContactCsvMatch = path.match(/^\/api\/user\/pages\/(.+)\/contact-submissions\.csv$/);
+    if (userContactCsvMatch && method === "GET") {
+      const pageId = decodeURIComponent(userContactCsvMatch[1]);
+      return exportUserPageContactSubmissions(req, env, corsHeaders, pageId);
     }
 
     // --- 1. 관리자 API ---

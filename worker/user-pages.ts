@@ -3,6 +3,7 @@ import { resolvePageId } from "./slug";
 import { findConflictingSlug, getSlugsForPage, normalizeSlugs, replaceSlugMap } from "./slug-map";
 import { enforcePlanLimit, hasPrivateLinks, PlanLimitError } from "./plan-limits";
 import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
+import { fetchSubmissions } from "./contact";
 
 type CreatePageBody = {
   pageId?: string;
@@ -564,6 +565,48 @@ export async function deleteUserPage(
     .run();
 
   return jsonResponse({ success: true, message: "Page deleted" }, 200, headers);
+}
+
+export async function listUserPageContactSubmissions(
+  req: Request,
+  env: any,
+  headers: HeadersInit,
+  pageId: string
+) {
+  const access = await requireUserPageAccess(req, env, headers, pageId);
+  if ("error" in access) return access.error;
+
+  const submissions = await fetchSubmissions(env, access.pageId, 50);
+  return jsonResponse({ submissions }, 200, headers);
+}
+
+export async function exportUserPageContactSubmissions(
+  req: Request,
+  env: any,
+  headers: HeadersInit,
+  pageId: string
+) {
+  const access = await requireUserPageAccess(req, env, headers, pageId);
+  if ("error" in access) return access.error;
+
+  const submissions = await fetchSubmissions(env, access.pageId, 200);
+  const header = ["id", "pageId", "submittedAt", "ip", "userAgent", "answers"].join(",");
+  const rows = submissions.map((s) => {
+    const answers = s.answers.map((a) => `${a.label}:${a.value}`).join(" | ");
+    return [s.id, s.pageId, s.submittedAt, s.ip ?? "", s.userAgent ?? "", answers]
+      .map((value) => `"${(value ?? "").toString().replace(/"/g, '""')}"`)
+      .join(",");
+  });
+
+  const csv = [header, ...rows].join("\n");
+  return new Response(csv, {
+    status: 200,
+    headers: {
+      ...headers,
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="contact-submissions-${access.pageId}.csv"`,
+    },
+  });
 }
 
 export async function listUserPages(req: Request, env: any, headers: HeadersInit) {

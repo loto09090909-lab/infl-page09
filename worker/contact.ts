@@ -291,7 +291,7 @@ export async function submitContact(
   return jsonResponse({ ok: true, id: submission.id }, 201, headers);
 }
 
-async function fetchSubmissions(env: any, pageId: string, limit = 50): Promise<ContactSubmission[]> {
+export async function fetchSubmissions(env: any, pageId: string, limit = 50): Promise<ContactSubmission[]> {
   const indexKey = `contact:${pageId}:index`;
   const indexRaw = await env.PAGE_KV.get(indexKey);
   if (!indexRaw) return [];
