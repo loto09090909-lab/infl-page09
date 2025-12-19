@@ -14,7 +14,7 @@ import {
 import { getPage } from "./page-view";
 import { buildCorsHeaders, CorsOptions, errorResponse, jsonResponse } from "./utils";
 import { login as userLogin, signup as userSignup } from "./users";
-import { createUserPage, listUserPages } from "./user-pages";
+import { createUserPage, getUserPage, listUserPages, updateUserPage } from "./user-pages";
 
 export default {
   async fetch(req: Request, env: any): Promise<Response> {
@@ -75,6 +75,19 @@ export default {
 
     if (method === "GET" && path === "/api/user/pages") {
       return listUserPages(req, env, corsHeaders);
+    }
+
+    const userPageMatch = path.match(/^\/api\/user\/pages\/(.+)$/);
+    if (userPageMatch) {
+      const pageId = decodeURIComponent(userPageMatch[1]);
+
+      if (method === "GET") {
+        return getUserPage(req, env, corsHeaders, pageId);
+      }
+
+      if (method === "PUT") {
+        return updateUserPage(req, env, corsHeaders, pageId);
+      }
     }
 
     // --- 1. 관리자 API ---

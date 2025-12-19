@@ -1,10 +1,21 @@
 import { getBearerToken, getSessionSubject } from "./auth";
+import { resolvePageId } from "./slug";
 import { findConflictingSlug, getSlugsForPage, normalizeSlugs, replaceSlugMap } from "./slug-map";
 import { enforcePlanLimit, hasPrivateLinks, PlanLimitError } from "./plan-limits";
 import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
 
 type CreatePageBody = {
   pageId?: string;
+  profile?: unknown;
+  links?: unknown;
+  privateLinks?: unknown;
+  contactSchema?: unknown;
+  contactSettings?: unknown;
+  slugs?: unknown;
+  theme?: unknown;
+};
+
+type UpdatePageBody = {
   profile?: unknown;
   links?: unknown;
   privateLinks?: unknown;
@@ -179,6 +190,29 @@ async function requireUserSession(req: Request, env: any, headers: HeadersInit) 
   return { userId } as const;
 }
 
+async function requireUserPageAccess(
+  req: Request,
+  env: any,
+  headers: HeadersInit,
+  pageId: string
+) {
+  const session = await requireUserSession(req, env, headers);
+  if ("error" in session) return session;
+
+  const canonicalPageId = await resolvePageId(env, pageId);
+  const adminRow = await env.DB.prepare(
+    "SELECT 1 FROM page_admins WHERE page_id = ? AND user_id = ? LIMIT 1"
+  )
+    .bind(canonicalPageId, session.userId)
+    .first<{ "1": number }>();
+
+  if (!adminRow) {
+    return { error: errorResponse("페이지 관리자 권한이 없습니다", 403, headers) } as const;
+  }
+
+  return { userId: session.userId, pageId: canonicalPageId } as const;
+}
+
 export async function createUserPage(req: Request, env: any, headers: HeadersInit) {
   const session = await requireUserSession(req, env, headers);
   if ("error" in session) return session.error;
@@ -310,6 +344,198 @@ export async function createUserPage(req: Request, env: any, headers: HeadersIni
   await replaceSlugMap(env, pageId, slugs);
 
   return jsonResponse({ success: true, pageId }, 201, headers);
+}
+
+export async function getUserPage(req: Request, env: any, headers: HeadersInit, pageId: string) {
+  const access = await requireUserPageAccess(req, env, headers, pageId);
+  if ("error" in access) return access.error;
+
+  const kvRaw = await env.PAGE_KV.get(`page:${access.pageId}`);
+  if (!kvRaw) {
+    return errorResponse("Page not found", 404, headers);
+  }
+
+  let parsed: any = {};
+  try {
+    parsed = JSON.parse(kvRaw);
+  } catch (error) {
+    return errorResponse("Page data is corrupted", 500, headers);
+  }
+
+  const dbRow = await env.DB.prepare(
+    "SELECT page_id, name, photo_url, description, links FROM page_meta WHERE page_id = ? LIMIT 1"
+  )
+    .bind(access.pageId)
+    .first<{
+      page_id: string;
+      name: string | null;
+      photo_url: string | null;
+      description: string | null;
+      links: string | null;
+    }>();
+
+  return jsonResponse(
+    {
+      pageId: access.pageId,
+      profile: {
+        name: dbRow?.name ?? parsed?.profile?.name ?? null,
+        photoUrl: dbRow?.photo_url ?? parsed?.profile?.photoUrl ?? null,
+        description: dbRow?.description ?? parsed?.profile?.description ?? null,
+      },
+      links: dbRow ? safeParseLinks(dbRow.links) : Array.isArray(parsed.links) ? parsed.links : [],
+      privateLinks: parsed.privateLinks ?? [],
+      contactSchema: parsed.contactSchema ?? [],
+      contactSettings: parsed.contactSettings ?? { enabled: false },
+      slugs: Array.isArray(parsed.slugs) ? parsed.slugs : await getSlugsForPage(env, access.pageId),
+      plan: parsed.plan ?? null,
+      theme: typeof parsed.theme === "string" ? parsed.theme : "classic",
+    },
+    200,
+    headers
+  );
+}
+
+export async function updateUserPage(
+  req: Request,
+  env: any,
+  headers: HeadersInit,
+  pageId: string
+) {
+  const access = await requireUserPageAccess(req, env, headers, pageId);
+  if ("error" in access) return access.error;
+
+  const existingRaw = await env.PAGE_KV.get(`page:${access.pageId}`);
+  if (!existingRaw) {
+    return errorResponse("Page not found", 404, headers);
+  }
+
+  const body = await parseJsonBody<UpdatePageBody>(req);
+  if (!body) {
+    return errorResponse("잘못된 요청 본문입니다", 400, headers);
+  }
+
+  let existingData: any = {};
+  try {
+    existingData = JSON.parse(existingRaw);
+  } catch (error) {
+    existingData = {};
+  }
+
+  const { error: profileError, profile } = validateProfile(body.profile);
+  if (profileError) {
+    return errorResponse(profileError, 400, headers);
+  }
+
+  const {
+    error: linkError,
+    publicLinks,
+    privateLinks,
+    provided: linksProvided,
+  } = validateLinks(body.links);
+  if (linkError) {
+    return errorResponse(linkError, 400, headers);
+  }
+
+  const providedPrivate = validateLinks((body as any).privateLinks ?? [], true);
+  if (providedPrivate?.error) {
+    return errorResponse(providedPrivate.error, 400, headers);
+  }
+
+  const { error: contactError, schema, provided: contactProvided } = validateContactSchema(
+    body.contactSchema
+  );
+  if (contactError) {
+    return errorResponse(contactError, 400, headers);
+  }
+
+  const { error: contactSettingsError, settings: contactSettings } = validateContactSettings(
+    body.contactSettings
+  );
+  if (contactSettingsError) {
+    return errorResponse(contactSettingsError, 400, headers);
+  }
+
+  const { error: themeError, theme } = validateTheme(body.theme);
+  if (themeError) {
+    return errorResponse(themeError, 400, headers);
+  }
+
+  let slugs: string[] | null = null;
+  if (body.slugs !== undefined) {
+    slugs = normalizeSlugs(body.slugs, access.pageId);
+    const conflict = await findConflictingSlug(env, slugs, access.pageId);
+    if (conflict) {
+      return errorResponse(`이미 다른 페이지에 사용 중인 슬러그입니다: ${conflict}`, 409, headers);
+    }
+
+    try {
+      await enforcePlanLimit(env, existingData.plan ?? "free", "update_slug");
+    } catch (error) {
+      if (error instanceof PlanLimitError) {
+        return errorResponse(error.message, error.status, headers);
+      }
+      throw error;
+    }
+  } else if (!Array.isArray(existingData.slugs) || !existingData.slugs.length) {
+    slugs = await getSlugsForPage(env, access.pageId);
+  }
+
+  const nextPublicLinks = linksProvided ? publicLinks ?? [] : existingData.links ?? [];
+  const nextPrivateLinks = providedPrivate.provided
+    ? providedPrivate.privateLinks ?? []
+    : linksProvided && privateLinks !== undefined
+    ? privateLinks ?? []
+    : existingData.privateLinks ?? [];
+
+  const nextPage = {
+    profile: profile ?? existingData.profile ?? {},
+    links: nextPublicLinks,
+    privateLinks: nextPrivateLinks,
+    contactSchema:
+      contactProvided || schema !== undefined
+        ? schema ?? []
+        : existingData.contactSchema ?? [],
+    contactSettings: contactSettings ?? existingData.contactSettings ?? { enabled: false },
+    slugs: slugs ?? existingData.slugs ?? [],
+    plan: existingData.plan ?? "free",
+    theme:
+      typeof theme === "string"
+        ? theme
+        : typeof existingData.theme === "string"
+        ? existingData.theme
+        : "classic",
+  };
+
+  if (hasPrivateLinks([...nextPage.links, ...(nextPage.privateLinks ?? [])])) {
+    try {
+      await enforcePlanLimit(env, nextPage.plan, "create_private_link");
+    } catch (error) {
+      if (error instanceof PlanLimitError) {
+        return errorResponse(error.message, error.status, headers);
+      }
+      throw error;
+    }
+  }
+
+  await env.PAGE_KV.put(`page:${access.pageId}`, JSON.stringify(nextPage));
+
+  await env.DB.prepare(
+    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
+  )
+    .bind(
+      access.pageId,
+      (nextPage.profile as any)?.name ?? null,
+      (nextPage.profile as any)?.photoUrl ?? null,
+      (nextPage.profile as any)?.description ?? null,
+      JSON.stringify(nextPage.links)
+    )
+    .run();
+
+  if (slugs) {
+    await replaceSlugMap(env, access.pageId, slugs);
+  }
+
+  return jsonResponse({ success: true, pageId: access.pageId }, 200, headers);
 }
 
 export async function listUserPages(req: Request, env: any, headers: HeadersInit) {
