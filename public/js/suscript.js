@@ -131,6 +131,144 @@ let pageListState = { page: 1, pageSize: 30, total: 0, search: '' };
 let dragState = null;
 let bulkUploadPages = [];
 let bulkPreviewMeta = { filename: '', totalRows: 0, skipped: 0 };
+let pageTheme = 'classic';
+
+const THEME_PRESETS = [
+    {
+        id: 'classic',
+        label: '클래식',
+        desc: '밝은 기본 스타일',
+        swatch: ['#f7f7fb', '#ffffff', '#16a34a', '#0f172a'],
+    },
+    {
+        id: 'midnight',
+        label: '미드나잇',
+        desc: '어두운 배경 + 하늘색 포인트',
+        swatch: ['#0b1220', '#0f172a', '#22d3ee', '#e5e7eb'],
+    },
+    {
+        id: 'sunset',
+        label: '선셋',
+        desc: '따뜻한 주황/살구 톤',
+        swatch: ['#fff7ed', '#fef3c7', '#f97316', '#7c2d12'],
+    },
+    {
+        id: 'mint',
+        label: '민트',
+        desc: '시원한 민트/틸 포인트',
+        swatch: ['#ecfeff', '#f0fdfa', '#14b8a6', '#042f2e'],
+    },
+];
+
+function applyThemeToScopes() {
+    const validTheme = THEME_PRESETS.some((preset) => preset.id === pageTheme)
+        ? pageTheme
+        : 'classic';
+    pageTheme = validTheme;
+
+    const scopes = document.querySelectorAll('.theme-scope');
+    scopes.forEach((scope) => {
+        THEME_PRESETS.forEach((preset) => scope.classList.remove(`theme-${preset.id}`));
+        scope.classList.add(`theme-${validTheme}`);
+    });
+}
+
+function renderThemeOptions() {
+    const host = document.getElementById('sa-theme-options');
+    if (!host) return;
+
+    host.innerHTML = '';
+
+    THEME_PRESETS.forEach((preset) => {
+        const tile = document.createElement('button');
+        tile.type = 'button';
+        tile.className = `theme-tile ${preset.id === pageTheme ? 'active' : ''}`;
+        tile.setAttribute('aria-pressed', preset.id === pageTheme ? 'true' : 'false');
+
+        const swatch = document.createElement('div');
+        swatch.className = 'theme-swatch';
+        (preset.swatch || []).slice(0, 4).forEach((color) => {
+            const cell = document.createElement('span');
+            cell.style.background = color;
+            swatch.appendChild(cell);
+        });
+
+        const meta = document.createElement('div');
+        meta.className = 'theme-meta';
+        const title = document.createElement('div');
+        title.className = 'title';
+        title.innerText = preset.label;
+        const desc = document.createElement('div');
+        desc.className = 'desc';
+        desc.innerText = preset.desc;
+        meta.appendChild(title);
+        meta.appendChild(desc);
+
+        tile.appendChild(swatch);
+        tile.appendChild(meta);
+        tile.onclick = () => {
+            pageTheme = preset.id;
+            applyThemeToScopes();
+            renderThemeOptions();
+        };
+
+        host.appendChild(tile);
+    });
+}
+
+function updateThemePreview() {
+    const nameInput = document.getElementById('pageName');
+    const descInput = document.getElementById('pageDescription');
+    const photoInput = document.getElementById('pagePhoto');
+
+    const nameEl = document.getElementById('sa-theme-preview-name');
+    const descEl = document.getElementById('sa-theme-preview-desc');
+    const photoEl = document.getElementById('sa-theme-preview-photo');
+    const linksEl = document.getElementById('sa-theme-preview-links');
+
+    const name = nameInput?.value?.trim() || '페이지 이름';
+    const desc = descInput?.value?.trim() || '페이지 설명을 입력하면 여기에 표시됩니다.';
+    const photoUrl = photoInput?.value?.trim() || '';
+
+    if (nameEl) nameEl.innerText = name;
+    if (descEl) descEl.innerText = desc;
+    if (photoEl) {
+        if (photoUrl) {
+            photoEl.src = photoUrl;
+            photoEl.style.display = '';
+        } else {
+            photoEl.removeAttribute('src');
+            photoEl.style.display = 'none';
+        }
+    }
+
+    if (!linksEl) return;
+
+    linksEl.innerHTML = '';
+    linksEl.classList.add('link-stack');
+
+    if (!managedLinks.length) {
+        const empty = document.createElement('li');
+        empty.className = 'help-text';
+        empty.innerText = '링크가 아직 없습니다.';
+        linksEl.appendChild(empty);
+        return;
+    }
+
+    managedLinks.forEach((link) => {
+        if (!link) return;
+        const label = link.name || link.title || link.url || '링크';
+        const li = document.createElement('li');
+        const anchor = document.createElement('a');
+        anchor.href = link.url || '#';
+        anchor.target = '_blank';
+        anchor.rel = 'noopener';
+        anchor.className = 'link-with-icon';
+        anchor.innerText = label;
+        li.appendChild(anchor);
+        linksEl.appendChild(li);
+    });
+}
 
 function setSuperAdminStatus(message, tone = 'info') {
     const statusEl = document.getElementById('sa-status');
@@ -190,6 +328,7 @@ function resetForm() {
     document.getElementById('pagePhoto').value = '';
     document.getElementById('adminPassword').value = '';
     document.getElementById('plan').value = 'free';
+    pageTheme = 'classic';
     selectedPlatformId = PLATFORM_PRESETS[0]?.id || '';
     document.getElementById('saPlatformHandle').value = '';
     document.getElementById('saPlatformName').value = '';
@@ -200,6 +339,9 @@ function resetForm() {
     renderSuperAdminLinks();
     aliasSlugs = [];
     renderAliasSlugs();
+    applyThemeToScopes();
+    renderThemeOptions();
+    updateThemePreview();
     setFormTitle('페이지 생성');
     const submitBtn = document.getElementById('submit-btn');
     if (submitBtn) submitBtn.innerText = '페이지 생성';
@@ -250,7 +392,8 @@ async function submitPage() {
     adminEmail: adminEmail || undefined,
     adminPassword: adminPassword || undefined,
     plan: plan,
-    slugs
+    slugs,
+    theme: pageTheme,
   };
 
     const targetPageId = editingPageId || rawSlug || normalizedSlug;
@@ -446,6 +589,7 @@ async function editPage(pageId) {
   document.getElementById('pagePhoto').value = page.profile?.photoUrl || '';
   document.getElementById('adminPassword').value = '';
   document.getElementById('plan').value = page.plan || 'free';
+  pageTheme = typeof page.theme === 'string' ? page.theme : 'classic';
   selectedPlatformId = PLATFORM_PRESETS[0]?.id || '';
   document.getElementById('saPlatformHandle').value = '';
   document.getElementById('saPlatformName').value = '';
@@ -461,6 +605,9 @@ async function editPage(pageId) {
     .filter(Boolean);
   renderAliasSlugs();
   setFormTitle(`페이지 수정: ${page.pageId}`);
+  applyThemeToScopes();
+  renderThemeOptions();
+  updateThemePreview();
 
     setSuperAdminStatus(`${page.pageId} 페이지를 편집합니다. 저장 시 관리자 비밀번호를 비워두면 기존 값을 유지합니다.`, 'info');
 
@@ -482,6 +629,9 @@ document.addEventListener('DOMContentLoaded', () => {
     updatePlatformPrefix();
     setupSlugInputs();
     resetForm();
+    applyThemeToScopes();
+    renderThemeOptions();
+    updateThemePreview();
     loadPageList();
     setupBulkUpload();
 
@@ -492,6 +642,15 @@ document.addEventListener('DOMContentLoaded', () => {
             loadPageList(1);
         });
     }
+
+    const nameInput = document.getElementById('pageName');
+    const descInput = document.getElementById('pageDescription');
+    const photoInput = document.getElementById('pagePhoto');
+
+    [nameInput, descInput, photoInput].forEach((input) => {
+        if (!input) return;
+        input.addEventListener('input', () => updateThemePreview());
+    });
 });
 
 function setupBulkUpload() {
@@ -982,6 +1141,8 @@ function renderSuperAdminLinks() {
 
     list.appendChild(li);
   });
+
+  updateThemePreview();
 }
 
 function renderPlatformSelector() {
