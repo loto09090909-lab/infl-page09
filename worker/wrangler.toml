@@ -21,7 +21,7 @@ id = "df984fdb34cf4546816e70f8e029b47a"
 [[env.production.d1_databases]]
 binding = "DB"
 database_id = "1bc18749-585b-4c55-b378-78a29af5b5ca"
-database_name = "infl_page09"
+database_name = "infl_db"
 
 [env.production.vars]
 ALLOWED_ORIGINS = "https://infl-page09.pages.dev"
