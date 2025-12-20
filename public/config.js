@@ -20,4 +20,6 @@ window.APP_CONFIG = window.APP_CONFIG || {
   useCurrentOriginBase: true,
   // 기본 알려진 워커 베이스를 바꾸고 싶을 때 지정
   knownWorkerBase: undefined,
+  // Turnstile 사이트 키 (없으면 자동으로 비활성화)
+  turnstileSiteKey: undefined,
 };

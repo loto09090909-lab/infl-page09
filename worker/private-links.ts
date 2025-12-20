@@ -115,24 +115,11 @@ async function persistPrivateLink(env: any, pageId: string, record: PrivateLinkR
     .run();
 }
 
-export async function countActivePrivateLinks(env: any, pageId: string) {
-  await ensurePrivateLinksMigrated(env, pageId);
-  const row = await env.DB.prepare(
-    "SELECT COUNT(*) AS count FROM private_links WHERE page_id = ? AND status = 'active'"
-  )
-    .bind(pageId)
-    .first<{ count: number }>();
-  return Number(row?.count ?? 0);
-}
-
-export async function createPrivateLink(
-  req: Request,
+export async function createPrivateLinkRecord(
   env: any,
-  headers: HeadersInit,
-  pageId: string
+  pageId: string,
+  body: CreatePrivateLinkBody | null
 ) {
-  const body = await parseJsonBody<CreatePrivateLinkBody>(req);
-
   const expiresAt = sanitizeString(body?.expiresAt, 40);
   const maxUses = parsePositiveInt(body?.maxUses);
   const note = sanitizeString(body?.note, 120);
@@ -155,7 +142,28 @@ export async function createPrivateLink(
   await env.PAGE_KV.put(privateTokenKey(pageId, token), JSON.stringify(record));
   await persistPrivateLink(env, pageId, record);
 
-  return jsonResponse({ token, record }, 201, headers);
+  return { token, record };
+}
+
+export async function countActivePrivateLinks(env: any, pageId: string) {
+  await ensurePrivateLinksMigrated(env, pageId);
+  const row = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM private_links WHERE page_id = ? AND status = 'active'"
+  )
+    .bind(pageId)
+    .first<{ count: number }>();
+  return Number(row?.count ?? 0);
+}
+
+export async function createPrivateLink(
+  req: Request,
+  env: any,
+  headers: HeadersInit,
+  pageId: string
+) {
+  const body = await parseJsonBody<CreatePrivateLinkBody>(req);
+  const created = await createPrivateLinkRecord(env, pageId, body);
+  return jsonResponse(created, 201, headers);
 }
 
 export async function listPrivateLinks(

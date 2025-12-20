@@ -13,9 +13,13 @@ import {
   enforceContactFieldLimit,
   enforcePlanLimit,
   enforcePrivateLinkLimit,
+  getPagePlanId,
+  getPlanLimits,
   hasPrivateLinks,
   PlanLimitError,
 } from "./plan-limits";
+import { countSubmissions } from "./contact";
+import { countActivePrivateLinks } from "./private-links";
 import {
   buildLoginIdentifier,
   clearLoginAttempts,
@@ -258,8 +262,8 @@ export async function pageAdminLogin(
     const memberExists = await env.DB.prepare(
       "SELECT 1 FROM page_members WHERE page_id = ? LIMIT 1"
     )
-      .bind(canonicalPageId)
-      .first<{ \"1\": number }>();
+    .bind(canonicalPageId)
+      .first<{ "1": number }>();
     if (!memberExists) {
       return errorResponseWithCode("페이지 관리자 계정을 찾을 수 없습니다", "NOT_FOUND", 404, headers);
     }
@@ -282,7 +286,7 @@ export async function pageAdminLogin(
     "SELECT 1 FROM page_members WHERE page_id = ? AND user_id = ? LIMIT 1"
   )
     .bind(canonicalPageId, result.user.id)
-    .first<{ \"1\": number }>();
+    .first<{ "1": number }>();
 
   if (!memberRow && result.user.id !== adminRow?.user_id) {
     await recordFailedLogin(env, "page", loginIdentifier);
@@ -343,6 +347,62 @@ export async function verifyPageSession(
       ok: true,
       role: superTokenValid ? "super" : "page",
       pageId: canonicalPageId,
+    },
+    200,
+    headers
+  );
+}
+
+export async function getPagePlanStatus(
+  req: Request,
+  env: any,
+  pageId: string,
+  headers: HeadersInit
+) {
+  const token = getBearerToken(req);
+  const canonicalPageId = await resolvePageId(env, pageId);
+
+  const pageTokenValid = await verifySessionToken(env, "page", token, canonicalPageId);
+  const superTokenValid = await verifySessionToken(env, "super", token);
+  if (!pageTokenValid && !superTokenValid) {
+    return errorResponse("페이지 관리자 인증이 필요합니다", 401, headers);
+  }
+
+  const planId = (await getPagePlanId(env, canonicalPageId)) ?? "free";
+  const limits = await getPlanLimits(env, planId);
+  const kvRaw = await env.PAGE_KV.get(`page:${canonicalPageId}`);
+  let parsed: any = {};
+  if (kvRaw) {
+    try {
+      parsed = JSON.parse(kvRaw);
+    } catch (error) {
+      parsed = {};
+    }
+  }
+
+  const [activePrivateLinks, contactSubmissions] = await Promise.all([
+    countActivePrivateLinks(env, canonicalPageId),
+    countSubmissions(env, canonicalPageId),
+  ]);
+
+  const contactFieldCount = Array.isArray(parsed?.contactSchema) ? parsed.contactSchema.length : 0;
+
+  const overages = {
+    privateLinks: activePrivateLinks > limits.max_private_links,
+    contactFields: contactFieldCount > limits.max_contact_fields,
+  };
+
+  return jsonResponse(
+    {
+      pageId: canonicalPageId,
+      planId,
+      limits,
+      usage: {
+        privateLinks: activePrivateLinks,
+        contactFields: contactFieldCount,
+        contactSubmissions,
+      },
+      overages,
     },
     200,
     headers
