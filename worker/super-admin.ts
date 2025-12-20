@@ -1,4 +1,10 @@
-import { createSessionToken, getBearerToken, revokeSessionToken, verifySessionToken } from "./auth";
+import {
+  createSessionToken,
+  getBearerToken,
+  hasSessionSecret,
+  revokeSessionToken,
+  verifySessionToken,
+} from "./auth";
 import { resolvePageId } from "./slug";
 import {
   findConflictingSlug,
@@ -420,6 +426,10 @@ export async function superAdminLogin(
   env: any,
   headers: HeadersInit
 ): Promise<Response> {
+  if (!hasSessionSecret(env)) {
+    return errorResponse("TOKEN_SECRET 또는 SESSION_SECRET이 필요합니다.", 500, headers);
+  }
+
   const body = await parseJsonBody<LoginBody>(req);
   if (!body || typeof body.password !== "string") {
     return errorResponse("아이디와 비밀번호를 모두 입력하세요", 400, headers);
@@ -476,6 +486,10 @@ export async function bootstrapSuperAdmin(
   env: any,
   headers: HeadersInit
 ): Promise<Response> {
+  if (!hasSessionSecret(env)) {
+    return errorResponse("TOKEN_SECRET 또는 SESSION_SECRET이 필요합니다.", 500, headers);
+  }
+
   const body = await parseJsonBody<LoginBody>(req);
   if (!body || typeof body.password !== "string") {
     return errorResponse("아이디와 비밀번호를 모두 입력하세요", 400, headers);

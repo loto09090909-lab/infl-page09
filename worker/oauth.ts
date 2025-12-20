@@ -1,4 +1,4 @@
-import { createSessionToken } from "./auth";
+import { createSessionToken, hasSessionSecret } from "./auth";
 import { errorResponse, jsonResponse } from "./utils";
 import { findOrCreateOAuthUser } from "./users";
 
@@ -240,6 +240,10 @@ export async function handleOAuthCallback(
     });
   } catch (error: any) {
     return errorResponse(error?.message || "OAuth 사용자 생성에 실패했습니다", 409, headers);
+  }
+
+  if (!hasSessionSecret(env)) {
+    return errorResponse("TOKEN_SECRET 또는 SESSION_SECRET이 필요합니다.", 500, headers);
   }
 
   const session = await createSessionToken(env, "user", user.id);
