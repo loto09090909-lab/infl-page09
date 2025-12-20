@@ -640,11 +640,11 @@ export async function listPages(
   const likeSearch = `%${search}%`;
 
   const baseQuery =
-    "FROM page_meta pm " +
-    (hasSearch ? "LEFT JOIN slug_map sm ON pm.page_id = sm.page_id " : "") +
+    "FROM page_meta " + 
+    (hasSearch ? "LEFT JOIN slug_map sm ON page_meta.page_id = sm.page_id " : "") +
     (hasSearch
-      ? "WHERE pm.page_id LIKE ? OR pm.name LIKE ? OR sm.display_name LIKE ?"
-      : "");
+      ? "WHERE page_meta.page_id LIKE ? OR page_meta.name LIKE ? OR sm.display_name LIKE ?"
+      : " ");
 
   const countParams = hasSearch ? [likeSearch, likeSearch, likeSearch] : [];
   let countStmt = env.DB.prepare(
@@ -663,7 +663,7 @@ export async function listPages(
     : [pageSize, offset];
 
   let dataStmt = env.DB.prepare(
-    `SELECT DISTINCT pm.page_id, pm.name, pm.photo_url, pm.description, pm.links, pm.plan_id ${baseQuery} ORDER BY pm.page_id LIMIT ? OFFSET ?`
+    `SELECT DISTINCT page_meta.page_id, name, photo_url, description, links, plan_id ${baseQuery} ORDER BY page_meta.page_id LIMIT ? OFFSET ?`
   );
   if (dataParams.length) {
     dataStmt = dataStmt.bind(...dataParams);
