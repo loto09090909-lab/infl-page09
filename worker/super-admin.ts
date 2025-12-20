@@ -626,50 +626,44 @@ export async function bulkCreatePages(
   );
 }
 
-export async function listPages(
-  req: Request,
-  env: any,
-  headers: HeadersInit
-): Promise<Response> {
+export async function listPages(req: Request, env: any, headers: HeadersInit): Promise<Response> {
   const url = new URL(req.url);
   const page = Math.max(1, Number(url.searchParams.get("page")) || 1);
   const pageSize = Math.min(100, Math.max(1, Number(url.searchParams.get("pageSize")) || 30));
   const search = (url.searchParams.get("search") || "").trim();
-
   const hasSearch = !!search;
   const likeSearch = `%${search}%`;
 
-  const baseQuery =
-    "FROM page_meta " + 
-    (hasSearch ? "LEFT JOIN slug_map sm ON page_meta.page_id = sm.page_id " : "") +
-    (hasSearch
-      ? "WHERE page_meta.page_id LIKE ? OR page_meta.name LIKE ? OR sm.display_name LIKE ?"
-      : " ");
+  // 1. 기본 쿼리 구성 (별칭 pm 명확히 확인)
+  const fromClause = "FROM page_meta pm ";
+  const joinClause = hasSearch ? "LEFT JOIN slug_map sm ON pm.page_id = sm.page_id " : "";
+  const whereClause = hasSearch ? "WHERE (pm.page_id LIKE ? OR pm.name LIKE ? OR sm.display_name LIKE ?) " : "";
+  
+  const baseQuery = `${fromClause} ${joinClause} ${whereClause}`;
 
-  const countParams = hasSearch ? [likeSearch, likeSearch, likeSearch] : [];
-  let countStmt = env.DB.prepare(
-    `SELECT COUNT(DISTINCT pm.page_id) AS total ${baseQuery}`
-  );
-  if (countParams.length) {
-    countStmt = countStmt.bind(...countParams);
+  // 2. 전체 개수 조회 (countStmt)
+  let countStmt = env.DB.prepare(`SELECT COUNT(DISTINCT pm.page_id) AS total ${baseQuery}`);
+  if (hasSearch) {
+    countStmt = countStmt.bind(likeSearch, likeSearch, likeSearch);
   }
   const countRow = await countStmt.first<{ total: number }>();
-
   const total = Number(countRow?.total || 0);
+
+  // 3. 데이터 조회 (dataStmt)
   const offset = (page - 1) * pageSize;
-
-  const dataParams = hasSearch
-    ? [likeSearch, likeSearch, likeSearch, pageSize, offset]
-    : [pageSize, offset];
-
   let dataStmt = env.DB.prepare(
-    `SELECT DISTINCT page_meta.page_id, name, photo_url, description, links, plan_id ${baseQuery} ORDER BY page_meta.page_id LIMIT ? OFFSET ?`
+    `SELECT DISTINCT pm.page_id, pm.name, pm.photo_url, pm.description, pm.links, pm.plan_id 
+     ${baseQuery} 
+     ORDER BY pm.page_id ASC LIMIT ? OFFSET ?`
   );
-  if (dataParams.length) {
-    dataStmt = dataStmt.bind(...dataParams);
+
+  if (hasSearch) {
+    dataStmt = dataStmt.bind(likeSearch, likeSearch, likeSearch, pageSize, offset);
+  } else {
+    dataStmt = dataStmt.bind(pageSize, offset);
   }
 
-  const dbRows = await dataStmt.all<{
+  const dbRows = await dataStmt.all();
     page_id: string;
     name: string | null;
     photo_url: string | null;
