@@ -18,7 +18,11 @@ database_name = "infl_page09"
 [env.preview]
 [env.preview.vars]
 ALLOWED_ORIGINS = "https://preview.infl-page09.pages.dev,https://infl-page09.pages.dev"
+TOKEN_SECRET = "fdmadskfjlq123"
+SESSION_SECRET = "ewqjeiojos231fa"
 
 [env.production]
 [env.production.vars]
 ALLOWED_ORIGINS = "https://infl-page09.pages.dev"
+TOKEN_SECRET = "fdmadskfjlq123"
+SESSION_SECRET = "ewqjeiojos231fa"
