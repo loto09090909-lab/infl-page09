@@ -10,6 +10,7 @@
 /login               /login.html           200!
 /user-login          /user-login.html      200!
 /signup              /signup.html          200!
+/dashboard           /user-dashboard.html  200!
 /user                /user.html            200!
 /                    /index.html           200!
 

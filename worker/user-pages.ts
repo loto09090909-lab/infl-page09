@@ -870,8 +870,15 @@ export async function deleteUserPageContactSubmissions(
   const access = await requireUserPageAccess(req, env, headers, pageId);
   if ("error" in access) return access.error;
 
-  const { removed } = await clearContactSubmissionsData(env, access.pageId);
-  return jsonResponse({ success: true, deleted: removed }, 200, headers);
+  const url = new URL(req.url);
+  const beforeDays = Number(url.searchParams.get("beforeDays"));
+  const effectiveBeforeDays = Number.isFinite(beforeDays) && beforeDays > 0 ? beforeDays : undefined;
+  const { removed, remaining } = await clearContactSubmissionsData(
+    env,
+    access.pageId,
+    effectiveBeforeDays
+  );
+  return jsonResponse({ success: true, deleted: removed, remaining }, 200, headers);
 }
 
 export async function exportUserPageContactSubmissions(

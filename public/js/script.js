@@ -995,6 +995,9 @@ document.addEventListener('DOMContentLoaded', () => {
     renderApiDebugPanel('api-debug');
     renderThemeOptions();
     consumeOAuthTokenFromQuery();
+    if (window.location.pathname.endsWith('/user-dashboard.html') || window.location.pathname.endsWith('/dashboard')) {
+        refreshUserDashboard();
+    }
 
     const pageAdminIdInput = document.getElementById('page-admin-id');
     if (pageAdminIdInput && (pageIdFromPath || pageIdFromQuery)) {
@@ -1398,6 +1401,77 @@ async function fetchUserPrimaryPage() {
     return items[0]?.pageId || null;
 }
 
+async function fetchUserPages() {
+    const token = sessionStorage.getItem('user_token');
+    if (!token) return [];
+
+    const res = await apiFetch('/api/user/pages', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+    }, [401, 403, 404]);
+
+    if (!res.ok) return [];
+    const payload = await res.json().catch(() => null);
+    return Array.isArray(payload?.items) ? payload.items : [];
+}
+
+function renderUserPagesDashboard(items) {
+    const list = document.getElementById('user-pages-list');
+    if (!list) return;
+    list.innerHTML = '';
+
+    if (!items.length) {
+        const empty = document.createElement('li');
+        empty.className = 'empty';
+        empty.innerText = '아직 생성된 페이지가 없습니다.';
+        list.appendChild(empty);
+        return;
+    }
+
+    items.forEach((item) => {
+        const row = document.createElement('li');
+        row.className = 'link-item';
+
+        const info = document.createElement('div');
+        info.className = 'link-info';
+        info.innerHTML = `<strong>${item.pageId}</strong><div class="muted">${item.profile?.name || ''}</div>`;
+        row.appendChild(info);
+
+        const actions = document.createElement('div');
+        actions.className = 'link-actions';
+        const manageBtn = document.createElement('button');
+        manageBtn.type = 'button';
+        manageBtn.className = 'secondary';
+        manageBtn.innerText = '관리';
+        manageBtn.onclick = () => {
+            window.location.href = `/page-admin-login.html?pageId=${encodeURIComponent(item.pageId)}`;
+        };
+        actions.appendChild(manageBtn);
+        row.appendChild(actions);
+        list.appendChild(row);
+    });
+}
+
+async function refreshUserDashboard() {
+    const list = document.getElementById('user-pages-list');
+    if (!list) return;
+
+    const token = sessionStorage.getItem('user_token');
+    if (!token) {
+        window.location.href = '/user-login';
+        return;
+    }
+
+    const items = await fetchUserPages();
+    renderUserPagesDashboard(items);
+}
+
+function userLogout() {
+    sessionStorage.removeItem('user_token');
+    sessionStorage.removeItem('user_token_expires_at');
+    window.location.href = '/user-login';
+}
+
 async function userSignup() {
     const emailInput = document.getElementById('user-signup-email');
     const passwordInput = document.getElementById('user-signup-password');
@@ -1425,10 +1499,7 @@ async function userSignup() {
     storeUserSession(payload?.token, payload?.expiresIn);
 
     const pageId = payload?.pageId;
-    const target = pageId
-        ? `/page-admin-login.html?pageId=${encodeURIComponent(pageId)}`
-        : '/page-admin-login.html';
-    window.location.href = target;
+    window.location.href = '/dashboard';
 }
 
 async function userLogin() {
@@ -1457,15 +1528,11 @@ async function userLogin() {
     const payload = await res.json().catch(() => null);
     storeUserSession(payload?.token, payload?.expiresIn);
 
-    const pageId = await fetchUserPrimaryPage();
-    const target = pageId
-        ? `/page-admin-login.html?pageId=${encodeURIComponent(pageId)}`
-        : '/page-admin-login.html';
-    window.location.href = target;
+    window.location.href = '/dashboard';
 }
 
 function startOAuth(provider) {
-    const redirect = `${window.location.origin}/user-login`;
+    const redirect = `${window.location.origin}/dashboard`;
     primeApiBaseSelection().then((base) => {
         const targetBase = base || API_BASES[0];
         if (!targetBase) {
@@ -1488,11 +1555,7 @@ async function consumeOAuthTokenFromQuery() {
     const nextUrl = `${window.location.pathname}${searchParams.toString() ? `?${searchParams.toString()}` : ''}`;
     window.history.replaceState({}, '', nextUrl);
 
-    const pageId = await fetchUserPrimaryPage();
-    const target = pageId
-        ? `/page-admin-login.html?pageId=${encodeURIComponent(pageId)}`
-        : '/page-admin-login.html';
-    window.location.href = target;
+    window.location.href = '/dashboard';
 }
 
 async function logoutSuperAdmin() {
@@ -2014,16 +2077,18 @@ async function clearContactSubmissions() {
         return;
     }
 
-    if (!confirm('문의 내역을 모두 삭제할까요?')) {
-        return;
-    }
+    const input = prompt('삭제할 범위를 입력하세요. 전체 삭제는 ALL, 보관 기간(일)은 숫자 입력 (예: 180)', 'ALL');
+    if (!input) return;
+    const trimmed = input.trim().toUpperCase();
+    const beforeDays = trimmed === 'ALL' ? null : Number(trimmed);
 
     status.style.display = 'block';
     status.className = 'status-banner info';
     status.innerText = '문의 내역을 삭제하는 중입니다...';
 
     try {
-        const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/contact-submissions`, {
+        const query = Number.isFinite(beforeDays) ? `?beforeDays=${encodeURIComponent(beforeDays)}` : '';
+        const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/contact-submissions${query}`, {
             method: 'DELETE',
             headers: { Authorization: `Bearer ${token}` },
         }, [401, 403, 404]);

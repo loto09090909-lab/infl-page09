@@ -123,4 +123,9 @@ echo "issue: $issue"
 curl -sSf -X DELETE "$BASE/api/user/pages/$page_id/contact-submissions" \
   -H "Authorization: Bearer $user_token" >/dev/null
 
+if [[ -n "${OAUTH_GOOGLE_CLIENT_ID:-}" || -n "${OAUTH_NAVER_CLIENT_ID:-}" ]]; then
+  echo "OAuth start endpoint check"
+  curl -sS -I "$BASE/api/auth/google/start" | head -n 1 || true
+fi
+
 echo "Smoke tests completed."

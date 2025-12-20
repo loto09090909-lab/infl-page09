@@ -365,7 +365,11 @@ async function deleteSubmissionRecords(env: any, pageId: string, ids: string[]) 
   return ids.length;
 }
 
-export async function clearContactSubmissionsData(env: any, pageId: string) {
+export async function clearContactSubmissionsData(
+  env: any,
+  pageId: string,
+  beforeDays?: number
+) {
   const indexKey = `contact:${pageId}:index`;
   const indexRaw = await env.PAGE_KV.get(indexKey);
   let ids: string[] = [];
@@ -377,9 +381,39 @@ export async function clearContactSubmissionsData(env: any, pageId: string) {
     }
   }
 
-  await env.PAGE_KV.delete(indexKey);
-  const removed = await deleteSubmissionRecords(env, pageId, ids);
-  return { removed };
+  if (!ids.length) {
+    return { removed: 0, remaining: 0 };
+  }
+
+  let toRemove = ids;
+  let keep = [] as string[];
+  if (beforeDays && Number.isFinite(beforeDays) && beforeDays > 0) {
+    const threshold = Date.now() - beforeDays * 24 * 60 * 60 * 1000;
+    const records = await Promise.all(ids.map((id) => env.PAGE_KV.get(`contact:${pageId}:${id}`)));
+    ids.forEach((id, idx) => {
+      const raw = records[idx];
+      if (!raw) return;
+      try {
+        const parsed = JSON.parse(raw) as ContactSubmission;
+        const submittedAt = Date.parse(parsed.submittedAt);
+        if (Number.isFinite(submittedAt) && submittedAt < threshold) {
+          return;
+        }
+      } catch (error) {
+        return;
+      }
+      keep.push(id);
+    });
+    toRemove = ids.filter((id) => !keep.includes(id));
+  }
+
+  if (beforeDays) {
+    await env.PAGE_KV.put(indexKey, JSON.stringify(keep));
+  } else {
+    await env.PAGE_KV.delete(indexKey);
+  }
+  const removed = await deleteSubmissionRecords(env, pageId, toRemove);
+  return { removed, remaining: keep.length };
 }
 
 export async function deleteContactSubmissions(
@@ -397,12 +431,20 @@ export async function deleteContactSubmissions(
     return errorResponse("인증이 필요합니다", 401, headers);
   }
 
-  const { removed } = await clearContactSubmissionsData(env, canonicalPageId);
+  const url = new URL(req.url);
+  const beforeDays = Number(url.searchParams.get("beforeDays"));
+  const effectiveBeforeDays = Number.isFinite(beforeDays) && beforeDays > 0 ? beforeDays : undefined;
+  const { removed, remaining } = await clearContactSubmissionsData(
+    env,
+    canonicalPageId,
+    effectiveBeforeDays
+  );
 
   return jsonResponse(
     {
       success: true,
       deleted: removed,
+      remaining,
       retentionDays: Number(env.CONTACT_RETENTION_DAYS) || DEFAULT_CONTACT_RETENTION_DAYS,
     },
     200,
