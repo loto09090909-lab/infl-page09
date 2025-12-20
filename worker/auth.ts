@@ -102,6 +102,14 @@ function getSessionSecret(env: any): string | null {
   return env.TOKEN_SECRET || env.SESSION_SECRET || null;
 }
 
+function requireSessionSecret(env: any): string {
+  const secret = getSessionSecret(env);
+  if (!secret) {
+    throw new Error("TOKEN_SECRET 또는 SESSION_SECRET이 필요합니다.");
+  }
+  return secret;
+}
+
 async function verifyLegacySession(
   env: any,
   role: SessionRole,
@@ -136,29 +144,19 @@ export async function createSessionToken(
   subject: string,
   ttlSeconds = 3600
 ): Promise<{ token: string; expiresIn: number }> {
-  const secret = getSessionSecret(env);
+  const secret = requireSessionSecret(env);
   const now = Math.floor(Date.now() / 1000);
   const exp = now + ttlSeconds;
 
-  if (secret) {
-    const payload: SignedPayload = {
-      role,
-      sub: subject,
-      iat: now,
-      exp,
-      jti: crypto.randomUUID(),
-    };
+  const payload: SignedPayload = {
+    role,
+    sub: subject,
+    iat: now,
+    exp,
+    jti: crypto.randomUUID(),
+  };
 
-    const token = await signToken(secret, payload);
-    return { token, expiresIn: ttlSeconds };
-  }
-
-  const token = crypto.randomUUID();
-  await env.PAGE_KV.put(
-    `session:${role}:${token}`,
-    JSON.stringify({ subject, exp }),
-    { expirationTtl: ttlSeconds }
-  );
+  const token = await signToken(secret, payload);
   return { token, expiresIn: ttlSeconds };
 }
 

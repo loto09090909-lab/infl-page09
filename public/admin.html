@@ -146,6 +146,25 @@
             <div id="private-links-summary" class="private-links-summary"></div>
         </section>
 
+        <section class="card private-template-card">
+            <div class="card-header">
+                <div>
+                    <p class="eyebrow">프라이빗 템플릿</p>
+                    <h3>프라이빗 링크 템플릿 관리</h3>
+                    <p class="help-text">템플릿을 만들어두고 필요할 때 난수 링크를 발급하세요.</p>
+                </div>
+                <button class="secondary" type="button" onclick="loadPrivateTemplates()">새로고침</button>
+            </div>
+            <div class="inline-inputs">
+                <input id="template-name" placeholder="템플릿 이름" />
+                <input id="template-expires" placeholder="만료일(예: 2025-12-31T00:00:00Z)" />
+                <input id="template-maxuses" type="number" placeholder="최대 사용 횟수" />
+                <input id="template-note" placeholder="메모 (선택)" />
+                <button class="primary" type="button" onclick="createPrivateTemplate()">템플릿 추가</button>
+            </div>
+            <ul id="private-template-list" class="link-list"></ul>
+        </section>
+
         <section class="card contact-card">
             <div class="card-header">
                 <div>
@@ -197,6 +216,7 @@
                 <div class="card-actions">
                     <button type="button" class="ghost" onclick="downloadContactCsv()">CSV 다운로드</button>
                     <button type="button" class="ghost" onclick="fetchContactSubmissions()">새로고침</button>
+                    <button type="button" class="ghost" onclick="clearContactSubmissions()">문의 삭제</button>
                 </div>
             </div>
             <div id="contact-submission-status" class="status-banner" style="display: none;"></div>

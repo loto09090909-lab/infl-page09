@@ -29,6 +29,7 @@ const MAX_FIELD_LENGTH = 2000;
 const MAX_SUBMISSIONS_PER_PAGE = 200;
 const DEFAULT_RATE_LIMIT = 5;
 const DEFAULT_RATE_WINDOW_MS = 15 * 60 * 1000;
+const DEFAULT_CONTACT_RETENTION_DAYS = 180;
 
 function sanitizeString(value: unknown, maxLength: number): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -106,10 +107,24 @@ async function readContactSchema(env: any, pageId: string): Promise<{
   }
 }
 
-async function checkSubmissionThrottle(env: any, pageId: string, ip: string | null) {
+async function hashString(value: string) {
+  const data = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function checkSubmissionThrottle(
+  env: any,
+  pageId: string,
+  ip: string | null,
+  userAgent: string | null
+) {
   if (!ip) return;
 
-  const key = `contact:throttle:${pageId}:${ip}`;
+  const uaHash = userAgent ? await hashString(userAgent) : "na";
+  const key = `contact:throttle:${pageId}:${ip}:${uaHash.slice(0, 16)}`;
   const now = Date.now();
   const windowMs = Number(env.CONTACT_THROTTLE_WINDOW_MS) || DEFAULT_RATE_WINDOW_MS;
   const limit = Number(env.CONTACT_THROTTLE_MAX) || DEFAULT_RATE_LIMIT;
@@ -140,6 +155,32 @@ async function checkSubmissionThrottle(env: any, pageId: string, ip: string | nu
 
   count += 1;
   await env.PAGE_KV.put(key, JSON.stringify({ count, resetAt }), { expirationTtl: Math.ceil((resetAt - now) / 1000) });
+}
+
+async function verifyTurnstile(
+  env: any,
+  token: string | undefined,
+  ip: string | null
+) {
+  const secret = env.TURNSTILE_SECRET;
+  if (!secret) return true;
+  if (!token) return false;
+
+  const body = new URLSearchParams();
+  body.set("secret", secret);
+  body.set("response", token);
+  if (ip) {
+    body.set("remoteip", ip);
+  }
+
+  const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+  if (!res.ok) return false;
+  const data = await res.json<{ success?: boolean }>();
+  return data?.success === true;
 }
 
 async function forwardSubmission(
@@ -224,6 +265,18 @@ export async function submitContact(
     return errorResponse("잘못된 본문입니다", 400, headers);
   }
 
+  const honeypot = typeof body?.company === "string" ? body.company.trim() : "";
+  if (honeypot) {
+    return jsonResponse({ ok: true, ignored: true }, 202, headers);
+  }
+
+  const ip = req.headers.get("CF-Connecting-IP") || req.headers.get("x-forwarded-for");
+  const userAgent = req.headers.get("user-agent");
+  const turnstileOk = await verifyTurnstile(env, body?.turnstileToken, ip);
+  if (!turnstileOk) {
+    return errorResponse("봇 검증에 실패했습니다", 400, headers);
+  }
+
   const answersInput = Array.isArray(body?.answers) ? body.answers : [];
   if (!answersInput.length) {
     return errorResponse("answers 배열이 필요합니다", 400, headers);
@@ -290,12 +343,12 @@ export async function submitContact(
     pageId: canonicalPageId,
     submittedAt: new Date().toISOString(),
     answers,
-    ip: req.headers.get("CF-Connecting-IP") || req.headers.get("x-forwarded-for"),
-    userAgent: req.headers.get("user-agent"),
+    ip,
+    userAgent,
   };
 
   try {
-    await checkSubmissionThrottle(env, canonicalPageId, submission.ip || null);
+    await checkSubmissionThrottle(env, canonicalPageId, submission.ip || null, submission.userAgent || null);
   } catch (error) {
     return errorResponse(error instanceof Error ? error.message : "제출 제한을 초과했습니다", 429, headers);
   }
@@ -304,6 +357,99 @@ export async function submitContact(
   forwardSubmission(env, submission, settings);
 
   return jsonResponse({ ok: true, id: submission.id }, 201, headers);
+}
+
+async function deleteSubmissionRecords(env: any, pageId: string, ids: string[]) {
+  if (!ids.length) return 0;
+  await Promise.all(ids.map((id) => env.PAGE_KV.delete(`contact:${pageId}:${id}`)));
+  return ids.length;
+}
+
+export async function clearContactSubmissionsData(
+  env: any,
+  pageId: string,
+  beforeDays?: number
+) {
+  const indexKey = `contact:${pageId}:index`;
+  const indexRaw = await env.PAGE_KV.get(indexKey);
+  let ids: string[] = [];
+  if (indexRaw) {
+    try {
+      ids = JSON.parse(indexRaw);
+    } catch (error) {
+      ids = [];
+    }
+  }
+
+  if (!ids.length) {
+    return { removed: 0, remaining: 0 };
+  }
+
+  let toRemove = ids;
+  let keep = [] as string[];
+  if (beforeDays && Number.isFinite(beforeDays) && beforeDays > 0) {
+    const threshold = Date.now() - beforeDays * 24 * 60 * 60 * 1000;
+    const records = await Promise.all(ids.map((id) => env.PAGE_KV.get(`contact:${pageId}:${id}`)));
+    ids.forEach((id, idx) => {
+      const raw = records[idx];
+      if (!raw) return;
+      try {
+        const parsed = JSON.parse(raw) as ContactSubmission;
+        const submittedAt = Date.parse(parsed.submittedAt);
+        if (Number.isFinite(submittedAt) && submittedAt < threshold) {
+          return;
+        }
+      } catch (error) {
+        return;
+      }
+      keep.push(id);
+    });
+    toRemove = ids.filter((id) => !keep.includes(id));
+  }
+
+  if (beforeDays) {
+    await env.PAGE_KV.put(indexKey, JSON.stringify(keep));
+  } else {
+    await env.PAGE_KV.delete(indexKey);
+  }
+  const removed = await deleteSubmissionRecords(env, pageId, toRemove);
+  return { removed, remaining: keep.length };
+}
+
+export async function deleteContactSubmissions(
+  req: Request,
+  env: any,
+  pageId: string,
+  headers: HeadersInit
+): Promise<Response> {
+  const token = getBearerToken(req);
+  const canonicalPageId = await resolvePageId(env, pageId);
+  const pageTokenValid = await verifySessionToken(env, "page", token, canonicalPageId);
+  const superTokenValid = await verifySessionToken(env, "super", token);
+
+  if (!pageTokenValid && !superTokenValid) {
+    return errorResponse("인증이 필요합니다", 401, headers);
+  }
+
+  const url = new URL(req.url);
+  const beforeDays = Number(url.searchParams.get("beforeDays"));
+  const effectiveBeforeDays = Number.isFinite(beforeDays) && beforeDays > 0 ? beforeDays : undefined;
+  const { removed, remaining } = await clearContactSubmissionsData(
+    env,
+    canonicalPageId,
+    effectiveBeforeDays
+  );
+
+  return jsonResponse(
+    {
+      success: true,
+      deleted: removed,
+      remaining,
+      retentionDays: Number(env.CONTACT_RETENTION_DAYS) || DEFAULT_CONTACT_RETENTION_DAYS,
+    },
+    200,
+    headers
+  );
 }
 
 export async function countSubmissions(env: any, pageId: string): Promise<number> {

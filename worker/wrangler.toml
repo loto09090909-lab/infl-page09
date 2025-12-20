@@ -2,10 +2,8 @@ name = "infl-worker"
 main = "index.ts"
 compatibility_date = "2025-12-14"
 
-# 환경 변수 추가 (CORS 에러 방지용)
 [vars]
-ALLOWED_ORIGINS = "https://infl-page09.pages.dev"
-TOKEN_SECRET = " ffqweirofjiodfpjq9tipodjdiogjqwjifpwiejropcvxnxcbncskdl"
+ALLOWED_ORIGINS = "http://localhost:8787,https://infl-page09.pages.dev"
 
 [[kv_namespaces]]
 binding = "PAGE_KV"
@@ -14,4 +12,16 @@ id = "df984fdb34cf4546816e70f8e029b47a"
 [[d1_databases]]
 binding = "DB"
 database_id = "1bc18749-585b-4c55-b378-78a29af5b5ca"
-database_name = "원래_데이터베이스_이름" # 본인의 D1 이름으로 바꾸세요
+database_name = "infl_page09"
+
+[env.preview]
+[env.preview.vars]
+ALLOWED_ORIGINS = "https://preview.infl-page09.pages.dev,https://infl-page09.pages.dev"
+TOKEN_SECRET = "fejwimjsdfpo398f0123"
+SESSION_SECRET = "1ewqqasfedj403498q0w1"
+
+[env.production]
+[env.production.vars]
+ALLOWED_ORIGINS = "https://infl-page09.pages.dev"
+TOKEN_SECRET = "fejwimjsdfpo398f0123"
+SESSION_SECRET = "1ewqqasfedj403498q0w1"

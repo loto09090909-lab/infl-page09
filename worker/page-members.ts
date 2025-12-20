@@ -40,7 +40,7 @@ export async function getMemberRole(env: any, pageId: string, userId: string) {
     "SELECT 1 FROM page_admins WHERE page_id = ? AND user_id = ? LIMIT 1"
   )
     .bind(pageId, userId)
-    .first<{ \"1\": number }>();
+    .first<{ "1": number }>();
   return legacy ? "owner" : null;
 }
 
@@ -49,14 +49,14 @@ export async function ensurePageMemberBridge(env: any, pageId: string, userId: s
     "SELECT 1 FROM page_members WHERE page_id = ? AND user_id = ? LIMIT 1"
   )
     .bind(pageId, userId)
-    .first<{ \"1\": number }>();
+    .first<{ "1": number }>();
   if (existing) return;
 
   const legacy = await env.DB.prepare(
     "SELECT 1 FROM page_admins WHERE page_id = ? AND user_id = ? LIMIT 1"
   )
     .bind(pageId, userId)
-    .first<{ \"1\": number }>();
+    .first<{ "1": number }>();
   if (legacy) {
     await env.DB.prepare(
       "INSERT OR IGNORE INTO page_members (page_id, user_id, role) VALUES (?, ?, 'owner')"

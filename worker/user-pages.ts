@@ -12,7 +12,7 @@ import {
   PlanLimitError,
 } from "./plan-limits";
 import { errorResponse, errorResponseWithCode, jsonResponse, parseJsonBody } from "./utils";
-import { countSubmissions, fetchSubmissions } from "./contact";
+import { clearContactSubmissionsData, countSubmissions, fetchSubmissions } from "./contact";
 import { getPageStats } from "./stats";
 import {
   createPrivateLink,
@@ -859,6 +859,26 @@ export async function listUserPageContactSubmissions(
 
   const submissions = await fetchSubmissions(env, access.pageId, 50);
   return jsonResponse({ submissions }, 200, headers);
+}
+
+export async function deleteUserPageContactSubmissions(
+  req: Request,
+  env: any,
+  headers: HeadersInit,
+  pageId: string
+) {
+  const access = await requireUserPageAccess(req, env, headers, pageId);
+  if ("error" in access) return access.error;
+
+  const url = new URL(req.url);
+  const beforeDays = Number(url.searchParams.get("beforeDays"));
+  const effectiveBeforeDays = Number.isFinite(beforeDays) && beforeDays > 0 ? beforeDays : undefined;
+  const { removed, remaining } = await clearContactSubmissionsData(
+    env,
+    access.pageId,
+    effectiveBeforeDays
+  );
+  return jsonResponse({ success: true, deleted: removed, remaining }, 200, headers);
 }
 
 export async function exportUserPageContactSubmissions(

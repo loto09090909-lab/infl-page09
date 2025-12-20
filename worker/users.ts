@@ -344,6 +344,42 @@ export async function findOrCreateUser(env: any, data: AuthBody) {
   return createUser(env, { ...data, email });
 }
 
+export async function findOrCreateOAuthUser(
+  env: any,
+  data: { email: string; oauthProvider: string; oauthId: string }
+) {
+  const email = data.email.trim().toLowerCase();
+  const existing = await getUserByEmail(env, email);
+
+  if (existing) {
+    if (
+      existing.oauth_provider &&
+      existing.oauth_id &&
+      (existing.oauth_provider !== data.oauthProvider || existing.oauth_id !== data.oauthId)
+    ) {
+      throw new Error("이미 다른 OAuth 계정으로 연결된 이메일입니다");
+    }
+
+    if (!existing.oauth_provider || !existing.oauth_id) {
+      await env.DB.prepare(
+        "UPDATE users SET oauth_provider = ?, oauth_id = ? WHERE id = ?"
+      )
+        .bind(data.oauthProvider, data.oauthId, existing.id)
+        .run();
+      return { ...existing, oauth_provider: data.oauthProvider, oauth_id: data.oauthId };
+    }
+
+    return existing;
+  }
+
+  const created = await createUser(env, {
+    email,
+    oauthProvider: data.oauthProvider,
+    oauthId: data.oauthId,
+  });
+  return created;
+}
+
 export async function updateUserPassword(env: any, userId: string, password: string) {
   const passwordHash = await hashPassword(password);
   await env.DB.prepare("UPDATE users SET password_hash = ? WHERE id = ?")
@@ -375,6 +411,23 @@ export async function authenticateExistingUser(env: any, credentials: AuthBody) 
 
   await clearFailures(env, normalized.id);
   return { user: normalized } as const;
+}
+
+export async function deleteUserById(env: any, headers: HeadersInit, userId: string) {
+  if (!userId) {
+    return errorResponse("userId가 필요합니다", 400, headers);
+  }
+
+  const row = await env.DB.prepare("SELECT id FROM users WHERE id = ? LIMIT 1")
+    .bind(userId)
+    .first<{ id: string }>();
+
+  if (!row) {
+    return errorResponse("계정을 찾을 수 없습니다", 404, headers);
+  }
+
+  await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(userId).run();
+  return jsonResponse({ success: true, id: userId }, 200, headers);
 }
 
 async function authenticateUser(user: UserRow, credentials: AuthBody) {
