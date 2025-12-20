@@ -1,3 +1,9 @@
+window.APP_CONFIG = window.APP_CONFIG || {};
+
+window.APP_CONFIG.preferredApiBase = "https://infl-worker.loto09090909.workers.dev";
+window.APP_CONFIG.allowQueryApiBase = true;
+
+
 function slugify(value) {
     const normalized = value.normalize('NFKD').toLowerCase();
 
