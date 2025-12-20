@@ -88,12 +88,12 @@ function resolveApiBases() {
         bases.push(knownWorkerBase);
     }
 
-    if (window.location.hostname.endsWith('pages.dev')) {
-        const guessedWorker = window.location.origin.replace('.pages.dev', '.workers.dev');
-        if (!bases.includes(guessedWorker)) {
-            bases.push(guessedWorker);
-        }
-    }
+//    if (window.location.hostname.endsWith('pages.dev')) {
+//        const guessedWorker = window.location.origin.replace('.pages.dev', '.workers.dev');
+//        if (!bases.includes(guessedWorker)) {
+//            bases.push(guessedWorker);
+//        }
+//    }
 
     bases.push(window.location.origin);
 
