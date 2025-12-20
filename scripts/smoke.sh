@@ -5,6 +5,7 @@ BASE="${BASE:-http://localhost:8787}"
 DB_PATH="${DB_PATH:-}"
 TOKEN_SECRET="${TOKEN_SECRET:-}"
 SESSION_SECRET="${SESSION_SECRET:-}"
+SUPER_TOKEN="${SUPER_TOKEN:-}"
 
 if [[ "${SMOKE_SKIP:-}" == "1" ]]; then
   echo "SMOKE_SKIP=1 set; skipping live smoke tests."

@@ -413,6 +413,23 @@ export async function authenticateExistingUser(env: any, credentials: AuthBody) 
   return { user: normalized } as const;
 }
 
+export async function deleteUserById(env: any, headers: HeadersInit, userId: string) {
+  if (!userId) {
+    return errorResponse("userId가 필요합니다", 400, headers);
+  }
+
+  const row = await env.DB.prepare("SELECT id FROM users WHERE id = ? LIMIT 1")
+    .bind(userId)
+    .first<{ id: string }>();
+
+  if (!row) {
+    return errorResponse("계정을 찾을 수 없습니다", 404, headers);
+  }
+
+  await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(userId).run();
+  return jsonResponse({ success: true, id: userId }, 200, headers);
+}
+
 async function authenticateUser(user: UserRow, credentials: AuthBody) {
   const isOAuth = !!(credentials.oauthProvider && credentials.oauthId);
 

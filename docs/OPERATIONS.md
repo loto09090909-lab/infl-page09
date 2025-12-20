@@ -29,6 +29,7 @@
 ## 2) D1/KV 바인딩
 - `worker/wrangler.toml`의 `DB`(D1), `PAGE_KV`(KV) 바인딩이 필요합니다.
 - `database_name` 값이 실제 D1 이름과 일치해야 합니다.
+- 기존 D1에 `plan_id` 컬럼이 없다면 `db/migrations/2025-add-plan-id-to-users.sql` 마이그레이션을 적용하세요.
 
 ## 3) OAuth 리다이렉트 설정
 ### Google
@@ -44,7 +45,19 @@
 - 환경별 배포 시 `--env` 플래그를 명시하세요.
   - 예: `npx wrangler deploy --env production`
 
-## 6) TODO
+## 6) 슈퍼 관리자 계정 초기화
+- `TOKEN_SECRET` 또는 `SESSION_SECRET` 설정 후 `/api/admin/bootstrap`을 호출하세요.
+- 요청 바디 예시:
+  ```json
+  { "username": "admin", "password": "원하는비밀번호" }
+  ```
+- 첫 계정은 누구나 생성 가능하며, 이후에는 슈퍼 관리자 토큰이 필요합니다.
+
+## 7) 테스트 계정 정리
+- 슈퍼 관리자 토큰으로 테스트 계정을 삭제할 수 있습니다.
+- 요청 예시: `DELETE /api/users/{userId}` (Authorization: Bearer <super token>)
+
+## 8) TODO
 - OAuth 가입/로그인 이후의 사용자 전용 대시보드 경로 확정 필요.
 - 컨택트 보관 기간/자동 삭제 정책 확정 필요.
  - `/api/*` 프록시 도메인은 환경별로 분리 적용 필요(Preview/Prod).
