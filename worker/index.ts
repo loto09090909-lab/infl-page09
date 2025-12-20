@@ -56,13 +56,24 @@ export default {
         const method = req.method;
 
       // 2. CORS 안전하게 처리
-      const rawOrigins = env.ALLOWED_ORIGINS || "*";
-      const corsOptions: CorsOptions = {
-        allowedOrigins: rawOrigins.split(",").map((o: string) => o.trim()).filter(Boolean),
+      const rawOrigins = env.ALLOWED_ORIGINS || "";
+      const allowedOrigins = rawOrigins.split(",").map((o: string) => o.trim()).filter(Boolean);
+      
+      const originHeader = req.headers.get("Origin");
+      
+      // 만약 요청 들어온 Origin이 허용 리스트에 있으면 그 값을 사용, 없으면 리스트의 첫 번째 값 사용
+      const corsOrigin = (originHeader && allowedOrigins.includes(originHeader)) 
+                         ? originHeader 
+                         : allowedOrigins[0];
+      
+      const corsHeaders = {
+        "Access-Control-Allow-Origin": corsOrigin,
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Access-Control-Allow-Credentials": "true",
       };
-      const corsHeaders = buildCorsHeaders(corsOptions, req.headers.get("Origin"));
-
-      if (method === "OPTIONS") {
+      
+      if (req.method === "OPTIONS") {
         return new Response(null, { status: 204, headers: corsHeaders });
       }
 
