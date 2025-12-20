@@ -567,7 +567,7 @@ async function editPage(pageId) {
 
   if (!res.ok) {
     const errText = await res.text();
-    setSuperAdminStatus(`페이지 정보를 불러오지 못했습니다: ${errText || res.status}`,'error');
+    setSuperAdminStatus(`페이지 정보를 불러오지 못했습니다: ${errText || res.status}`, 'error');
     alert(`페이지 정보를 불러오지 못했습니다: ${errText || res.status}`);
     return;
   }
