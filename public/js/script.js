@@ -36,6 +36,83 @@ function applyRuntimeOverrides() {
 
 applyRuntimeOverrides();
 
+function getTurnstileSiteKey() {
+    return APP_CONFIG.turnstileSiteKey || window.TURNSTILE_SITE_KEY || '';
+}
+
+function ensureTurnstileLoaded(onReady) {
+    if (!getTurnstileSiteKey()) {
+        if (onReady) onReady(false);
+        return;
+    }
+
+    if (window.turnstile) {
+        if (onReady) onReady(true);
+        return;
+    }
+
+    if (window.__turnstileLoading) {
+        if (onReady) {
+            window.__turnstileCallbacks = window.__turnstileCallbacks || [];
+            window.__turnstileCallbacks.push(onReady);
+        }
+        return;
+    }
+
+    window.__turnstileLoading = true;
+    if (onReady) {
+        window.__turnstileCallbacks = window.__turnstileCallbacks || [];
+        window.__turnstileCallbacks.push(onReady);
+    }
+
+    const script = document.createElement('script');
+    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+    script.async = true;
+    script.defer = true;
+    script.onload = () => {
+        window.__turnstileLoading = false;
+        (window.__turnstileCallbacks || []).forEach((cb) => cb(true));
+        window.__turnstileCallbacks = [];
+    };
+    script.onerror = () => {
+        window.__turnstileLoading = false;
+        (window.__turnstileCallbacks || []).forEach((cb) => cb(false));
+        window.__turnstileCallbacks = [];
+    };
+    document.head.appendChild(script);
+}
+
+function renderTurnstileWidget() {
+    const siteKey = getTurnstileSiteKey();
+    const container = document.getElementById('turnstile-container');
+    if (!container) return;
+    if (!siteKey) {
+        container.innerHTML = '';
+        return;
+    }
+
+    ensureTurnstileLoaded((ready) => {
+        if (!ready || !window.turnstile) {
+            container.innerHTML = '';
+            return;
+        }
+        container.innerHTML = '';
+        window.__turnstileToken = '';
+        window.turnstile.render(container, {
+            sitekey: siteKey,
+            callback: (token) => {
+                window.__turnstileToken = token;
+            },
+            'expired-callback': () => {
+                window.__turnstileToken = '';
+            },
+            'error-callback': () => {
+                window.__turnstileToken = '';
+            },
+        });
+    });
+}
+
 function resolveApiBases() {
     const bases = [];
     const pushBase = (value) => {
@@ -410,14 +487,17 @@ let contactSettings = { enabled: false };
 let contactEnabled = false;
 let currentPageId = '';
 let pagePlan = 'free';
+let pagePlanStatus = null;
 let contactSubmissions = [];
 let pageTheme = 'classic';
+let privateTemplates = [];
 
 const MAX_CONTACT_FIELDS = 50;
 
 const PLAN_LIMITS = {
-    free: 6,
-    pro: 30,
+    free: 8,
+    basic: 25,
+    premium: 100,
 };
 
 const THEME_PRESETS = [
@@ -607,6 +687,20 @@ function ensureUserViewContainer() {
     contactFields.className = 'contact-field-stack';
     contactForm.appendChild(contactFields);
 
+    const honeypot = document.createElement('input');
+    honeypot.type = 'text';
+    honeypot.name = 'company';
+    honeypot.id = 'user-contact-company';
+    honeypot.autocomplete = 'off';
+    honeypot.tabIndex = -1;
+    honeypot.style.display = 'none';
+    contactForm.appendChild(honeypot);
+
+    const turnstileContainer = document.createElement('div');
+    turnstileContainer.id = 'turnstile-container';
+    turnstileContainer.className = 'turnstile-container';
+    contactForm.appendChild(turnstileContainer);
+
     const contactActions = document.createElement('div');
     contactActions.className = 'contact-actions';
     const submitBtn = document.createElement('button');
@@ -649,6 +743,7 @@ async function loadPageData(pageId, options = {}) {
     }
 
     const includeAdmin = !!options.includeAdmin;
+    const privateToken = options.privateToken;
     const fetchOptions = {};
     if (includeAdmin) {
         const token = sessionStorage.getItem('page_admin_token');
@@ -657,7 +752,10 @@ async function loadPageData(pageId, options = {}) {
         }
     }
 
-    const res = await apiFetch(`/api/pages/${encodeURIComponent(pageId)}`, fetchOptions);
+    const targetPath = privateToken
+        ? `/api/pages/${encodeURIComponent(pageId)}/private/${encodeURIComponent(privateToken)}`
+        : `/api/pages/${encodeURIComponent(pageId)}`;
+    const res = await apiFetch(targetPath, fetchOptions);
 
     if (!res.ok) {
         console.error('Failed to fetch page data:', res);
@@ -723,6 +821,8 @@ async function loadPageData(pageId, options = {}) {
             renderUsage();
             renderOnboardingBanner();
             fetchContactSubmissions();
+            fetchPagePlanStatus(pageId);
+            loadPrivateTemplates();
         }
 
         const nameInput = document.getElementById('name');
@@ -733,6 +833,29 @@ async function loadPageData(pageId, options = {}) {
         if (photoInput) photoInput.value = data.profile.photoUrl ?? '';
     } else {
         console.error('Page data not found');
+    }
+}
+
+async function fetchPagePlanStatus(pageId) {
+    const token = sessionStorage.getItem('page_admin_token');
+    if (!token || !pageId) return;
+
+    try {
+        const res = await apiFetch(`/api/page/${encodeURIComponent(pageId)}/plan-status`, {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${token}` },
+        }, [401, 403, 404]);
+
+        if (!res.ok) return;
+
+        const payload = await res.json().catch(() => null);
+        if (!payload) return;
+
+        pagePlan = payload.planId || pagePlan;
+        pagePlanStatus = payload;
+        renderUsage();
+    } catch (error) {
+        console.warn('플랜 상태를 불러오지 못했습니다.', error);
     }
 }
 
@@ -773,14 +896,16 @@ const pageRole = document.body?.dataset?.pageRole;
 const pageIdFromPath =
     pathSegments.length >= 2 && pathSegments[1] === 'admin' ? pathSegments[0] : '';
 const isUserPage = pathSegments.length === 2 && pathSegments[0] === 'user' && pathSegments[1];
+const isPrivateLink = pathSegments.length === 3 && pathSegments[1] === 'private';
 const looksLikeSlugPage =
     pathSegments.length === 1 &&
     !pathSegments[0].includes('.') &&
     !['admin', 'login', 'super-admin', 'super-admin.html', 'page-admin-login'].includes(pathSegments[0]);
 const isAdminHtml = pathSegments.length === 1 && pathSegments[0].startsWith('admin');
 const isUserHtml = window.location.pathname.endsWith('/user.html');
-const isPublicView = !pageRole && (isUserPage || looksLikeSlugPage || isUserHtml);
+const isPublicView = !pageRole && (isUserPage || looksLikeSlugPage || isUserHtml || isPrivateLink);
 const derivedPageId = pageIdFromPath || pageIdFromQuery || '';
+const privateTokenFromPath = isPrivateLink ? pathSegments[2] : '';
 
 updateEnvBadge(MANUAL_API_BASE || API_BASES[0] || null);
 primeApiBaseSelection();
@@ -828,7 +953,7 @@ if (pageRole === 'page-admin' && derivedPageId) {
     updatePageContext(derivedPageId);
 }
 
-if (looksLikeSlugPage && !userViewReady && !pageRole) {
+if ((looksLikeSlugPage || isPrivateLink) && !userViewReady && !pageRole) {
     ensureUserViewContainer();
 }
 
@@ -850,6 +975,8 @@ if (userViewReady || pageRole === 'page-admin') {
     if (isUserPage) {
         const pageId = pathSegments[1];
         loadPageData(pageId, { includeAdmin: pageRole === 'page-admin' });
+    } else if (isPrivateLink) {
+        loadPageData(pathSegments[0], { privateToken: privateTokenFromPath });
     } else if (looksLikeSlugPage) {
         loadPageData(pathSegments[0], { includeAdmin: pageRole === 'page-admin' });
     } else if (isAdminHtml && pageIdFromQuery) {
@@ -867,6 +994,7 @@ if (userViewReady || pageRole === 'page-admin') {
 document.addEventListener('DOMContentLoaded', () => {
     renderApiDebugPanel('api-debug');
     renderThemeOptions();
+    consumeOAuthTokenFromQuery();
 
     const pageAdminIdInput = document.getElementById('page-admin-id');
     if (pageAdminIdInput && (pageIdFromPath || pageIdFromQuery)) {
@@ -1246,6 +1374,127 @@ async function login() {
     }
 }
 
+function storeUserSession(token, expiresIn) {
+    if (!token) return;
+    sessionStorage.setItem('user_token', token);
+    if (expiresIn) {
+        const expiresAt = Date.now() + Number(expiresIn) * 1000;
+        sessionStorage.setItem('user_token_expires_at', expiresAt.toString());
+    }
+}
+
+async function fetchUserPrimaryPage() {
+    const token = sessionStorage.getItem('user_token');
+    if (!token) return null;
+
+    const res = await apiFetch('/api/user/pages', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+    }, [401, 403, 404]);
+
+    if (!res.ok) return null;
+    const payload = await res.json().catch(() => null);
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+    return items[0]?.pageId || null;
+}
+
+async function userSignup() {
+    const emailInput = document.getElementById('user-signup-email');
+    const passwordInput = document.getElementById('user-signup-password');
+    const email = emailInput ? emailInput.value.trim() : '';
+    const password = passwordInput ? passwordInput.value : '';
+
+    if (!email || !password) {
+        alert('이메일과 비밀번호를 입력하세요.');
+        return;
+    }
+
+    const res = await apiFetch('/api/users/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+    }, [400, 401, 409, 422]);
+
+    if (!res.ok) {
+        const msg = await res.text();
+        alert(`회원가입 실패: ${msg || res.status}`);
+        return;
+    }
+
+    const payload = await res.json().catch(() => null);
+    storeUserSession(payload?.token, payload?.expiresIn);
+
+    const pageId = payload?.pageId;
+    const target = pageId
+        ? `/page-admin-login.html?pageId=${encodeURIComponent(pageId)}`
+        : '/page-admin-login.html';
+    window.location.href = target;
+}
+
+async function userLogin() {
+    const emailInput = document.getElementById('user-login-email');
+    const passwordInput = document.getElementById('user-login-password');
+    const email = emailInput ? emailInput.value.trim() : '';
+    const password = passwordInput ? passwordInput.value : '';
+
+    if (!email || !password) {
+        alert('이메일과 비밀번호를 입력하세요.');
+        return;
+    }
+
+    const res = await apiFetch('/api/users/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+    }, [400, 401, 404, 423]);
+
+    if (!res.ok) {
+        const msg = await res.text();
+        alert(`로그인 실패: ${msg || res.status}`);
+        return;
+    }
+
+    const payload = await res.json().catch(() => null);
+    storeUserSession(payload?.token, payload?.expiresIn);
+
+    const pageId = await fetchUserPrimaryPage();
+    const target = pageId
+        ? `/page-admin-login.html?pageId=${encodeURIComponent(pageId)}`
+        : '/page-admin-login.html';
+    window.location.href = target;
+}
+
+function startOAuth(provider) {
+    const redirect = `${window.location.origin}/user-login`;
+    primeApiBaseSelection().then((base) => {
+        const targetBase = base || API_BASES[0];
+        if (!targetBase) {
+            alert('API 베이스를 찾지 못했습니다.');
+            return;
+        }
+        const url = `${targetBase}/api/auth/${encodeURIComponent(provider)}/start?redirect=${encodeURIComponent(redirect)}`;
+        window.location.href = url;
+    });
+}
+
+async function consumeOAuthTokenFromQuery() {
+    const token = searchParams.get('token');
+    const expiresIn = searchParams.get('expiresIn');
+    if (!token) return;
+
+    storeUserSession(token, expiresIn);
+    searchParams.delete('token');
+    searchParams.delete('expiresIn');
+    const nextUrl = `${window.location.pathname}${searchParams.toString() ? `?${searchParams.toString()}` : ''}`;
+    window.history.replaceState({}, '', nextUrl);
+
+    const pageId = await fetchUserPrimaryPage();
+    const target = pageId
+        ? `/page-admin-login.html?pageId=${encodeURIComponent(pageId)}`
+        : '/page-admin-login.html';
+    window.location.href = target;
+}
+
 async function logoutSuperAdmin() {
     const token = sessionStorage.getItem('super_admin_token');
 
@@ -1585,6 +1834,7 @@ function renderPublicContactForm() {
         fieldsHost.appendChild(wrapper);
     });
 
+    renderTurnstileWidget();
     setContactStatus('');
     submitBtn.disabled = false;
 }
@@ -1635,10 +1885,17 @@ async function submitContactForm(event) {
         submitBtn.disabled = true;
         setContactStatus('문의 내용을 전송하는 중입니다...', 'info');
 
+        const honeypot = document.getElementById('user-contact-company');
+        const turnstileToken = window.__turnstileToken || '';
+
         const res = await apiFetch(`/api/pages/${encodeURIComponent(currentPageId)}/contact`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ answers }),
+            body: JSON.stringify({
+                answers,
+                company: honeypot?.value || '',
+                turnstileToken: turnstileToken || undefined,
+            }),
         }, [400, 404, 422]);
 
         if (!res.ok) {
@@ -1648,6 +1905,10 @@ async function submitContactForm(event) {
 
         setContactStatus('문의가 접수되었습니다. 관리자가 확인할 때까지 기다려주세요.', 'success');
         form.reset();
+        if (window.turnstile && typeof window.turnstile.reset === 'function') {
+            window.turnstile.reset();
+            window.__turnstileToken = '';
+        }
     } catch (error) {
         console.error('컨택트 제출 실패', error);
         setContactStatus(error?.message || '문의 전송에 실패했습니다.', 'error');
@@ -1738,6 +1999,190 @@ async function downloadContactCsv() {
     } catch (error) {
         status.className = 'status-banner error';
         status.innerText = error?.message || 'CSV 다운로드에 실패했습니다.';
+    }
+}
+
+async function clearContactSubmissions() {
+    const status = document.getElementById('contact-submission-status');
+    if (!derivedPageId || !status) return;
+
+    const token = sessionStorage.getItem('page_admin_token');
+    if (!token) {
+        status.style.display = 'block';
+        status.className = 'status-banner warning';
+        status.innerText = '로그인 후 문의 삭제가 가능합니다.';
+        return;
+    }
+
+    if (!confirm('문의 내역을 모두 삭제할까요?')) {
+        return;
+    }
+
+    status.style.display = 'block';
+    status.className = 'status-banner info';
+    status.innerText = '문의 내역을 삭제하는 중입니다...';
+
+    try {
+        const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/contact-submissions`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` },
+        }, [401, 403, 404]);
+
+        if (!res.ok) {
+            const msg = await res.text();
+            throw new Error(msg || `삭제 실패 (${res.status})`);
+        }
+
+        status.className = 'status-banner success';
+        status.innerText = '문의 내역이 삭제되었습니다.';
+        contactSubmissions = [];
+        renderContactSubmissions();
+    } catch (error) {
+        status.className = 'status-banner error';
+        status.innerText = error?.message || '문의 삭제에 실패했습니다.';
+    }
+}
+
+function renderPrivateTemplates() {
+    const list = document.getElementById('private-template-list');
+    if (!list) return;
+
+    list.innerHTML = '';
+    if (!privateTemplates.length) {
+        const empty = document.createElement('li');
+        empty.className = 'empty';
+        empty.innerText = '등록된 템플릿이 없습니다.';
+        list.appendChild(empty);
+        return;
+    }
+
+    privateTemplates.forEach((template) => {
+        const item = document.createElement('li');
+        item.className = 'link-item';
+
+        const title = document.createElement('div');
+        title.className = 'link-info';
+        title.innerHTML = `<strong>${template.name}</strong><div class="muted">${template.payload?.note || '설정된 메모 없음'}</div>`;
+        item.appendChild(title);
+
+        const actions = document.createElement('div');
+        actions.className = 'link-actions';
+
+        const issueBtn = document.createElement('button');
+        issueBtn.type = 'button';
+        issueBtn.className = 'secondary';
+        issueBtn.innerText = '링크 발급';
+        issueBtn.onclick = () => issuePrivateLinkFromTemplate(template.id);
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.className = 'ghost';
+        deleteBtn.innerText = '삭제';
+        deleteBtn.onclick = () => deletePrivateTemplate(template.id);
+
+        actions.appendChild(issueBtn);
+        actions.appendChild(deleteBtn);
+        item.appendChild(actions);
+        list.appendChild(item);
+    });
+}
+
+async function loadPrivateTemplates() {
+    const token = sessionStorage.getItem('page_admin_token');
+    if (!token || !derivedPageId) return;
+
+    try {
+        const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/private-templates`, {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${token}` },
+        }, [401, 403, 404]);
+
+        if (!res.ok) return;
+        const payload = await res.json().catch(() => null);
+        privateTemplates = Array.isArray(payload?.items) ? payload.items : [];
+        renderPrivateTemplates();
+    } catch (error) {
+        console.warn('템플릿 목록을 불러오지 못했습니다.', error);
+    }
+}
+
+async function createPrivateTemplate() {
+    const token = sessionStorage.getItem('page_admin_token');
+    if (!token || !derivedPageId) return;
+
+    const nameInput = document.getElementById('template-name');
+    const expiresInput = document.getElementById('template-expires');
+    const maxUsesInput = document.getElementById('template-maxuses');
+    const noteInput = document.getElementById('template-note');
+
+    const name = nameInput?.value?.trim();
+    if (!name) {
+        alert('템플릿 이름을 입력하세요.');
+        return;
+    }
+
+    const payload = {
+        ...(expiresInput?.value ? { expiresAt: expiresInput.value.trim() } : {}),
+        ...(maxUsesInput?.value ? { maxUses: Number(maxUsesInput.value) } : {}),
+        ...(noteInput?.value ? { note: noteInput.value.trim() } : {}),
+    };
+
+    const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/private-templates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name, payload }),
+    }, [400, 401, 403]);
+
+    if (!res.ok) {
+        const msg = await res.text();
+        alert(`템플릿 생성 실패: ${msg || res.status}`);
+        return;
+    }
+
+    const created = await res.json().catch(() => null);
+    privateTemplates = [created, ...privateTemplates];
+    renderPrivateTemplates();
+
+    if (nameInput) nameInput.value = '';
+    if (expiresInput) expiresInput.value = '';
+    if (maxUsesInput) maxUsesInput.value = '';
+    if (noteInput) noteInput.value = '';
+}
+
+async function deletePrivateTemplate(templateId) {
+    const token = sessionStorage.getItem('page_admin_token');
+    if (!token || !derivedPageId) return;
+    if (!confirm('템플릿을 삭제할까요?')) return;
+
+    await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/private-templates/${encodeURIComponent(templateId)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+    }, [401, 403, 404]);
+
+    privateTemplates = privateTemplates.filter((item) => item.id !== templateId);
+    renderPrivateTemplates();
+}
+
+async function issuePrivateLinkFromTemplate(templateId) {
+    const token = sessionStorage.getItem('page_admin_token');
+    if (!token || !derivedPageId) return;
+
+    const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/private-templates/${encodeURIComponent(templateId)}/links`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+    }, [401, 403, 404]);
+
+    if (!res.ok) {
+        const msg = await res.text();
+        alert(`링크 발급 실패: ${msg || res.status}`);
+        return;
+    }
+
+    const payload = await res.json().catch(() => null);
+    const tokenValue = payload?.token;
+    if (tokenValue) {
+        const linkUrl = `${window.location.origin}/${encodeURIComponent(derivedPageId)}/private/${encodeURIComponent(tokenValue)}`;
+        alert(`프라이빗 링크가 발급되었습니다: ${linkUrl}`);
     }
 }
 
@@ -1916,14 +2361,26 @@ function renderUsage() {
     if (!planLabel || !usageCount || !usageBar || !usageHelp) return;
 
     const { publicLinks, privateLinks } = splitAdminLinks();
-    const limit = PLAN_LIMITS[pagePlan] || PLAN_LIMITS.free;
-    const used = publicLinks.length + privateLinks.length + adminContactSchema.length;
-    const percent = Math.min(100, Math.round((used / limit) * 100));
+    const limits = pagePlanStatus?.limits;
+    const usage = pagePlanStatus?.usage;
+    let limit = PLAN_LIMITS[pagePlan] || PLAN_LIMITS.free;
+    let used = publicLinks.length + privateLinks.length + adminContactSchema.length;
 
+    if (limits && usage) {
+        limit = Number(limits.max_private_links || 0) + Number(limits.max_contact_fields || 0);
+        used = Number(usage.privateLinks || 0) + Number(usage.contactFields || 0);
+    }
+
+    const percent = Math.min(100, Math.round((used / (limit || 1)) * 100));
     planLabel.innerText = `플랜: ${pagePlan || 'free'}`;
-    usageCount.innerText = `${used} / ${limit}`;
+    usageCount.innerText = `${used} / ${limit || '-'}`;
     usageBar.style.width = `${isFinite(percent) ? percent : 0}%`;
-    usageHelp.innerText = `공개 ${publicLinks.length}개, 비공개 ${privateLinks.length}개 | 컨택트 ${adminContactSchema.length}개`;
+
+    if (limits && usage) {
+        usageHelp.innerText = `프라이빗 ${usage.privateLinks}/${limits.max_private_links} | 컨택트 ${usage.contactFields}/${limits.max_contact_fields}`;
+    } else {
+        usageHelp.innerText = `공개 ${publicLinks.length}개, 비공개 ${privateLinks.length}개 | 컨택트 ${adminContactSchema.length}개`;
+    }
 }
 
 function renderSlugEditor() {

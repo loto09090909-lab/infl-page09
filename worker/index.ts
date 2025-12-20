@@ -31,6 +31,7 @@ import {
   exportUserPageContactSubmissions,
   listUserPages,
   listUserPageContactSubmissions,
+  deleteUserPageContactSubmissions,
   listUserPrivateLinks,
   disableUserAccessCode,
   rotateUserAccessCode,
@@ -44,14 +45,15 @@ import {
   getUserPagePlanStatus,
 } from "./user-pages";
 import { createRandomPrivateLink, getPrivatePage } from "./private-links";
+import { startOAuth, handleOAuthCallback } from "./oauth";
 
 export default {
   async fetch(req: Request, env: any): Promise<Response> {
-    // 1. 전역 에러 핸들러 추가
-    try {
-      const url = new URL(req.url);
-      const path = url.pathname;
-      const method = req.method;
+      // 1. 전역 에러 핸들러 추가
+      try {
+        const url = new URL(req.url);
+        const path = url.pathname;
+        const method = req.method;
 
       // 2. CORS 안전하게 처리
       const rawOrigins = env.ALLOWED_ORIGINS || "*";
@@ -92,6 +94,22 @@ export default {
         200,
         corsHeaders
       );
+    }
+
+    if (method === "GET" && path.startsWith("/api/auth/")) {
+      const match = path.match(/^\/api\/auth\/([^/]+)\/start$/);
+      if (match) {
+        const provider = match[1];
+        return startOAuth(req, env, corsHeaders, provider);
+      }
+    }
+
+    if (method === "GET" && path.startsWith("/api/auth/")) {
+      const match = path.match(/^\/api\/auth\/([^/]+)\/callback$/);
+      if (match) {
+        const provider = match[1];
+        return handleOAuthCallback(req, env, corsHeaders, provider);
+      }
     }
 
     // --- 사용자 가입/로그인 ---
@@ -211,9 +229,14 @@ export default {
     }
 
     const userContactMatch = path.match(/^\/api\/user\/pages\/(.+)\/contact-submissions$/);
-    if (userContactMatch && method === "GET") {
+    if (userContactMatch) {
       const pageId = decodeURIComponent(userContactMatch[1]);
-      return listUserPageContactSubmissions(req, env, corsHeaders, pageId);
+      if (method === "GET") {
+        return listUserPageContactSubmissions(req, env, corsHeaders, pageId);
+      }
+      if (method === "DELETE") {
+        return deleteUserPageContactSubmissions(req, env, corsHeaders, pageId);
+      }
     }
 
     const userContactCsvMatch = path.match(/^\/api\/user\/pages\/(.+)\/contact-submissions\.csv$/);
@@ -356,27 +379,63 @@ export default {
         return listContactSubmissions(req, env, pageId, corsHeaders);
       }
 
+      if (method === "DELETE" && action === "contact-submissions") {
+        const { deleteContactSubmissions } = await import("./contact");
+        return deleteContactSubmissions(req, env, pageId, corsHeaders);
+      }
+
       if (method === "GET" && action === "contact-submissions.csv") {
         const { exportContactSubmissions } = await import("./contact");
         return exportContactSubmissions(req, env, pageId, corsHeaders);
+      }
+
+      if (method === "GET" && action === "plan-status") {
+        const { getPagePlanStatus } = await import("./page-admin");
+        return getPagePlanStatus(req, env, pageId, corsHeaders);
+      }
+
+      if (action === "private-templates") {
+        const templateId = pathSegments[4];
+        const actionNext = pathSegments[5];
+        const {
+          listPrivateTemplates,
+          createPrivateTemplate,
+          deletePrivateTemplate,
+          issuePrivateLinkFromTemplate,
+        } = await import("./private-templates");
+
+        if (!templateId && method === "GET") {
+          return listPrivateTemplates(req, env, pageId, corsHeaders);
+        }
+        if (!templateId && method === "POST") {
+          return createPrivateTemplate(req, env, pageId, corsHeaders);
+        }
+        if (templateId && !actionNext && method === "DELETE") {
+          return deletePrivateTemplate(req, env, pageId, templateId, corsHeaders);
+        }
+        if (templateId && actionNext === "links" && method === "POST") {
+          return issuePrivateLinkFromTemplate(req, env, pageId, templateId, corsHeaders);
+        }
       }
     }
 
     return errorResponse("Not Found", 404, corsHeaders);
 
     } catch (err: any) {
-      // 에러 발생 시 상세 메시지 반환 (디버깅용)
-      return new Response(JSON.stringify({ 
-        error: "Worker Runtime Error", 
-        message: err.message,
-        stack: err.stack 
-      }), {
-        status: 500,
-        headers: { 
-          "Content-Type": "application/json", 
-          "Access-Control-Allow-Origin": "*" 
+      console.error("Worker Runtime Error", err);
+      return new Response(
+        JSON.stringify({
+          error: "Worker Runtime Error",
+          message: err?.message || "Unexpected error",
+        }),
+        {
+          status: 500,
+          headers: {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+          },
         }
-      });
+      );
     }
   },
 };

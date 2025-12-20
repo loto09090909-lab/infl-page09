@@ -3,10 +3,17 @@ set -euo pipefail
 
 BASE="${BASE:-http://localhost:8787}"
 DB_PATH="${DB_PATH:-}"
+TOKEN_SECRET="${TOKEN_SECRET:-}"
+SESSION_SECRET="${SESSION_SECRET:-}"
 
 if [[ "${SMOKE_SKIP:-}" == "1" ]]; then
   echo "SMOKE_SKIP=1 set; skipping live smoke tests."
   exit 0
+fi
+
+if [[ -z "$TOKEN_SECRET" && -z "$SESSION_SECRET" ]]; then
+  echo "TOKEN_SECRET 또는 SESSION_SECRET이 필요합니다."
+  exit 1
 fi
 
 if [[ -n "$DB_PATH" && -f "$DB_PATH" ]]; then
@@ -79,5 +86,41 @@ curl -sSf -X POST "$BASE/api/user/invites/$invite_token/accept" \
 curl -sSf -H "Authorization: Bearer $user_token" "$BASE/api/user/pages/$page_id/stats" >/dev/null
 
 curl -sSf -H "Authorization: Bearer $user_token" "$BASE/api/user/pages/$page_id/contact-submissions.csv" >/dev/null || true
+
+curl -sSf -H "Authorization: Bearer $user_token" "$BASE/api/user/pages/$page_id/plan-status" >/dev/null
+
+page_admin_login=$(curl -sSf -X POST "$BASE/api/page/$page_id/login" \
+  -H "Content-Type: application/json" \
+  -d "{\"email\":\"smoke.user@example.com\",\"password\":\"Passw0rd!\"}")
+echo "page_admin_login: $page_admin_login"
+
+page_admin_token=$(python - <<'PY'
+import json,sys
+data=json.load(sys.stdin)
+print(data.get("token",""))
+PY
+<<<"$page_admin_login")
+
+curl -sSf -H "Authorization: Bearer $page_admin_token" "$BASE/api/page/$page_id/plan-status" >/dev/null
+
+template=$(curl -sSf -X POST "$BASE/api/page/$page_id/private-templates" \
+  -H "Authorization: Bearer $page_admin_token" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"smoke-template","payload":{"maxUses":1,"note":"smoke"}}')
+echo "template: $template"
+
+template_id=$(python - <<'PY'
+import json,sys
+data=json.load(sys.stdin)
+print(data.get("id",""))
+PY
+<<<"$template")
+
+issue=$(curl -sSf -X POST "$BASE/api/page/$page_id/private-templates/$template_id/links" \
+  -H "Authorization: Bearer $page_admin_token")
+echo "issue: $issue"
+
+curl -sSf -X DELETE "$BASE/api/user/pages/$page_id/contact-submissions" \
+  -H "Authorization: Bearer $user_token" >/dev/null
 
 echo "Smoke tests completed."

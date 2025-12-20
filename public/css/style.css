@@ -793,6 +793,12 @@ header {
     flex: 1 1 180px;
 }
 
+.oauth-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
 .code-block {
     background: #0b1727;
     color: #e5e7eb;
@@ -1194,6 +1200,10 @@ body.user-view {
     justify-content: flex-end;
     gap: 10px;
     align-items: center;
+}
+
+.turnstile-container {
+    margin-top: 12px;
 }
 
 #user-contact-status {
