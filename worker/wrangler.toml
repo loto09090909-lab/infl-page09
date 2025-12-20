@@ -4,7 +4,7 @@ compatibility_date = "2025-12-14"
 
 [vars]
 # 환경 변수는 개발 기본값만 두고, 운영 값은 env 섹션에서 설정하세요.
-ALLOWED_ORIGINS = "http://localhost:8787,https://infl-page09.pages.dev"
+ALLOWED_ORIGINS = "https://infl-page09.pages.dev"
 
 [[kv_namespaces]]
 binding = "PAGE_KV"
