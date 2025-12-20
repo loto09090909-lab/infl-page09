@@ -10,7 +10,7 @@ id = "df984fdb34cf4546816e70f8e029b47a"
 [[d1_databases]]
 binding = "DB"
 database_id = "1bc18749-585b-4c55-b378-78a29af5b5ca"
-database_name = "infl_page09"
+database_name = "infl_db"
 
 [env.production]
 # 핵심: production 환경에서도 KV와 D1을 사용할 수 있도록 명시
