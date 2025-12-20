@@ -663,7 +663,7 @@ export async function listPages(req: Request, env: any, headers: HeadersInit): P
     dataStmt = dataStmt.bind(pageSize, offset);
   }
 
-  const dbRows = await dataStmt.all();
+  const dbRows = await dataStmt.all<{
     page_id: string;
     name: string | null;
     photo_url: string | null;
