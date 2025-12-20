@@ -262,8 +262,8 @@ export async function pageAdminLogin(
     const memberExists = await env.DB.prepare(
       "SELECT 1 FROM page_members WHERE page_id = ? LIMIT 1"
     )
-      .bind(canonicalPageId)
-      .first<{ \"1\": number }>();
+    .bind(canonicalPageId)
+      .first<{ "1": number }>();
     if (!memberExists) {
       return errorResponseWithCode("페이지 관리자 계정을 찾을 수 없습니다", "NOT_FOUND", 404, headers);
     }
@@ -286,7 +286,7 @@ export async function pageAdminLogin(
     "SELECT 1 FROM page_members WHERE page_id = ? AND user_id = ? LIMIT 1"
   )
     .bind(canonicalPageId, result.user.id)
-    .first<{ \"1\": number }>();
+    .first<{ "1": number }>();
 
   if (!memberRow && result.user.id !== adminRow?.user_id) {
     await recordFailedLogin(env, "page", loginIdentifier);

@@ -40,7 +40,11 @@
 - `public/_redirects`에서 `/api/*`가 Workers로 프록시됩니다.
 - 운영 도메인이 변경되면 `/api/*` 대상 주소를 업데이트하세요.
 
-## 5) TODO
+## 5) 배포 명령어
+- 환경별 배포 시 `--env` 플래그를 명시하세요.
+  - 예: `npx wrangler deploy --env production`
+
+## 6) TODO
 - OAuth 가입/로그인 이후의 사용자 전용 대시보드 경로 확정 필요.
 - 컨택트 보관 기간/자동 삭제 정책 확정 필요.
  - `/api/*` 프록시 도메인은 환경별로 분리 적용 필요(Preview/Prod).
