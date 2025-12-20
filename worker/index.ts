@@ -449,12 +449,13 @@ export default {
         JSON.stringify({
           error: "Worker Runtime Error",
           message: err?.message || "Unexpected error",
+          stack: err?.stack // 개발 단계에서 디버깅을 위해 추가
         }),
         {
           status: 500,
           headers: {
+            ...corsHeaders, // 중요: 기존 CORS 헤더를 그대로 복사
             "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
           },
         }
       );
