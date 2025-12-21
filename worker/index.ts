@@ -19,7 +19,7 @@ import {
   updatePage,
 } from "./super-admin";
 import { getPage } from "./page-view";
-import { buildCorsHeaders, CorsOptions, errorResponse, jsonResponse } from "./utils";
+import { errorResponse, jsonResponse } from "./utils";
 import { login as userLogin, signup as userSignup, deleteUserById } from "./users";
 import {
   createUserPage,
@@ -56,11 +56,22 @@ export default {
         const method = req.method;
 
       // 2. CORS 안전하게 처리
-      const rawOrigins = env.ALLOWED_ORIGINS || "*";
-      const corsOptions: CorsOptions = {
-        allowedOrigins: rawOrigins.split(",").map((o: string) => o.trim()).filter(Boolean),
+      const rawOrigins = env.ALLOWED_ORIGINS || "";
+      const allowedOrigins = rawOrigins.split(",").map((o: string) => o.trim()).filter(Boolean);
+
+      const originHeader = req.headers.get("Origin");
+
+      const corsOrigin =
+        originHeader && allowedOrigins.includes(originHeader)
+          ? originHeader
+          : allowedOrigins[0];
+
+      const corsHeaders = {
+        "Access-Control-Allow-Origin": corsOrigin,
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Access-Control-Allow-Credentials": "true",
       };
-      const corsHeaders = buildCorsHeaders(corsOptions, req.headers.get("Origin"));
 
       if (method === "OPTIONS") {
         return new Response(null, { status: 204, headers: corsHeaders });
