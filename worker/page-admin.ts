@@ -234,6 +234,9 @@ export async function pageAdminLogin(
   pageId: string,
   headers: HeadersInit
 ) {
+  if (!env?.DB) {
+    return errorResponse("DB 바인딩이 필요합니다", 500, headers);
+  }
   const body = await parseJsonBody<LoginBody>(req);
   if (!body || typeof body.email !== "string") {
     return errorResponse("이메일을 입력하세요", 400, headers);
