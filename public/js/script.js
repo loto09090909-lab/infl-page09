@@ -495,6 +495,7 @@ let adminPrivateLinks = [];
 let accessControl = { enabled: false, code: '' };
 let customDomains = [];
 let upgradeModalAutoOpened = false;
+let privateLinksRefreshTimer = null;
 
 const MAX_CONTACT_FIELDS = 50;
 
@@ -907,6 +908,9 @@ async function loadPageData(pageId, options = {}) {
             fetchPagePlanStatus(pageId);
             loadPrivateTemplates();
             fetchPrivateLinks();
+            if (!privateLinksRefreshTimer) {
+                privateLinksRefreshTimer = setInterval(fetchPrivateLinks, 30000);
+            }
         }
 
         const nameInput = document.getElementById('name');
@@ -1879,9 +1883,28 @@ function renderSharePanel(pageId) {
     line.href = `https://social-plugins.line.me/lineit/share?url=${encodeURIComponent(shareUrl)}`;
     email.href = `mailto:?subject=${encodeURIComponent('내 페이지 공유')}&body=${encodeURIComponent(shareUrl)}`;
 
-    const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(shareUrl)}`;
-    qrImg.src = qrSrc;
-    qrDownload.href = qrSrc;
+    const qrDataUrl = buildQrCodeDataUrl(shareUrl);
+    if (qrDataUrl) {
+        qrImg.src = qrDataUrl;
+        qrDownload.href = qrDataUrl;
+    } else {
+        qrImg.alt = 'QR 생성 실패';
+        qrDownload.href = '#';
+        qrDownload.removeAttribute('download');
+    }
+}
+
+function buildQrCodeDataUrl(text) {
+    if (typeof window.qrcode !== 'function') return '';
+    try {
+        const qr = window.qrcode(0, window.QRErrorCorrectionLevel?.M || 0);
+        qr.addData(text);
+        qr.make();
+        return qr.createDataURL(4, 12);
+    } catch (error) {
+        console.warn('QR 생성 실패', error);
+        return '';
+    }
 }
 
 function setContactStatus(message, tone = 'info') {
@@ -3330,5 +3353,10 @@ function applyDefaultTemplate() {
 
 function requestUpgrade() {
     closeUpgradeModal();
-    window.location.href = 'mailto:support@example.com?subject=%EC%97%85%EA%B7%B8%EB%A0%88%EC%9D%B4%EB%93%9C%20%EB%AC%B8%EC%9D%98';
+    const path = window.location.pathname;
+    if (path.endsWith('/upgrade') || path.endsWith('/upgrade.html')) {
+        window.location.href = 'mailto:support@example.com?subject=%EC%97%85%EA%B7%B8%EB%A0%88%EC%9D%B4%EB%93%9C%20%EB%AC%B8%EC%9D%98';
+        return;
+    }
+    window.location.href = '/upgrade';
 }
