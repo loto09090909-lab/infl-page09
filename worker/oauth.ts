@@ -257,5 +257,9 @@ export async function handleOAuthCallback(
     });
   }
 
-  return jsonResponse({ token: session.token, expiresIn: session.expiresIn }, 200, headers);
+  return jsonResponse(
+    { token: session.token, expiresIn: session.expiresIn, userId: user.id },
+    200,
+    headers
+  );
 }

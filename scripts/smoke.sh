@@ -81,6 +81,13 @@ print(data.get("token",""))
 PY
 <<<"$invitee")
 
+user_id=$(python - <<'PY'
+import json,sys
+data=json.load(sys.stdin)
+print(data.get("userId",""))
+PY
+<<<"$signup")
+
 curl -sSf -X POST "$BASE/api/user/invites/$invite_token/accept" \
   -H "Authorization: Bearer $invitee_token" >/dev/null
 
@@ -123,6 +130,12 @@ echo "issue: $issue"
 
 curl -sSf -X DELETE "$BASE/api/user/pages/$page_id/contact-submissions" \
   -H "Authorization: Bearer $user_token" >/dev/null
+
+if [[ -n "$SUPER_TOKEN" ]]; then
+  delete_by_email=$(curl -sS -X DELETE "$BASE/api/users/by-email?email=smoke.user@example.com" \
+    -H "Authorization: Bearer $SUPER_TOKEN" || true)
+  echo "delete_by_email: $delete_by_email"
+fi
 
 if [[ -n "${OAUTH_GOOGLE_CLIENT_ID:-}" || -n "${OAUTH_NAVER_CLIENT_ID:-}" ]]; then
   echo "OAuth start endpoint check"

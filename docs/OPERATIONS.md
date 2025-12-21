@@ -56,6 +56,7 @@
 ## 7) 테스트 계정 정리
 - 슈퍼 관리자 토큰으로 테스트 계정을 삭제할 수 있습니다.
 - 요청 예시: `DELETE /api/users/{userId}` (Authorization: Bearer <super token>)
+ - 이메일 기준 삭제: `DELETE /api/users/by-email?email=sample@example.com`
 
 ## 8) TODO
 - OAuth 가입/로그인 이후의 사용자 전용 대시보드 경로 확정 필요.

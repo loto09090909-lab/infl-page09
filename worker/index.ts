@@ -20,7 +20,7 @@ import {
 } from "./super-admin";
 import { getPage } from "./page-view";
 import { buildCorsHeaders, CorsOptions, errorResponse, jsonResponse } from "./utils";
-import { login as userLogin, signup as userSignup, deleteUserById } from "./users";
+import { login as userLogin, signup as userSignup, deleteUserById, deleteUserByEmail } from "./users";
 import {
   createUserPage,
   deleteUserPage,
@@ -119,6 +119,16 @@ export default {
 
     if (method === "POST" && path === "/api/users/login") {
       return userLogin(req, env, corsHeaders);
+    }
+
+    if (method === "DELETE" && path === "/api/users/by-email") {
+      const token = getBearerToken(req);
+      const isAdmin = await verifySessionToken(env, "super", token);
+      if (!isAdmin) {
+        return errorResponse("슈퍼 관리자 인증이 필요합니다", 401, corsHeaders);
+      }
+      const email = url.searchParams.get("email") || "";
+      return deleteUserByEmail(env, corsHeaders, email);
     }
 
     const userDeleteMatch = path.match(/^\/api\/users\/(.+)$/);

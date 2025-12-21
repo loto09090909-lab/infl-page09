@@ -298,7 +298,7 @@ export async function signup(req: Request, env: any, headers: HeadersInit) {
     throw error;
   }
   const session = await createSessionToken(env, "user", created.id);
-  return jsonResponse({ ...session, pageId }, 201, headers);
+  return jsonResponse({ ...session, pageId, userId: created.id }, 201, headers);
 }
 
 export async function login(req: Request, env: any, headers: HeadersInit) {
@@ -326,7 +326,7 @@ export async function login(req: Request, env: any, headers: HeadersInit) {
 
   await clearFailures(env, normalized.id);
   const session = await createSessionToken(env, "user", normalized.id);
-  return jsonResponse(session, 200, headers);
+  return jsonResponse({ ...session, userId: normalized.id }, 200, headers);
 }
 
 export async function findOrCreateUser(env: any, data: AuthBody) {
@@ -428,6 +428,21 @@ export async function deleteUserById(env: any, headers: HeadersInit, userId: str
 
   await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(userId).run();
   return jsonResponse({ success: true, id: userId }, 200, headers);
+}
+
+export async function deleteUserByEmail(env: any, headers: HeadersInit, email: string) {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) {
+    return errorResponse("email이 필요합니다", 400, headers);
+  }
+
+  const row = await getUserByEmail(env, normalized);
+  if (!row) {
+    return errorResponse("계정을 찾을 수 없습니다", 404, headers);
+  }
+
+  await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(row.id).run();
+  return jsonResponse({ success: true, id: row.id, email: normalized }, 200, headers);
 }
 
 async function authenticateUser(user: UserRow, credentials: AuthBody) {
