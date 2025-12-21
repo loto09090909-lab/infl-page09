@@ -114,40 +114,11 @@ function renderTurnstileWidget() {
 }
 
 function resolveApiBases() {
-    const bases = [];
-    const pushBase = (value) => {
-        if (!value) return;
-        const trimmed = String(value).trim();
-        if (!trimmed) return;
-        const normalized = trimmed.replace(/\/+$/, '');
-        if (!bases.includes(normalized)) {
-            bases.push(normalized);
-        }
-    };
-
     const knownWorkerBase = APP_CONFIG.knownWorkerBase || 'https://infl-worker.loto09090909.workers.dev';
-    pushBase(knownWorkerBase);
-
-    if (typeof APP_CONFIG.apiBase === 'string') {
-        pushBase(APP_CONFIG.apiBase);
+    const bases = [knownWorkerBase];
+    if (MANUAL_API_BASE && !bases.includes(MANUAL_API_BASE)) {
+        bases.push(MANUAL_API_BASE);
     }
-
-    (APP_CONFIG.apiBases || []).forEach((base) => pushBase(base));
-
-    if (APP_CONFIG.useMetaApiBase !== false) {
-        const metaApiBase = document.querySelector('meta[name="api-base"]')?.content?.trim();
-        pushBase(metaApiBase);
-    }
-
-    if (APP_CONFIG.useGlobalApiBase !== false) {
-        pushBase(window.API_BASE);
-    }
-
-    if (APP_CONFIG.usePagesDerivedBase !== false && window.location.hostname.endsWith('pages.dev')) {
-        const guessedWorker = window.location.origin.replace('.pages.dev', '.workers.dev');
-        pushBase(guessedWorker);
-    }
-
     return bases;
 }
 
@@ -978,7 +949,18 @@ const isPrivateLink = pathSegments.length === 3 && pathSegments[1] === 'private'
 const looksLikeSlugPage =
     pathSegments.length === 1 &&
     !pathSegments[0].includes('.') &&
-    !['admin', 'login', 'super-admin', 'super-admin.html', 'page-admin-login'].includes(pathSegments[0]);
+    ![
+        'admin',
+        'login',
+        'super-admin',
+        'super-admin.html',
+        'page-admin-login',
+        'signup',
+        'upgrade',
+        'user-login',
+        'dashboard',
+        'user',
+    ].includes(pathSegments[0]);
 const isAdminHtml = pathSegments.length === 1 && pathSegments[0].startsWith('admin');
 const isUserHtml = window.location.pathname.endsWith('/user.html');
 const isPublicView = !pageRole && (isUserPage || looksLikeSlugPage || isUserHtml || isPrivateLink);

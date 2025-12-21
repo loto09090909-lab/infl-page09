@@ -60,20 +60,23 @@ export default {
         const method = req.method;
 
       // 2. CORS 안전하게 처리
-      const rawOrigins = env.ALLOWED_ORIGINS || "";
-      const allowedOrigins = rawOrigins.split(",").map((o: string) => o.trim()).filter(Boolean);
-
       const originHeader = req.headers.get("Origin");
+      const allowedOrigins = (env.ALLOWED_ORIGINS || "")
+        .split(",")
+        .map((o: string) => o.trim())
+        .filter(Boolean);
 
-      let corsOrigin = allowedOrigins[0] || "*";
+      let corsOrigin = "*";
       if (originHeader && (allowedOrigins.includes(originHeader) || allowedOrigins.includes("*"))) {
         corsOrigin = originHeader;
+      } else if (allowedOrigins.length > 0 && allowedOrigins[0] !== "*") {
+        corsOrigin = allowedOrigins[0];
       }
 
       const corsHeaders = {
         "Access-Control-Allow-Origin": corsOrigin,
         "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, x-session-secret",
         "Access-Control-Allow-Credentials": "true",
       };
 
