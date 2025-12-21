@@ -28,11 +28,16 @@ export type PlanLimitRow = {
 
 export async function getPlanLimits(env: any, planId?: string | null): Promise<PlanLimitRow> {
   const effectivePlanId = (planId || "default").trim() || "default";
-  const row = await env.DB.prepare(
-    "SELECT plan_id, can_create_pages, can_change_slug, can_create_private_links, max_pages, max_private_links, max_contact_fields, can_export_csv, stats_retention_days FROM plan_limits WHERE plan_id = ? LIMIT 1"
-  )
-    .bind(effectivePlanId)
-    .first<PlanLimitRow>();
+  let row: PlanLimitRow | null = null;
+  try {
+    row = await env.DB.prepare(
+      "SELECT plan_id, can_create_pages, can_change_slug, can_create_private_links, max_pages, max_private_links, max_contact_fields, can_export_csv, stats_retention_days FROM plan_limits WHERE plan_id = ? LIMIT 1"
+    )
+      .bind(effectivePlanId)
+      .first<PlanLimitRow>();
+  } catch (error) {
+    row = null;
+  }
 
   return (
     row || {

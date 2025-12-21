@@ -195,46 +195,80 @@ export async function verifyPassword(password: string, stored: string | null) {
 }
 
 async function getUserByEmail(env: any, email: string) {
-  return env.DB.prepare(
-    "SELECT id, email, password_hash, oauth_provider, oauth_id, plan_id, failed_attempts, locked_until FROM users WHERE email = ? LIMIT 1"
-  )
-    .bind(email)
-    .first<UserRow>();
+  try {
+    return await env.DB.prepare(
+      "SELECT id, email, password_hash, oauth_provider, oauth_id, plan_id, failed_attempts, locked_until FROM users WHERE email = ? LIMIT 1"
+    )
+      .bind(email)
+      .first<UserRow>();
+  } catch (error) {
+    return env.DB.prepare(
+      "SELECT id, email, password_hash, oauth_provider, oauth_id, NULL as plan_id, failed_attempts, locked_until FROM users WHERE email = ? LIMIT 1"
+    )
+      .bind(email)
+      .first<UserRow>();
+  }
 }
 
 export async function getUserById(env: any, id: string) {
-  return env.DB.prepare(
-    "SELECT id, email, password_hash, oauth_provider, oauth_id, plan_id, failed_attempts, locked_until FROM users WHERE id = ? LIMIT 1"
-  )
-    .bind(id)
-    .first<UserRow>();
+  try {
+    return await env.DB.prepare(
+      "SELECT id, email, password_hash, oauth_provider, oauth_id, plan_id, failed_attempts, locked_until FROM users WHERE id = ? LIMIT 1"
+    )
+      .bind(id)
+      .first<UserRow>();
+  } catch (error) {
+    return env.DB.prepare(
+      "SELECT id, email, password_hash, oauth_provider, oauth_id, NULL as plan_id, failed_attempts, locked_until FROM users WHERE id = ? LIMIT 1"
+    )
+      .bind(id)
+      .first<UserRow>();
+  }
 }
 
 async function ensureUserPlan(env: any, user: UserRow | null) {
   if (!user) return null;
   if (user.plan_id) return user;
 
-  await env.DB.prepare("UPDATE users SET plan_id = ? WHERE id = ?")
-    .bind(DEFAULT_PLAN, user.id)
-    .run();
+  try {
+    await env.DB.prepare("UPDATE users SET plan_id = ? WHERE id = ?")
+      .bind(DEFAULT_PLAN, user.id)
+      .run();
+  } catch (error) {
+    return { ...user, plan_id: DEFAULT_PLAN };
+  }
   return { ...user, plan_id: DEFAULT_PLAN };
 }
 
 async function createUser(env: any, data: AuthBody): Promise<UserRow> {
   const userId = crypto.randomUUID();
   const passwordHash = data.password ? await hashPassword(data.password) : null;
-  await env.DB.prepare(
-    "INSERT INTO users (id, email, password_hash, oauth_provider, oauth_id, plan_id) VALUES (?, ?, ?, ?, ?, ?)"
-  )
-    .bind(
-      userId,
-      data.email!,
-      passwordHash,
-      data.oauthProvider ?? null,
-      data.oauthId ?? null,
-      DEFAULT_PLAN
+  try {
+    await env.DB.prepare(
+      "INSERT INTO users (id, email, password_hash, oauth_provider, oauth_id, plan_id) VALUES (?, ?, ?, ?, ?, ?)"
     )
-    .run();
+      .bind(
+        userId,
+        data.email!,
+        passwordHash,
+        data.oauthProvider ?? null,
+        data.oauthId ?? null,
+        DEFAULT_PLAN
+      )
+      .run();
+  } catch (error) {
+    await env.DB.prepare(
+      "INSERT INTO users (id, email, password_hash, oauth_provider, oauth_id) VALUES (?, ?, ?, ?, ?)"
+    )
+      .bind(
+        userId,
+        data.email!,
+        passwordHash,
+        data.oauthProvider ?? null,
+        data.oauthId ?? null
+      )
+      .run();
+  }
 
   return {
     id: userId,
@@ -270,6 +304,9 @@ function isLocked(user: UserRow) {
 }
 
 export async function signup(req: Request, env: any, headers: HeadersInit) {
+  if (!env?.DB) {
+    return errorResponse("DB 바인딩이 필요합니다", 500, headers);
+  }
   const body = await parseJsonBody<AuthBody>(req);
   if (!body || typeof body.email !== "string") {
     return errorResponse("이메일을 입력하세요", 400, headers);
@@ -298,10 +335,13 @@ export async function signup(req: Request, env: any, headers: HeadersInit) {
     throw error;
   }
   const session = await createSessionToken(env, "user", created.id);
-  return jsonResponse({ ...session, pageId }, 201, headers);
+  return jsonResponse({ ...session, pageId, userId: created.id }, 201, headers);
 }
 
 export async function login(req: Request, env: any, headers: HeadersInit) {
+  if (!env?.DB) {
+    return errorResponse("DB 바인딩이 필요합니다", 500, headers);
+  }
   const body = await parseJsonBody<AuthBody>(req);
   if (!body || typeof body.email !== "string") {
     return errorResponse("이메일을 입력하세요", 400, headers);
@@ -326,7 +366,7 @@ export async function login(req: Request, env: any, headers: HeadersInit) {
 
   await clearFailures(env, normalized.id);
   const session = await createSessionToken(env, "user", normalized.id);
-  return jsonResponse(session, 200, headers);
+  return jsonResponse({ ...session, userId: normalized.id }, 200, headers);
 }
 
 export async function findOrCreateUser(env: any, data: AuthBody) {
@@ -342,6 +382,42 @@ export async function findOrCreateUser(env: any, data: AuthBody) {
   }
 
   return createUser(env, { ...data, email });
+}
+
+export async function findOrCreateOAuthUser(
+  env: any,
+  data: { email: string; oauthProvider: string; oauthId: string }
+) {
+  const email = data.email.trim().toLowerCase();
+  const existing = await getUserByEmail(env, email);
+
+  if (existing) {
+    if (
+      existing.oauth_provider &&
+      existing.oauth_id &&
+      (existing.oauth_provider !== data.oauthProvider || existing.oauth_id !== data.oauthId)
+    ) {
+      throw new Error("이미 다른 OAuth 계정으로 연결된 이메일입니다");
+    }
+
+    if (!existing.oauth_provider || !existing.oauth_id) {
+      await env.DB.prepare(
+        "UPDATE users SET oauth_provider = ?, oauth_id = ? WHERE id = ?"
+      )
+        .bind(data.oauthProvider, data.oauthId, existing.id)
+        .run();
+      return { ...existing, oauth_provider: data.oauthProvider, oauth_id: data.oauthId };
+    }
+
+    return existing;
+  }
+
+  const created = await createUser(env, {
+    email,
+    oauthProvider: data.oauthProvider,
+    oauthId: data.oauthId,
+  });
+  return created;
 }
 
 export async function updateUserPassword(env: any, userId: string, password: string) {
@@ -375,6 +451,38 @@ export async function authenticateExistingUser(env: any, credentials: AuthBody) 
 
   await clearFailures(env, normalized.id);
   return { user: normalized } as const;
+}
+
+export async function deleteUserById(env: any, headers: HeadersInit, userId: string) {
+  if (!userId) {
+    return errorResponse("userId가 필요합니다", 400, headers);
+  }
+
+  const row = await env.DB.prepare("SELECT id FROM users WHERE id = ? LIMIT 1")
+    .bind(userId)
+    .first<{ id: string }>();
+
+  if (!row) {
+    return errorResponse("계정을 찾을 수 없습니다", 404, headers);
+  }
+
+  await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(userId).run();
+  return jsonResponse({ success: true, id: userId }, 200, headers);
+}
+
+export async function deleteUserByEmail(env: any, headers: HeadersInit, email: string) {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) {
+    return errorResponse("email이 필요합니다", 400, headers);
+  }
+
+  const row = await getUserByEmail(env, normalized);
+  if (!row) {
+    return errorResponse("계정을 찾을 수 없습니다", 404, headers);
+  }
+
+  await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(row.id).run();
+  return jsonResponse({ success: true, id: row.id, email: normalized }, 200, headers);
 }
 
 async function authenticateUser(user: UserRow, credentials: AuthBody) {

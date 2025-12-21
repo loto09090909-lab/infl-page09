@@ -1,4 +1,4 @@
-/api/*               /api/:splat           200
+/api/*               https://infl-worker.loto09090909.workers.dev/api/:splat 200
 /css/*               /css/:splat           200
 /js/*                /js/:splat            200
 /images/*            /images/:splat        200
@@ -8,10 +8,14 @@
 /page-admin-login    /page-admin-login.html 200!
 /admin               /admin.html           200!
 /login               /login.html           200!
+/user-login          /user-login.html      200!
+/signup              /signup.html          200!
+/dashboard           /user-dashboard.html  200!
 /user                /user.html            200!
 /                    /index.html           200!
 
 /:slug/admin         /admin.html           200!
+/:slug/private/:token /user.html           200!
 /:slug               /user.html            200!
 
 /*                   /index.html           200
