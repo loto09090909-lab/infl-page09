@@ -51,15 +51,16 @@ CREATE TABLE page_meta (
 CREATE INDEX idx_page_meta_plan ON page_meta(plan_id);
 
 -- ==========================================
--- 4. page_admins
+-- 4. page_admins (수정됨: user_id 추가)
 -- ==========================================
 CREATE TABLE page_admins (
-  page_id TEXT PRIMARY KEY,
+  page_id TEXT NOT NULL,
+  user_id TEXT, -- 이 컬럼이 누락되어 에러가 발생했습니다.
   password_hash TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (page_id),
   FOREIGN KEY (page_id) REFERENCES page_meta(page_id) ON DELETE CASCADE
 );
-
 -- ==========================================
 -- 5. page_members
 -- ==========================================
