@@ -66,8 +66,6 @@ export default {
     let corsOrigin = "*";
     if (originHeader && (allowedOrigins.includes(originHeader) || allowedOrigins.includes("*"))) {
       corsOrigin = originHeader;
-    } else if (allowedOrigins.length > 0 && allowedOrigins[0] !== "*") {
-      corsOrigin = allowedOrigins[0];
     }
 
     const corsHeaders = {

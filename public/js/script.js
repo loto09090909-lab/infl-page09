@@ -114,12 +114,10 @@ function renderTurnstileWidget() {
 }
 
 function resolveApiBases() {
-    const knownWorkerBase = APP_CONFIG.knownWorkerBase || 'https://infl-worker.loto09090909.workers.dev';
-    const bases = [knownWorkerBase];
-    if (MANUAL_API_BASE && !bases.includes(MANUAL_API_BASE)) {
-        bases.push(MANUAL_API_BASE);
+    if (MANUAL_API_BASE) {
+        return [MANUAL_API_BASE];
     }
-    return bases;
+    return [APP_CONFIG.knownWorkerBase || 'https://infl-worker.loto09090909.workers.dev'];
 }
 
 const API_BASES = resolveApiBases();
