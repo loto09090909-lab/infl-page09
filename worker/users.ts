@@ -195,46 +195,80 @@ export async function verifyPassword(password: string, stored: string | null) {
 }
 
 async function getUserByEmail(env: any, email: string) {
-  return env.DB.prepare(
-    "SELECT id, email, password_hash, oauth_provider, oauth_id, plan_id, failed_attempts, locked_until FROM users WHERE email = ? LIMIT 1"
-  )
-    .bind(email)
-    .first<UserRow>();
+  try {
+    return await env.DB.prepare(
+      "SELECT id, email, password_hash, oauth_provider, oauth_id, plan_id, failed_attempts, locked_until FROM users WHERE email = ? LIMIT 1"
+    )
+      .bind(email)
+      .first<UserRow>();
+  } catch (error) {
+    return env.DB.prepare(
+      "SELECT id, email, password_hash, oauth_provider, oauth_id, NULL as plan_id, failed_attempts, locked_until FROM users WHERE email = ? LIMIT 1"
+    )
+      .bind(email)
+      .first<UserRow>();
+  }
 }
 
 export async function getUserById(env: any, id: string) {
-  return env.DB.prepare(
-    "SELECT id, email, password_hash, oauth_provider, oauth_id, plan_id, failed_attempts, locked_until FROM users WHERE id = ? LIMIT 1"
-  )
-    .bind(id)
-    .first<UserRow>();
+  try {
+    return await env.DB.prepare(
+      "SELECT id, email, password_hash, oauth_provider, oauth_id, plan_id, failed_attempts, locked_until FROM users WHERE id = ? LIMIT 1"
+    )
+      .bind(id)
+      .first<UserRow>();
+  } catch (error) {
+    return env.DB.prepare(
+      "SELECT id, email, password_hash, oauth_provider, oauth_id, NULL as plan_id, failed_attempts, locked_until FROM users WHERE id = ? LIMIT 1"
+    )
+      .bind(id)
+      .first<UserRow>();
+  }
 }
 
 async function ensureUserPlan(env: any, user: UserRow | null) {
   if (!user) return null;
   if (user.plan_id) return user;
 
-  await env.DB.prepare("UPDATE users SET plan_id = ? WHERE id = ?")
-    .bind(DEFAULT_PLAN, user.id)
-    .run();
+  try {
+    await env.DB.prepare("UPDATE users SET plan_id = ? WHERE id = ?")
+      .bind(DEFAULT_PLAN, user.id)
+      .run();
+  } catch (error) {
+    return { ...user, plan_id: DEFAULT_PLAN };
+  }
   return { ...user, plan_id: DEFAULT_PLAN };
 }
 
 async function createUser(env: any, data: AuthBody): Promise<UserRow> {
   const userId = crypto.randomUUID();
   const passwordHash = data.password ? await hashPassword(data.password) : null;
-  await env.DB.prepare(
-    "INSERT INTO users (id, email, password_hash, oauth_provider, oauth_id, plan_id) VALUES (?, ?, ?, ?, ?, ?)"
-  )
-    .bind(
-      userId,
-      data.email!,
-      passwordHash,
-      data.oauthProvider ?? null,
-      data.oauthId ?? null,
-      DEFAULT_PLAN
+  try {
+    await env.DB.prepare(
+      "INSERT INTO users (id, email, password_hash, oauth_provider, oauth_id, plan_id) VALUES (?, ?, ?, ?, ?, ?)"
     )
-    .run();
+      .bind(
+        userId,
+        data.email!,
+        passwordHash,
+        data.oauthProvider ?? null,
+        data.oauthId ?? null,
+        DEFAULT_PLAN
+      )
+      .run();
+  } catch (error) {
+    await env.DB.prepare(
+      "INSERT INTO users (id, email, password_hash, oauth_provider, oauth_id) VALUES (?, ?, ?, ?, ?)"
+    )
+      .bind(
+        userId,
+        data.email!,
+        passwordHash,
+        data.oauthProvider ?? null,
+        data.oauthId ?? null
+      )
+      .run();
+  }
 
   return {
     id: userId,
