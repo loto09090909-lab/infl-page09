@@ -31,6 +31,7 @@
 - `database_name` 값이 실제 D1 이름과 일치해야 합니다.
 - 기존 D1에 `plan_id` 컬럼이 없다면 `db/migrations/2025-add-plan-id-to-users.sql` 마이그레이션을 적용하세요.
 - 마이그레이션 전에도 로그인은 가능하도록 레거시 폴백이 있으나, 플랜 정책은 기본값으로 처리됩니다.
+- `plan_limits` 테이블에 `max_pages` 등 컬럼이 없다면 `db/migrations/2025-fix-plan-limits-columns.sql`를 적용하세요.
 
 ## 3) OAuth 리다이렉트 설정
 ### Google

@@ -24,6 +24,7 @@ export function buildLoginIdentifier(req: Request, subject: string) {
 }
 
 async function getState(env: any, scope: string, identifier: string) {
+  if (!env?.PAGE_KV) return null;
   const key = `login:${scope}:${identifier}`;
   const raw = await env.PAGE_KV.get(key);
   if (!raw) return null;
@@ -46,6 +47,7 @@ async function persistState(
   identifier: string,
   state: AttemptState
 ) {
+  if (!env?.PAGE_KV) return;
   const now = Date.now();
   const ttlSeconds = Math.max(30, Math.ceil((state.resetAt - now) / 1000));
   await env.PAGE_KV.put(`login:${scope}:${identifier}`, JSON.stringify(state), {
@@ -87,6 +89,9 @@ export async function recordFailedLogin(
   maxAttempts = DEFAULT_MAX_ATTEMPTS,
   windowSeconds = DEFAULT_WINDOW_SECONDS
 ) {
+  if (!env?.PAGE_KV) {
+    return { blocked: false, remaining: maxAttempts, resetAt: Date.now() + windowSeconds * 1000 };
+  }
   const now = Date.now();
   const current = (await getState(env, scope, identifier)) || {
     count: 0,
@@ -108,5 +113,6 @@ export async function recordFailedLogin(
 }
 
 export async function clearLoginAttempts(env: any, scope: string, identifier: string) {
+  if (!env?.PAGE_KV) return;
   await env.PAGE_KV.delete(`login:${scope}:${identifier}`);
 }
