@@ -77,6 +77,11 @@ function resolveApiBases() {
         bases.push(window.API_BASE);
     }
 
+    const origin = window.location.origin;
+    if (!bases.includes(origin)) {
+        bases.push(origin);
+    }
+
     const knownWorkerBase = 'https://infl-worker.loto09090909.workers.dev';
     if (!bases.includes(knownWorkerBase)) {
         bases.push(knownWorkerBase);
@@ -88,8 +93,6 @@ function resolveApiBases() {
             bases.push(guessedWorker);
         }
     }
-
-    bases.push(window.location.origin);
 
     return bases;
 }

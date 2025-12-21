@@ -146,16 +146,13 @@ function resolveApiBases() {
     }
 
     if (APP_CONFIG.usePagesDerivedBase !== false && window.location.hostname.endsWith('pages.dev')) {
-        const guessedWorker = window.location.origin.replace('.workers.dev');
+        const guessedWorker = window.location.origin.replace('.pages.dev', '.workers.dev');
         pushBase(guessedWorker);
     }
 
     if (APP_CONFIG.useCurrentOriginBase !== false) {
         const origin = window.location.origin;
-        // 현재 도메인이 pages.dev라면 API 베이스 후보에서 제외 (Workers만 API를 담당하므로)
-        if (!origin.endsWith('pages.dev')) {
-            pushBase(origin);
-        }
+        pushBase(origin);
     }
 
     return bases;
@@ -168,6 +165,10 @@ let LAST_API_BASE_USED = null;
 function getApiBaseCandidates() {
     if (MANUAL_API_BASE) {
         return [MANUAL_API_BASE, ...API_BASES.filter((base) => base !== MANUAL_API_BASE)];
+    }
+    if (window.location.hostname.endsWith('pages.dev')) {
+        const origin = window.location.origin;
+        return [origin, ...API_BASES.filter((base) => base !== origin)];
     }
     return API_BASES;
 }
