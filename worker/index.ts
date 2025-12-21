@@ -1,4 +1,4 @@
-import { getBearerToken, verifySessionToken } from "./auth";
+import { getBearerToken, hasSessionSecret, verifySessionToken } from "./auth";
 import {
   pageAdminLogin,
   pageAdminLogout,
@@ -90,7 +90,11 @@ export default {
 
     if (method === "GET" && path === "/api/health") {
       return jsonResponse(
-        { ok: true, time: new Date().toISOString() },
+        {
+          ok: true,
+          time: new Date().toISOString(),
+          authSecretConfigured: hasSessionSecret(env),
+        },
         200,
         corsHeaders
       );
