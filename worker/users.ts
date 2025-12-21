@@ -1,4 +1,4 @@
-import { createSessionToken } from "./auth";
+import { createSessionToken, hasSessionSecret } from "./auth";
 import { enforcePlanLimit, PlanLimitError } from "./plan-limits";
 import { normalizeSlugs, replaceSlugMap, findConflictingSlug } from "./slug-map";
 import { slugify } from "./slug";
@@ -304,6 +304,10 @@ function isLocked(user: UserRow) {
 }
 
 export async function signup(req: Request, env: any, headers: HeadersInit) {
+  if (!hasSessionSecret(env)) {
+    return errorResponse("TOKEN_SECRET 또는 SESSION_SECRET이 필요합니다.", 500, headers);
+  }
+
   const body = await parseJsonBody<AuthBody>(req);
   if (!body || typeof body.email !== "string") {
     return errorResponse("이메일을 입력하세요", 400, headers);
@@ -336,6 +340,10 @@ export async function signup(req: Request, env: any, headers: HeadersInit) {
 }
 
 export async function login(req: Request, env: any, headers: HeadersInit) {
+  if (!hasSessionSecret(env)) {
+    return errorResponse("TOKEN_SECRET 또는 SESSION_SECRET이 필요합니다.", 500, headers);
+  }
+
   const body = await parseJsonBody<AuthBody>(req);
   if (!body || typeof body.email !== "string") {
     return errorResponse("이메일을 입력하세요", 400, headers);

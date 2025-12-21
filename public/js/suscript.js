@@ -1,3 +1,9 @@
+window.APP_CONFIG = window.APP_CONFIG || {};
+
+window.APP_CONFIG.preferredApiBase = "https://infl-worker.loto09090909.workers.dev";
+window.APP_CONFIG.allowQueryApiBase = true;
+
+
 function slugify(value) {
     const normalized = value.normalize('NFKD').toLowerCase();
 
@@ -68,32 +74,29 @@ function createPlatformIcon(preset, className = 'platform-icon') {
 function resolveApiBases() {
     const bases = [];
 
+    // 1. APP_CONFIG에 정의된 기본 주소를 최우선으로 사용
+    if (window.APP_CONFIG && window.APP_CONFIG.preferredApiBase) {
+        bases.push(window.APP_CONFIG.preferredApiBase);
+    }
+
     const metaApiBase = document.querySelector('meta[name="api-base"]')?.content?.trim();
     if (metaApiBase) {
         bases.push(metaApiBase);
     }
 
-    if (window.API_BASE) {
-        bases.push(window.API_BASE);
-    }
-
+    // 2. 이미 알고 있는 Worker 주소 추가
     const knownWorkerBase = 'https://infl-worker.loto09090909.workers.dev';
     if (!bases.includes(knownWorkerBase)) {
         bases.push(knownWorkerBase);
     }
 
-    if (window.location.hostname.endsWith('pages.dev')) {
-        const guessedWorker = window.location.origin.replace('.pages.dev', '.workers.dev');
-        if (!bases.includes(guessedWorker)) {
-            bases.push(guessedWorker);
-        }
+    // 3. 현재 오리진 추가 (필요 시)
+    if (!bases.includes(window.location.origin)) {
+        bases.push(window.location.origin);
     }
-
-    bases.push(window.location.origin);
 
     return bases;
 }
-
 const API_BASES = resolveApiBases();
 
 async function apiFetch(
@@ -564,7 +567,7 @@ async function editPage(pageId) {
 
   if (!res.ok) {
     const errText = await res.text();
-    setSuperAdminStatus(`페이지 정보를 불러오지 못했습니다: ${errText || res.status}`,'error');
+    setSuperAdminStatus(`페이지 정보를 불러오지 못했습니다: ${errText || res.status}`, 'error');
     alert(`페이지 정보를 불러오지 못했습니다: ${errText || res.status}`);
     return;
   }

@@ -1,11 +1,8 @@
 name = "infl-worker"
 main = "index.ts"
-compatibility_date = "2025-12-14"
+compatibility_date = "2024-04-03" # 날짜를 현재 혹은 안정적인 과거로 수정
 
-[vars]
-# 환경 변수는 개발 기본값만 두고, 운영 값은 env 섹션에서 설정하세요.
-ALLOWED_ORIGINS = "http://localhost:8787,https://infl-page09.pages.dev"
-
+# --- 공통 설정 (Preview 등에서도 사용) ---
 [[kv_namespaces]]
 binding = "PAGE_KV"
 id = "df984fdb34cf4546816e70f8e029b47a"
@@ -13,12 +10,20 @@ id = "df984fdb34cf4546816e70f8e029b47a"
 [[d1_databases]]
 binding = "DB"
 database_id = "1bc18749-585b-4c55-b378-78a29af5b5ca"
-database_name = "infl_page09"
-
-[env.preview]
-[env.preview.vars]
-ALLOWED_ORIGINS = "https://preview.infl-page09.pages.dev,https://infl-page09.pages.dev"
+database_name = "infl_db"
 
 [env.production]
+# 핵심: production 환경에서도 KV와 D1을 사용할 수 있도록 명시
+[[env.production.kv_namespaces]]
+binding = "PAGE_KV"
+id = "df984fdb34cf4546816e70f8e029b47a"
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_id = "1bc18749-585b-4c55-b378-78a29af5b5ca"
+database_name = "infl_db"
+
 [env.production.vars]
 ALLOWED_ORIGINS = "https://infl-page09.pages.dev"
+TOKEN_SECRET = "fdmadskfjlq123"
+SESSION_SECRET = "ewqjeiojos231fa"
