@@ -53,36 +53,36 @@ import { notifyOps } from "./notifications";
 
 export default {
   async fetch(req: Request, env: any): Promise<Response> {
-      // 1. 전역 에러 핸들러 추가
-      try {
-        const url = new URL(req.url);
-        const path = url.pathname;
-        const method = req.method;
+    const url = new URL(req.url);
+    const path = url.pathname;
+    const method = req.method;
+    const originHeader = req.headers.get("Origin");
 
-      // 2. CORS 안전하게 처리
-      const originHeader = req.headers.get("Origin");
-      const allowedOrigins = (env.ALLOWED_ORIGINS || "")
-        .split(",")
-        .map((o: string) => o.trim())
-        .filter(Boolean);
+    const allowedOrigins = (env.ALLOWED_ORIGINS || "")
+      .split(",")
+      .map((o: string) => o.trim())
+      .filter(Boolean);
 
-      let corsOrigin = "*";
-      if (originHeader && (allowedOrigins.includes(originHeader) || allowedOrigins.includes("*"))) {
-        corsOrigin = originHeader;
-      } else if (allowedOrigins.length > 0 && allowedOrigins[0] !== "*") {
-        corsOrigin = allowedOrigins[0];
-      }
+    let corsOrigin = "*";
+    if (originHeader && (allowedOrigins.includes(originHeader) || allowedOrigins.includes("*"))) {
+      corsOrigin = originHeader;
+    } else if (allowedOrigins.length > 0 && allowedOrigins[0] !== "*") {
+      corsOrigin = allowedOrigins[0];
+    }
 
-      const corsHeaders = {
-        "Access-Control-Allow-Origin": corsOrigin,
-        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, x-session-secret",
-        "Access-Control-Allow-Credentials": "true",
-      };
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": corsOrigin,
+      "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization, x-session-secret",
+      "Access-Control-Allow-Credentials": "true",
+    };
 
-      if (method === "OPTIONS") {
-        return new Response(null, { status: 204, headers: corsHeaders });
-      }
+    if (method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: corsHeaders });
+    }
+
+    // 1. 전역 에러 핸들러 추가
+    try {
 
     if (
       method === "GET" &&
@@ -469,13 +469,17 @@ export default {
 
     } catch (err: any) {
       console.error("Worker Runtime Error", err);
-      await notifyOps(env, {
-        event: "worker.error",
-        message: err?.message || "Unexpected error",
-        metadata: {
-          stack: err?.stack,
-        },
-      });
+      try {
+        await notifyOps(env, {
+          event: "worker.error",
+          message: err?.message || "Unexpected error",
+          metadata: {
+            stack: err?.stack,
+          },
+        });
+      } catch (notifyError) {
+        console.error("Worker notifyOps Error", notifyError);
+      }
       return new Response(
         JSON.stringify({
           error: "Worker Runtime Error",
@@ -484,8 +488,8 @@ export default {
         {
           status: 500,
           headers: {
+            ...corsHeaders,
             "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
           },
         }
       );
