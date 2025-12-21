@@ -125,6 +125,9 @@ function resolveApiBases() {
         }
     };
 
+    const knownWorkerBase = APP_CONFIG.knownWorkerBase || 'https://infl-worker.loto09090909.workers.dev';
+    pushBase(knownWorkerBase);
+
     if (typeof APP_CONFIG.apiBase === 'string') {
         pushBase(APP_CONFIG.apiBase);
     }
@@ -140,19 +143,9 @@ function resolveApiBases() {
         pushBase(window.API_BASE);
     }
 
-    if (APP_CONFIG.useKnownWorkerBase !== false) {
-        const knownWorkerBase = APP_CONFIG.knownWorkerBase || 'https://infl-worker.loto09090909.workers.dev';
-        pushBase(knownWorkerBase);
-    }
-
     if (APP_CONFIG.usePagesDerivedBase !== false && window.location.hostname.endsWith('pages.dev')) {
         const guessedWorker = window.location.origin.replace('.pages.dev', '.workers.dev');
         pushBase(guessedWorker);
-    }
-
-    if (APP_CONFIG.useCurrentOriginBase !== false) {
-        const origin = window.location.origin;
-        pushBase(origin);
     }
 
     return bases;
@@ -165,10 +158,6 @@ let LAST_API_BASE_USED = null;
 function getApiBaseCandidates() {
     if (MANUAL_API_BASE) {
         return [MANUAL_API_BASE, ...API_BASES.filter((base) => base !== MANUAL_API_BASE)];
-    }
-    if (window.location.hostname.endsWith('pages.dev')) {
-        const origin = window.location.origin;
-        return [origin, ...API_BASES.filter((base) => base !== origin)];
     }
     return API_BASES;
 }

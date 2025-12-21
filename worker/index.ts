@@ -65,11 +65,10 @@ export default {
 
       const originHeader = req.headers.get("Origin");
 
-      const corsOrigin = allowedOrigins.length
-        ? originHeader && allowedOrigins.includes(originHeader)
-          ? originHeader
-          : allowedOrigins[0]
-        : originHeader || "*";
+      let corsOrigin = allowedOrigins[0] || "*";
+      if (originHeader && (allowedOrigins.includes(originHeader) || allowedOrigins.includes("*"))) {
+        corsOrigin = originHeader;
+      }
 
       const corsHeaders = {
         "Access-Control-Allow-Origin": corsOrigin,
