@@ -1,4 +1,10 @@
-import { createSessionToken, getBearerToken, revokeSessionToken, verifySessionToken } from "./auth";
+import {
+  createSessionToken,
+  getBearerToken,
+  hasSessionSecret,
+  revokeSessionToken,
+  verifySessionToken,
+} from "./auth";
 import { resolvePageId } from "./slug";
 import {
   findConflictingSlug,
@@ -234,6 +240,10 @@ export async function pageAdminLogin(
   pageId: string,
   headers: HeadersInit
 ) {
+  if (!hasSessionSecret(env)) {
+    return errorResponse("TOKEN_SECRET 또는 SESSION_SECRET이 필요합니다.", 500, headers);
+  }
+
   const body = await parseJsonBody<LoginBody>(req);
   if (!body || typeof body.email !== "string") {
     return errorResponse("이메일을 입력하세요", 400, headers);

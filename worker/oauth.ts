@@ -1,4 +1,4 @@
-import { createSessionToken } from "./auth";
+import { createSessionToken, hasSessionSecret } from "./auth";
 import { errorResponse, jsonResponse } from "./utils";
 import { findOrCreateOAuthUser } from "./users";
 
@@ -199,6 +199,10 @@ export async function handleOAuthCallback(
   const provider = normalizeProvider(providerInput);
   if (!provider) {
     return errorResponse("지원하지 않는 OAuth 제공자입니다", 400, headers);
+  }
+
+  if (!hasSessionSecret(env)) {
+    return errorResponse("TOKEN_SECRET 또는 SESSION_SECRET이 필요합니다.", 500, headers);
   }
 
   const url = new URL(req.url);

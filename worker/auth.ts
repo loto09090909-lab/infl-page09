@@ -102,6 +102,10 @@ function getSessionSecret(env: any): string | null {
   return env.TOKEN_SECRET || env.SESSION_SECRET || null;
 }
 
+export function hasSessionSecret(env: any): boolean {
+  return Boolean(getSessionSecret(env));
+}
+
 async function verifyLegacySession(
   env: any,
   role: SessionRole,
