@@ -25,7 +25,12 @@ import {
   PlanLimitError,
 } from "./plan-limits";
 import { countSubmissions } from "./contact";
-import { countActivePrivateLinks } from "./private-links";
+import {
+  countActivePrivateLinks,
+  createPrivateLink,
+  listPrivateLinks,
+  revokePrivateLink,
+} from "./private-links";
 import {
   buildLoginIdentifier,
   clearLoginAttempts,
@@ -33,6 +38,7 @@ import {
   recordFailedLogin,
 } from "./login-throttle";
 import { ensurePageMemberBridge } from "./page-members";
+import { logStructuredEvent } from "./notifications";
 
 type LoginBody = {
   email?: string;
@@ -49,6 +55,7 @@ type SavePageBody = {
   contactSchema?: unknown;
   contactSettings?: unknown;
   accessControl?: unknown;
+  customDomains?: unknown;
   slugs?: unknown;
   theme?: unknown;
 };
@@ -184,6 +191,25 @@ function validateAccessControl(raw: unknown) {
   };
 }
 
+function validateCustomDomains(raw: unknown) {
+  if (raw === undefined) return { customDomains: undefined };
+  if (!Array.isArray(raw)) {
+    return { error: "customDomains는 배열이어야 합니다" };
+  }
+
+  const sanitized = raw
+    .map((item) => sanitizeString(item, 200))
+    .filter((item): item is string => !!item)
+    .map((item) => item.toLowerCase());
+
+  const domainRegex = /^[a-z0-9.-]+\.[a-z]{2,}$/;
+  const unique = Array.from(new Set(sanitized)).filter((domain) => domainRegex.test(domain));
+
+  return {
+    customDomains: unique.slice(0, 20),
+  };
+}
+
 function validateLinks(rawLinks: unknown) {
   if (rawLinks === undefined) return { publicLinks: undefined, privateLinks: undefined, provided: false };
   if (!Array.isArray(rawLinks)) {
@@ -249,9 +275,16 @@ export async function pageAdminLogin(
     return errorResponse("이메일을 입력하세요", 400, headers);
   }
 
+  const canonicalPageId = await resolvePageId(env, pageId);
+
   const loginIdentifier = buildLoginIdentifier(req, body.email);
   const throttleState = await getLoginThrottle(env, "page", loginIdentifier);
   if (throttleState.blocked) {
+    logStructuredEvent({
+      event: "auth.page_login_failed",
+      message: "throttled",
+      metadata: { email: body.email, pageId: canonicalPageId, resetAt: throttleState.resetAt },
+    });
     const waitSeconds = Math.max(1, Math.ceil((throttleState.resetAt - Date.now()) / 1000));
     return errorResponse(
       `로그인 시도가 너무 많습니다. ${waitSeconds}초 후 다시 시도하세요`,
@@ -259,8 +292,6 @@ export async function pageAdminLogin(
       headers
     );
   }
-
-  const canonicalPageId = await resolvePageId(env, pageId);
 
   const adminRow = await env.DB.prepare(
     "SELECT user_id FROM page_admins WHERE page_id = ? LIMIT 1"
@@ -275,6 +306,11 @@ export async function pageAdminLogin(
     .bind(canonicalPageId)
       .first<{ "1": number }>();
     if (!memberExists) {
+      logStructuredEvent({
+        event: "auth.page_login_failed",
+        message: "admin_not_found",
+        metadata: { email: body.email, pageId: canonicalPageId },
+      });
       return errorResponseWithCode("페이지 관리자 계정을 찾을 수 없습니다", "NOT_FOUND", 404, headers);
     }
   }
@@ -289,6 +325,11 @@ export async function pageAdminLogin(
   if ("error" in result) {
     await recordFailedLogin(env, "page", loginIdentifier);
     const code = result.status === 404 ? "NOT_FOUND" : "FORBIDDEN";
+    logStructuredEvent({
+      event: "auth.page_login_failed",
+      message: "auth_failed",
+      metadata: { email: body.email, pageId: canonicalPageId, status: result.status },
+    });
     return errorResponseWithCode(result.error, code, result.status, headers);
   }
 
@@ -300,6 +341,11 @@ export async function pageAdminLogin(
 
   if (!memberRow && result.user.id !== adminRow?.user_id) {
     await recordFailedLogin(env, "page", loginIdentifier);
+    logStructuredEvent({
+      event: "auth.page_login_failed",
+      message: "not_authorized",
+      metadata: { email: body.email, pageId: canonicalPageId },
+    });
     return errorResponseWithCode("페이지 관리자 권한이 없습니다", "FORBIDDEN", 403, headers);
   }
 
@@ -419,6 +465,70 @@ export async function getPagePlanStatus(
   );
 }
 
+export async function listPagePrivateLinks(
+  req: Request,
+  env: any,
+  pageId: string,
+  headers: HeadersInit
+) {
+  const token = getBearerToken(req);
+  const canonicalPageId = await resolvePageId(env, pageId);
+  const pageTokenValid = await verifySessionToken(env, "page", token, canonicalPageId);
+  const superTokenValid = await verifySessionToken(env, "super", token);
+  if (!pageTokenValid && !superTokenValid) {
+    return errorResponse("페이지 관리자 인증이 필요합니다", 401, headers);
+  }
+
+  return listPrivateLinks(req, env, headers, canonicalPageId);
+}
+
+export async function createPagePrivateLink(
+  req: Request,
+  env: any,
+  pageId: string,
+  headers: HeadersInit
+) {
+  const token = getBearerToken(req);
+  const canonicalPageId = await resolvePageId(env, pageId);
+  const pageTokenValid = await verifySessionToken(env, "page", token, canonicalPageId);
+  const superTokenValid = await verifySessionToken(env, "super", token);
+  if (!pageTokenValid && !superTokenValid) {
+    return errorResponse("페이지 관리자 인증이 필요합니다", 401, headers);
+  }
+
+  const planId = (await getPagePlanId(env, canonicalPageId)) ?? "free";
+  try {
+    await enforcePlanLimit(env, planId, "create_private_link");
+    const activeCount = await countActivePrivateLinks(env, canonicalPageId);
+    await enforcePrivateLinkLimit(env, planId, activeCount);
+  } catch (error) {
+    if (error instanceof PlanLimitError) {
+      return errorResponseWithCode(error.message, "PLAN_LIMIT_EXCEEDED", error.status, headers);
+    }
+    throw error;
+  }
+
+  return createPrivateLink(req, env, headers, canonicalPageId);
+}
+
+export async function revokePagePrivateLink(
+  req: Request,
+  env: any,
+  pageId: string,
+  token: string,
+  headers: HeadersInit
+) {
+  const bearer = getBearerToken(req);
+  const canonicalPageId = await resolvePageId(env, pageId);
+  const pageTokenValid = await verifySessionToken(env, "page", bearer, canonicalPageId);
+  const superTokenValid = await verifySessionToken(env, "super", bearer);
+  if (!pageTokenValid && !superTokenValid) {
+    return errorResponse("페이지 관리자 인증이 필요합니다", 401, headers);
+  }
+
+  return revokePrivateLink(req, env, headers, canonicalPageId, token);
+}
+
 export async function savePage(
   req: Request,
   env: any,
@@ -470,6 +580,11 @@ export async function savePage(
   const { error: accessError, accessControl } = validateAccessControl(body.accessControl);
   if (accessError) {
     return errorResponse(accessError, 400, headers);
+  }
+
+  const { error: customDomainError, customDomains } = validateCustomDomains(body.customDomains);
+  if (customDomainError) {
+    return errorResponse(customDomainError, 400, headers);
   }
 
   const { error: themeError, theme } = validateTheme(body.theme);
@@ -529,6 +644,7 @@ export async function savePage(
       contactProvided || schema !== undefined ? schema ?? [] : existingData.contactSchema ?? [],
     contactSettings: contactSettings ?? existingData.contactSettings ?? { enabled: false },
     accessControl: accessControl ?? existingData.accessControl ?? { enabled: false },
+    customDomains: customDomains ?? existingData.customDomains ?? [],
     slugs: normalizedSlugs,
     plan:
       typeof body.plan === "string"

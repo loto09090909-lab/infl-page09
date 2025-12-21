@@ -6,6 +6,9 @@ import {
   rotateAccessCode,
   savePage,
   verifyPageSession,
+  listPagePrivateLinks,
+  createPagePrivateLink,
+  revokePagePrivateLink,
 } from "./page-admin";
 import {
   createPage,
@@ -46,6 +49,7 @@ import {
 } from "./user-pages";
 import { createRandomPrivateLink, getPrivatePage } from "./private-links";
 import { startOAuth, handleOAuthCallback } from "./oauth";
+import { notifyOps } from "./notifications";
 
 export default {
   async fetch(req: Request, env: any): Promise<Response> {
@@ -420,6 +424,19 @@ export default {
         return getPagePlanStatus(req, env, pageId, corsHeaders);
       }
 
+      if (action === "private-links") {
+        const token = pathSegments[4];
+        if (!token && method === "GET") {
+          return listPagePrivateLinks(req, env, pageId, corsHeaders);
+        }
+        if (!token && method === "POST") {
+          return createPagePrivateLink(req, env, pageId, corsHeaders);
+        }
+        if (token && method === "DELETE") {
+          return revokePagePrivateLink(req, env, pageId, token, corsHeaders);
+        }
+      }
+
       if (action === "private-templates") {
         const templateId = pathSegments[4];
         const actionNext = pathSegments[5];
@@ -449,6 +466,13 @@ export default {
 
     } catch (err: any) {
       console.error("Worker Runtime Error", err);
+      await notifyOps(env, {
+        event: "worker.error",
+        message: err?.message || "Unexpected error",
+        metadata: {
+          stack: err?.stack,
+        },
+      });
       return new Response(
         JSON.stringify({
           error: "Worker Runtime Error",

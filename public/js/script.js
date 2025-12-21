@@ -491,6 +491,10 @@ let pagePlanStatus = null;
 let contactSubmissions = [];
 let pageTheme = 'classic';
 let privateTemplates = [];
+let adminPrivateLinks = [];
+let accessControl = { enabled: false, code: '' };
+let customDomains = [];
+let upgradeModalAutoOpened = false;
 
 const MAX_CONTACT_FIELDS = 50;
 
@@ -499,6 +503,16 @@ const PLAN_LIMITS = {
     basic: 25,
     premium: 100,
 };
+
+const PLAN_COMPARE = [
+    { label: '가격', free: '₩0', basic: '₩9,900/월', premium: '₩29,000/월' },
+    { label: '페이지 수', free: '1', basic: '3', premium: '10' },
+    { label: '프라이빗 링크', free: '3', basic: '10', premium: '50' },
+    { label: '컨택트 필드', free: '5', basic: '15', premium: '50' },
+    { label: '슬러그 변경', free: '불가', basic: '가능', premium: '가능' },
+    { label: 'CSV 내보내기', free: '불가', basic: '가능', premium: '가능' },
+    { label: '통계 보관', free: '7일', basic: '30일', premium: '365일' },
+];
 
 const THEME_PRESETS = [
     {
@@ -551,6 +565,15 @@ const CONTACT_PRESETS = [
         fields: [
             { label: '채널명', type: 'text', placeholder: 'YouTube/Instagram' },
             { label: '선호 연락처', type: 'text', placeholder: 'DM, 이메일 등' },
+        ],
+    },
+    {
+        id: 'event',
+        label: '이벤트 문의',
+        fields: [
+            { label: '행사명', type: 'text', placeholder: '이벤트 이름' },
+            { label: '행사 일정', type: 'text', placeholder: 'YYYY-MM-DD' },
+            { label: '담당자 연락처', type: 'tel', placeholder: '010-0000-0000' },
         ],
     },
 ];
@@ -719,6 +742,58 @@ function ensureUserViewContainer() {
 
     contactSection.appendChild(contactForm);
 
+    const shareSection = document.createElement('section');
+    shareSection.className = 'share-panel';
+    shareSection.id = 'share-panel';
+    const shareTitle = document.createElement('h3');
+    shareTitle.innerText = '공유하기';
+    shareSection.appendChild(shareTitle);
+
+    const shareActions = document.createElement('div');
+    shareActions.className = 'share-actions';
+
+    const kakaoLink = document.createElement('a');
+    kakaoLink.id = 'share-kakao';
+    kakaoLink.href = '#';
+    kakaoLink.target = '_blank';
+    kakaoLink.rel = 'noopener';
+    kakaoLink.innerText = '카카오 공유';
+
+    const lineLink = document.createElement('a');
+    lineLink.id = 'share-line';
+    lineLink.href = '#';
+    lineLink.target = '_blank';
+    lineLink.rel = 'noopener';
+    lineLink.innerText = '라인 공유';
+
+    const emailLink = document.createElement('a');
+    emailLink.id = 'share-email';
+    emailLink.href = '#';
+    emailLink.innerText = '이메일 공유';
+
+    shareActions.appendChild(kakaoLink);
+    shareActions.appendChild(lineLink);
+    shareActions.appendChild(emailLink);
+    shareSection.appendChild(shareActions);
+
+    const qrWrap = document.createElement('div');
+    qrWrap.className = 'share-qr';
+    const qrImg = document.createElement('img');
+    qrImg.id = 'share-qr-image';
+    qrImg.alt = 'QR 코드';
+    const qrMeta = document.createElement('div');
+    qrMeta.innerHTML = '<p class="help-text">QR 코드를 스캔해 페이지를 열 수 있습니다.</p>';
+    const qrDownload = document.createElement('a');
+    qrDownload.id = 'share-qr-download';
+    qrDownload.innerText = 'QR 다운로드';
+    qrDownload.className = 'ghost-link';
+    qrDownload.href = '#';
+    qrDownload.setAttribute('download', 'page-qr.png');
+    qrMeta.appendChild(qrDownload);
+    qrWrap.appendChild(qrImg);
+    qrWrap.appendChild(qrMeta);
+    shareSection.appendChild(qrWrap);
+
     const footer = document.createElement('footer');
     footer.className = 'user-footer';
     footer.innerHTML = '<p>&copy; 2025 인플루언서 페이지</p>';
@@ -727,6 +802,7 @@ function ensureUserViewContainer() {
     card.appendChild(profileSection);
     card.appendChild(linksSection);
     card.appendChild(contactSection);
+    card.appendChild(shareSection);
     card.appendChild(footer);
 
     shell.appendChild(card);
@@ -772,6 +848,7 @@ async function loadPageData(pageId, options = {}) {
     if (data && data.profile) {
         updatePageContext(pageId, data.profile);
         document.title = data.profile.name;
+        renderSharePanel(pageId);
 
         const titleEl = document.querySelector('h1');
         if (titleEl) titleEl.innerText = data.profile.name;
@@ -812,6 +889,10 @@ async function loadPageData(pageId, options = {}) {
             contactSettings = typeof data.contactSettings === 'object' && data.contactSettings
                 ? { enabled: data.contactSettings.enabled === true, ...(data.contactSettings.webhookUrl ? { webhookUrl: data.contactSettings.webhookUrl } : {}) }
                 : { enabled: false };
+            accessControl = typeof data.accessControl === 'object' && data.accessControl
+                ? { enabled: data.accessControl.enabled === true, code: data.accessControl.code || '' }
+                : { enabled: false, code: '' };
+            customDomains = Array.isArray(data.customDomains) ? data.customDomains : [];
             pagePlan = data.plan || 'free';
             renderAdminLinks();
             renderSlugEditor();
@@ -820,9 +901,12 @@ async function loadPageData(pageId, options = {}) {
             renderPrivacySummary();
             renderUsage();
             renderOnboardingBanner();
+            renderAccessControl();
+            renderCustomDomains();
             fetchContactSubmissions();
             fetchPagePlanStatus(pageId);
             loadPrivateTemplates();
+            fetchPrivateLinks();
         }
 
         const nameInput = document.getElementById('name');
@@ -1111,6 +1195,7 @@ async function savePage() {
                 ? { webhookUrl: contactSettings.webhookUrl.trim() }
                 : {}),
         },
+        customDomains,
         slugs: adminSlugs,
         plan: pagePlan,
         theme: pageTheme,
@@ -1472,6 +1557,19 @@ function userLogout() {
     window.location.href = '/user-login';
 }
 
+function setSignupStatus(message, tone = 'info') {
+    const status = document.getElementById('signup-status');
+    if (!status) return;
+    if (!message) {
+        status.style.display = 'none';
+        status.innerText = '';
+        return;
+    }
+    status.style.display = 'block';
+    status.className = `status-banner ${tone}`;
+    status.innerText = message;
+}
+
 async function userSignup() {
     const emailInput = document.getElementById('user-signup-email');
     const passwordInput = document.getElementById('user-signup-password');
@@ -1499,7 +1597,15 @@ async function userSignup() {
     storeUserSession(payload?.token, payload?.expiresIn);
 
     const pageId = payload?.pageId;
-    window.location.href = '/dashboard';
+    if (pageId) {
+        const pageUrl = `${window.location.origin}/${encodeURIComponent(pageId)}`;
+        setSignupStatus(`기본 페이지가 생성되었습니다. ${pageUrl}`, 'success');
+    } else {
+        setSignupStatus('기본 페이지가 생성되었습니다. 대시보드로 이동합니다.', 'success');
+    }
+    setTimeout(() => {
+        window.location.href = '/dashboard';
+    }, 1200);
 }
 
 async function userLogin() {
@@ -1758,6 +1864,24 @@ function renderUserLinks(links) {
         li.appendChild(anchor);
         linksList.appendChild(li);
     });
+}
+
+function renderSharePanel(pageId) {
+    const kakao = document.getElementById('share-kakao');
+    const line = document.getElementById('share-line');
+    const email = document.getElementById('share-email');
+    const qrImg = document.getElementById('share-qr-image');
+    const qrDownload = document.getElementById('share-qr-download');
+    if (!kakao || !line || !email || !qrImg || !qrDownload) return;
+
+    const shareUrl = `${window.location.origin}/${encodeURIComponent(pageId)}`;
+    kakao.href = `https://story.kakao.com/share?url=${encodeURIComponent(shareUrl)}`;
+    line.href = `https://social-plugins.line.me/lineit/share?url=${encodeURIComponent(shareUrl)}`;
+    email.href = `mailto:?subject=${encodeURIComponent('내 페이지 공유')}&body=${encodeURIComponent(shareUrl)}`;
+
+    const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(shareUrl)}`;
+    qrImg.src = qrSrc;
+    qrDownload.href = qrSrc;
 }
 
 function setContactStatus(message, tone = 'info') {
@@ -2251,6 +2375,295 @@ async function issuePrivateLinkFromTemplate(templateId) {
     }
 }
 
+function formatPrivateLinkStatus(status) {
+    switch (status) {
+        case 'expired':
+            return { label: '만료', className: 'expired' };
+        case 'usedup':
+            return { label: '사용초과', className: 'usedup' };
+        case 'revoked':
+            return { label: '비활성', className: 'revoked' };
+        default:
+            return { label: '활성', className: 'active' };
+    }
+}
+
+function renderPrivateLinks() {
+    const list = document.getElementById('private-link-list');
+    if (!list) return;
+
+    list.innerHTML = '';
+    if (!adminPrivateLinks.length) {
+        const empty = document.createElement('li');
+        empty.className = 'empty';
+        empty.innerText = '발급된 프라이빗 링크가 없습니다.';
+        list.appendChild(empty);
+        return;
+    }
+
+    adminPrivateLinks.forEach((link) => {
+        const item = document.createElement('li');
+        item.className = 'link-row';
+
+        const header = document.createElement('div');
+        header.className = 'link-info';
+        const status = formatPrivateLinkStatus(link.status);
+        header.innerHTML = `<strong>${link.token}</strong> <span class="status-pill ${status.className}">${status.label}</span>`;
+
+        const meta = document.createElement('div');
+        meta.className = 'private-link-meta';
+        meta.innerHTML = `
+            <span>생성: ${new Date(link.createdAt).toLocaleString()}</span>
+            <span>만료: ${link.expiresAt ? new Date(link.expiresAt).toLocaleString() : '없음'}</span>
+            <span>사용: ${link.uses || 0}${link.maxUses ? `/${link.maxUses}` : ''}</span>
+            ${link.note ? `<span>메모: ${link.note}</span>` : ''}
+        `;
+
+        const actions = document.createElement('div');
+        actions.className = 'link-actions';
+        const copyBtn = document.createElement('button');
+        copyBtn.type = 'button';
+        copyBtn.className = 'secondary';
+        copyBtn.innerText = '링크 복사';
+        copyBtn.onclick = () => copyPrivateLinkUrl(link.token);
+
+        const revokeBtn = document.createElement('button');
+        revokeBtn.type = 'button';
+        revokeBtn.className = 'ghost';
+        revokeBtn.innerText = '비활성화';
+        revokeBtn.onclick = () => revokePrivateLink(link.token);
+
+        actions.appendChild(copyBtn);
+        actions.appendChild(revokeBtn);
+
+        item.appendChild(header);
+        item.appendChild(meta);
+        item.appendChild(actions);
+        list.appendChild(item);
+    });
+}
+
+function copyPrivateLinkUrl(token) {
+    if (!derivedPageId) return;
+    const url = `${window.location.origin}/${encodeURIComponent(derivedPageId)}/private/${encodeURIComponent(token)}`;
+    if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(url).catch(() => {
+            alert(`링크: ${url}`);
+        });
+    } else {
+        alert(`링크: ${url}`);
+    }
+}
+
+async function fetchPrivateLinks() {
+    const token = sessionStorage.getItem('page_admin_token');
+    if (!token || !derivedPageId) return;
+
+    const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/private-links`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+    }, [401, 403, 404]);
+
+    if (!res.ok) return;
+    const payload = await res.json().catch(() => null);
+    adminPrivateLinks = Array.isArray(payload?.items) ? payload.items : [];
+    renderPrivateLinks();
+}
+
+async function createPrivateLink() {
+    const token = sessionStorage.getItem('page_admin_token');
+    if (!token || !derivedPageId) return;
+
+    const expiresInput = document.getElementById('private-link-expires');
+    const maxUsesInput = document.getElementById('private-link-maxuses');
+    const noteInput = document.getElementById('private-link-note');
+
+    const expiresRaw = expiresInput?.value;
+    let expiresAt = null;
+    if (expiresRaw) {
+        const parsedDate = new Date(expiresRaw);
+        if (isNaN(parsedDate.getTime())) {
+            alert('만료 일시 형식이 올바르지 않습니다.');
+            return;
+        }
+        expiresAt = parsedDate.toISOString();
+    }
+    let maxUses = null;
+    if (maxUsesInput?.value) {
+        const parsed = Number(maxUsesInput.value);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+            alert('최대 사용 횟수는 1 이상의 숫자여야 합니다.');
+            return;
+        }
+        maxUses = parsed;
+    }
+    const note = noteInput?.value?.trim();
+
+    const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/private-links`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+            ...(expiresAt ? { expiresAt } : {}),
+            ...(maxUses ? { maxUses } : {}),
+            ...(note ? { note } : {}),
+        }),
+    }, [400, 401, 403, 422]);
+
+    if (!res.ok) {
+        const msg = await res.text();
+        alert(`프라이빗 링크 생성 실패: ${msg || res.status}`);
+        return;
+    }
+
+    const created = await res.json().catch(() => null);
+    if (created) {
+        adminPrivateLinks = [created, ...adminPrivateLinks];
+        renderPrivateLinks();
+    }
+
+    if (expiresInput) expiresInput.value = '';
+    if (maxUsesInput) maxUsesInput.value = '';
+    if (noteInput) noteInput.value = '';
+}
+
+async function revokePrivateLink(tokenValue) {
+    const token = sessionStorage.getItem('page_admin_token');
+    if (!token || !derivedPageId) return;
+    if (!confirm('프라이빗 링크를 비활성화할까요?')) return;
+
+    const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/private-links/${encodeURIComponent(tokenValue)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+    }, [401, 403, 404]);
+
+    if (!res.ok) {
+        const msg = await res.text();
+        alert(`프라이빗 링크 비활성화 실패: ${msg || res.status}`);
+        return;
+    }
+
+    adminPrivateLinks = adminPrivateLinks.map((item) => item.token === tokenValue ? { ...item, status: 'revoked' } : item);
+    renderPrivateLinks();
+}
+
+function renderAccessControl() {
+    const statusEl = document.getElementById('access-control-status');
+    const codeInput = document.getElementById('access-control-code');
+    if (!statusEl || !codeInput) return;
+
+    if (accessControl?.enabled) {
+        statusEl.className = 'status-banner success';
+        statusEl.innerText = '접근 코드가 활성화되어 있습니다.';
+        codeInput.value = accessControl.code || '';
+    } else {
+        statusEl.className = 'status-banner info';
+        statusEl.innerText = '접근 코드가 비활성 상태입니다.';
+        codeInput.value = '';
+    }
+}
+
+async function rotateAccessCode() {
+    const token = sessionStorage.getItem('page_admin_token');
+    if (!token || !derivedPageId) return;
+
+    const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/access-code/rotate`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+    }, [401, 403, 404]);
+
+    if (!res.ok) {
+        const msg = await res.text();
+        alert(`접근 코드 생성 실패: ${msg || res.status}`);
+        return;
+    }
+
+    const payload = await res.json().catch(() => null);
+    accessControl = payload?.accessControl || { enabled: true, code: '' };
+    renderAccessControl();
+}
+
+async function disableAccessCode() {
+    const token = sessionStorage.getItem('page_admin_token');
+    if (!token || !derivedPageId) return;
+
+    const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/access-code/disable`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+    }, [401, 403, 404]);
+
+    if (!res.ok) {
+        const msg = await res.text();
+        alert(`접근 코드 비활성화 실패: ${msg || res.status}`);
+        return;
+    }
+
+    const payload = await res.json().catch(() => null);
+    accessControl = payload?.accessControl || { enabled: false, code: '' };
+    renderAccessControl();
+}
+
+function copyAccessCode() {
+    const code = accessControl?.code;
+    if (!code) return;
+    if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(code).catch(() => {
+            alert(`접근 코드: ${code}`);
+        });
+    } else {
+        alert(`접근 코드: ${code}`);
+    }
+}
+
+function renderCustomDomains() {
+    const list = document.getElementById('custom-domain-list');
+    if (!list) return;
+    list.innerHTML = '';
+
+    if (!customDomains.length) {
+        const empty = document.createElement('span');
+        empty.className = 'help-text';
+        empty.innerText = '등록된 커스텀 도메인이 없습니다.';
+        list.appendChild(empty);
+        return;
+    }
+
+    customDomains.forEach((domain) => {
+        const pill = document.createElement('span');
+        pill.className = 'pill';
+        pill.innerText = domain;
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.innerText = '×';
+        removeBtn.onclick = () => removeCustomDomain(domain);
+        pill.appendChild(removeBtn);
+        list.appendChild(pill);
+    });
+}
+
+function addCustomDomain() {
+    const input = document.getElementById('custom-domain-input');
+    const value = input?.value?.trim().toLowerCase();
+    if (!value) return;
+
+    const domainRegex = /^[a-z0-9.-]+\.[a-z]{2,}$/;
+    if (!domainRegex.test(value)) {
+        alert('도메인 형식이 올바르지 않습니다.');
+        return;
+    }
+
+    if (!customDomains.includes(value)) {
+        customDomains.push(value);
+        renderCustomDomains();
+    }
+
+    if (input) input.value = '';
+}
+
+function removeCustomDomain(domain) {
+    customDomains = customDomains.filter((item) => item !== domain);
+    renderCustomDomains();
+}
+
 function renderAdminLinks() {
     const adminList = document.getElementById('link-list');
     if (!adminList) return;
@@ -2446,6 +2859,79 @@ function renderUsage() {
     } else {
         usageHelp.innerText = `공개 ${publicLinks.length}개, 비공개 ${privateLinks.length}개 | 컨택트 ${adminContactSchema.length}개`;
     }
+
+    const contactHint = document.getElementById('contact-upgrade-hint');
+    if (contactHint) {
+        if (pagePlanStatus?.overages?.contactFields) {
+            contactHint.style.display = 'block';
+            contactHint.innerText = '컨택트 필드 한도를 초과했습니다. 업그레이드가 필요합니다.';
+        } else {
+            contactHint.style.display = 'none';
+            contactHint.innerText = '';
+        }
+    }
+
+    if (pagePlanStatus?.overages && (pagePlanStatus.overages.privateLinks || pagePlanStatus.overages.contactFields || pagePlanStatus.overages.pages)) {
+        if (!upgradeModalAutoOpened) {
+            openUpgradeModal('플랜 한도를 초과했습니다. 업그레이드로 제한을 해제할 수 있습니다.');
+            upgradeModalAutoOpened = true;
+        }
+    }
+}
+
+function renderPlanCompareTable() {
+    const host = document.getElementById('plan-compare-table');
+    if (!host) return;
+
+    const table = document.createElement('table');
+    const thead = document.createElement('thead');
+    const headRow = document.createElement('tr');
+    ['항목', 'Free', 'Basic', 'Premium'].forEach((label) => {
+        const th = document.createElement('th');
+        th.innerText = label;
+        headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    PLAN_COMPARE.forEach((row) => {
+        const tr = document.createElement('tr');
+        const label = document.createElement('td');
+        label.innerText = row.label;
+        const free = document.createElement('td');
+        free.innerText = row.free;
+        const basic = document.createElement('td');
+        basic.innerText = row.basic;
+        const premium = document.createElement('td');
+        premium.innerText = row.premium;
+        tr.appendChild(label);
+        tr.appendChild(free);
+        tr.appendChild(basic);
+        tr.appendChild(premium);
+        tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+
+    host.innerHTML = '';
+    host.appendChild(table);
+}
+
+function openUpgradeModal(reason = '') {
+    const modal = document.getElementById('upgrade-modal');
+    const reasonEl = document.getElementById('upgrade-reason');
+    if (!modal) return;
+    modal.setAttribute('aria-hidden', 'false');
+    if (reasonEl) {
+        reasonEl.innerText = reason || '플랜별 기능과 가격을 확인하고 업그레이드를 진행하세요.';
+    }
+    renderPlanCompareTable();
+}
+
+function closeUpgradeModal() {
+    const modal = document.getElementById('upgrade-modal');
+    if (!modal) return;
+    modal.setAttribute('aria-hidden', 'true');
 }
 
 function renderSlugEditor() {
@@ -2527,6 +3013,7 @@ function renderContactSchema() {
         empty.className = 'help-text';
         empty.innerText = '추가된 컨택트 필드가 없습니다. 위 입력창에서 필드를 추가해주세요.';
         list.appendChild(empty);
+        renderContactPreview();
         return;
     }
 
@@ -2534,12 +3021,30 @@ function renderContactSchema() {
         const row = document.createElement('div');
         row.className = 'contact-row';
 
+        const reorder = document.createElement('div');
+        reorder.className = 'contact-reorder';
+        const upBtn = document.createElement('button');
+        upBtn.type = 'button';
+        upBtn.className = 'pill-button ghost';
+        upBtn.innerText = '▲';
+        upBtn.disabled = idx === 0;
+        upBtn.onclick = () => moveContactField(idx, -1);
+        const downBtn = document.createElement('button');
+        downBtn.type = 'button';
+        downBtn.className = 'pill-button ghost';
+        downBtn.innerText = '▼';
+        downBtn.disabled = idx === adminContactSchema.length - 1;
+        downBtn.onclick = () => moveContactField(idx, 1);
+        reorder.appendChild(upBtn);
+        reorder.appendChild(downBtn);
+
         const labelInput = document.createElement('input');
         labelInput.placeholder = '라벨';
         labelInput.value = field.label || '';
         labelInput.oninput = (e) => {
             const current = adminContactSchema[idx] || {};
             adminContactSchema[idx] = { ...current, label: e.target.value };
+            renderContactPreview();
         };
 
         const typeSelect = document.createElement('select');
@@ -2554,6 +3059,7 @@ function renderContactSchema() {
             const current = adminContactSchema[idx] || {};
             adminContactSchema[idx] = { ...current, type: e.target.value };
             renderUsage();
+            renderContactPreview();
         };
 
         const placeholderInput = document.createElement('input');
@@ -2572,6 +3078,7 @@ function renderContactSchema() {
         requiredInput.onchange = (e) => {
             const current = adminContactSchema[idx] || {};
             adminContactSchema[idx] = { ...current, required: e.target.checked };
+            renderContactPreview();
         };
         requiredToggle.appendChild(requiredInput);
         requiredToggle.append(' 필수');
@@ -2596,6 +3103,7 @@ function renderContactSchema() {
             renderUsage();
         };
 
+        row.appendChild(reorder);
         row.appendChild(labelInput);
         row.appendChild(typeSelect);
         row.appendChild(placeholderInput);
@@ -2604,6 +3112,40 @@ function renderContactSchema() {
         row.appendChild(removeBtn);
 
         list.appendChild(row);
+    });
+
+    renderContactPreview();
+}
+
+function moveContactField(index, delta) {
+    const nextIndex = index + delta;
+    if (nextIndex < 0 || nextIndex >= adminContactSchema.length) return;
+    const [item] = adminContactSchema.splice(index, 1);
+    adminContactSchema.splice(nextIndex, 0, item);
+    renderContactSchema();
+    renderUsage();
+}
+
+function renderContactPreview() {
+    const host = document.getElementById('contact-preview');
+    if (!host) return;
+    host.innerHTML = '';
+
+    if (!adminContactSchema.length) {
+        host.innerHTML = '<p class="help-text">필드를 추가하면 미리보기가 표시됩니다.</p>';
+        return;
+    }
+
+    adminContactSchema.forEach((field) => {
+        const row = document.createElement('div');
+        row.className = 'contact-preview-field';
+        const label = document.createElement('strong');
+        label.innerText = field.label || '라벨 없음';
+        const meta = document.createElement('span');
+        meta.innerText = `${field.type || 'text'}${field.required ? ' · 필수' : ''}`;
+        row.appendChild(label);
+        row.appendChild(meta);
+        host.appendChild(row);
     });
 }
 
@@ -2787,5 +3329,6 @@ function applyDefaultTemplate() {
 }
 
 function requestUpgrade() {
+    closeUpgradeModal();
     window.location.href = 'mailto:support@example.com?subject=%EC%97%85%EA%B7%B8%EB%A0%88%EC%9D%B4%EB%93%9C%20%EB%AC%B8%EC%9D%98';
 }

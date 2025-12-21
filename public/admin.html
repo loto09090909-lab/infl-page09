@@ -50,7 +50,7 @@
                     <h3>플랜을 확인하고 업그레이드하세요</h3>
                     <p class="help-text">링크, 프라이빗 링크, 컨택트 필드 수를 한눈에 확인할 수 있습니다.</p>
                 </div>
-                <button class="secondary" type="button" onclick="requestUpgrade()">업그레이드 문의</button>
+                <button class="secondary" type="button" onclick="openUpgradeModal()">업그레이드 문의</button>
             </div>
             <div class="usage-meter">
                 <div class="meter-labels">
@@ -94,6 +94,22 @@
                 <div id="slug-chip-list" class="pill-list"></div>
                 <p class="help-text">슬러그는 영어/숫자/하이픈으로 구성되며, 기존 주소도 계속 유지됩니다.</p>
             </div>
+        </section>
+
+        <section class="card domain-card">
+            <div class="card-header">
+                <div>
+                    <p class="eyebrow">커스텀 도메인</p>
+                    <h3>도메인 연결 관리</h3>
+                    <p class="help-text">브랜드 도메인을 연결해 공유 주소를 변경할 수 있습니다.</p>
+                </div>
+            </div>
+            <div class="inline-inputs">
+                <input id="custom-domain-input" placeholder="example.com" />
+                <button type="button" class="primary" onclick="addCustomDomain()">도메인 추가</button>
+            </div>
+            <div id="custom-domain-list" class="pill-list"></div>
+            <p class="help-text">도메인을 추가하면 DNS 연결이 필요합니다. 실제 연결은 운영팀에 문의하세요.</p>
         </section>
 
         <section class="card profile-edit">
@@ -165,6 +181,45 @@
             <ul id="private-template-list" class="link-list"></ul>
         </section>
 
+        <section class="card private-link-card">
+            <div class="card-header">
+                <div>
+                    <p class="eyebrow">프라이빗 링크</p>
+                    <h3>프라이빗 링크 발급/관리</h3>
+                    <p class="help-text">만료 시간과 최대 사용 횟수를 지정해 안전하게 공유하세요.</p>
+                </div>
+                <button class="secondary" type="button" onclick="fetchPrivateLinks()">새로고침</button>
+            </div>
+            <div class="inline-inputs">
+                <input id="private-link-expires" type="datetime-local" placeholder="만료 일시" />
+                <input id="private-link-maxuses" type="number" min="1" placeholder="최대 사용 횟수" />
+                <input id="private-link-note" placeholder="메모 (선택)" />
+                <button class="primary" type="button" onclick="createPrivateLink()">링크 생성</button>
+            </div>
+            <ul id="private-link-list" class="link-list"></ul>
+        </section>
+
+        <section class="card access-control-card">
+            <div class="card-header">
+                <div>
+                    <p class="eyebrow">접근 코드</p>
+                    <h3>접근 코드 설정</h3>
+                    <p class="help-text">공개 페이지 접근 시 코드를 요구하도록 설정할 수 있습니다.</p>
+                </div>
+                <div class="card-actions">
+                    <button class="secondary" type="button" onclick="rotateAccessCode()">접근 코드 생성/갱신</button>
+                    <button class="ghost" type="button" onclick="disableAccessCode()">비활성화</button>
+                </div>
+            </div>
+            <div class="access-control-body">
+                <div id="access-control-status" class="status-banner info">접근 코드가 비활성 상태입니다.</div>
+                <div class="inline-inputs">
+                    <input id="access-control-code" readonly placeholder="접근 코드 없음" />
+                    <button class="ghost" type="button" onclick="copyAccessCode()">코드 복사</button>
+                </div>
+            </div>
+        </section>
+
         <section class="card contact-card">
             <div class="card-header">
                 <div>
@@ -203,7 +258,12 @@
                 <input id="contactWebhook" type="url" placeholder="https://example.com/webhook">
                 <p class="help-text">설정하면 컨택트 제출 시 JSON 페이로드를 이 URL로 전송합니다.</p>
             </div>
+            <p id="contact-upgrade-hint" class="help-text warning" style="display: none;"></p>
             <div id="contact-schema-list" class="contact-schema-list"></div>
+            <div class="contact-preview">
+                <h4>미리보기</h4>
+                <div id="contact-preview" class="contact-preview-body"></div>
+            </div>
         </section>
 
         <section class="card contact-card" id="contact-inbox-card">
@@ -252,6 +312,23 @@
             </div>
         </section>
     </main>
+
+    <div id="upgrade-modal" class="modal" aria-hidden="true">
+        <div class="modal-backdrop" onclick="closeUpgradeModal()"></div>
+        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="upgrade-title">
+            <div class="modal-header">
+                <h3 id="upgrade-title">플랜 업그레이드 안내</h3>
+                <button class="ghost" type="button" onclick="closeUpgradeModal()">닫기</button>
+            </div>
+            <p id="upgrade-reason" class="help-text"></p>
+            <div class="plan-compare-table" id="plan-compare-table"></div>
+            <div class="modal-actions">
+                <button class="secondary" type="button" onclick="closeUpgradeModal()">나중에</button>
+                <button class="primary" type="button" onclick="requestUpgrade()">업그레이드 요청</button>
+            </div>
+            <p class="help-text">업그레이드 요청 버튼을 누르면 담당자가 안내드립니다.</p>
+        </div>
+    </div>
 
     <script src="js/platforms.js"></script>
     <script src="js/script.js"></script>

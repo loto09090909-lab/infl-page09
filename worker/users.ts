@@ -3,6 +3,7 @@ import { enforcePlanLimit, PlanLimitError } from "./plan-limits";
 import { normalizeSlugs, replaceSlugMap, findConflictingSlug } from "./slug-map";
 import { slugify } from "./slug";
 import { errorResponse, errorResponseWithCode, jsonResponse, parseJsonBody } from "./utils";
+import { logStructuredEvent } from "./notifications";
 
 export type UserRow = {
   id: string;
@@ -316,19 +317,36 @@ export async function login(req: Request, env: any, headers: HeadersInit) {
   }
 
   const email = body.email.trim().toLowerCase();
+  const ip = req.headers.get("CF-Connecting-IP") || req.headers.get("x-forwarded-for");
+  const userAgent = req.headers.get("user-agent");
   const user = await getUserByEmail(env, email);
   const normalized = await ensureUserPlan(env, user);
   if (!normalized) {
+    logStructuredEvent({
+      event: "auth.login_failed",
+      message: "account_not_found",
+      metadata: { email, ip, userAgent },
+    });
     return errorResponse("계정을 찾을 수 없습니다", 404, headers);
   }
 
   if (isLocked(normalized)) {
+    logStructuredEvent({
+      event: "auth.login_failed",
+      message: "account_locked",
+      metadata: { email, ip, userAgent },
+    });
     return errorResponse("로그인 시도가 일시적으로 제한되었습니다", 423, headers);
   }
 
   const authResult = await authenticateUser(normalized, body);
   if (!authResult) {
     await recordFailure(env, normalized.id);
+    logStructuredEvent({
+      event: "auth.login_failed",
+      message: "invalid_credentials",
+      metadata: { email, ip, userAgent },
+    });
     return errorResponse("인증에 실패했습니다", 401, headers);
   }
 
