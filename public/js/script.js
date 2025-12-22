@@ -12,7 +12,8 @@ const storedManualBase =
     (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('sessionManualApiBase')) ||
     (typeof localStorage !== 'undefined' && localStorage.getItem('manualApiBase')) ||
     null;
-let MANUAL_API_BASE = storedManualBase || null;
+const isPagesDevBase = (value) => typeof value === 'string' && value.includes('.pages.dev');
+let MANUAL_API_BASE = storedManualBase && !isPagesDevBase(storedManualBase) ? storedManualBase : null;
 
 function applyRuntimeOverrides() {
     if (APP_CONFIG.envLabel) {
@@ -21,15 +22,30 @@ function applyRuntimeOverrides() {
     }
 
     if (APP_CONFIG.preferredApiBase && !MANUAL_API_BASE) {
-        MANUAL_API_BASE = APP_CONFIG.preferredApiBase.replace(/\/+$/, '');
+        const preferredBase = APP_CONFIG.preferredApiBase.replace(/\/+$/, '');
+        if (!isPagesDevBase(preferredBase)) {
+            MANUAL_API_BASE = preferredBase;
+        }
     }
 
     if (APP_CONFIG.allowQueryApiBase !== false && queryApiBase) {
-        MANUAL_API_BASE = queryApiBase.trim().replace(/\/+$/, '');
+        const normalizedQueryBase = queryApiBase.trim().replace(/\/+$/, '');
+        if (!isPagesDevBase(normalizedQueryBase)) {
+            MANUAL_API_BASE = normalizedQueryBase;
+            try {
+                sessionStorage.setItem('sessionManualApiBase', MANUAL_API_BASE);
+            } catch (error) {
+                console.warn('세션 수동 베이스 저장 실패', error);
+            }
+        }
+    }
+
+    if (storedManualBase && isPagesDevBase(storedManualBase)) {
         try {
-            sessionStorage.setItem('sessionManualApiBase', MANUAL_API_BASE);
+            sessionStorage.removeItem('sessionManualApiBase');
+            localStorage.removeItem('manualApiBase');
         } catch (error) {
-            console.warn('세션 수동 베이스 저장 실패', error);
+            console.warn('수동 베이스 초기화 실패', error);
         }
     }
 }
@@ -335,6 +351,10 @@ function updateEnvBadge(base) {
 
 function setManualApiBase(base) {
     const normalized = base ? base.replace(/\/+$/, '') : null;
+    if (normalized && isPagesDevBase(normalized)) {
+        console.warn('pages.dev 베이스는 사용할 수 없습니다.');
+        return;
+    }
     MANUAL_API_BASE = normalized || null;
     try {
         if (typeof sessionStorage !== 'undefined') {
