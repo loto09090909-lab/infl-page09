@@ -3,6 +3,7 @@ import {
   getBearerToken,
   hasSessionSecret,
   revokeSessionToken,
+  getSessionSubject,
   verifySessionToken,
 } from "./auth";
 import { resolvePageId } from "./slug";
@@ -39,6 +40,7 @@ import {
   recordFailedLogin,
 } from "./login-throttle";
 import { ensurePageMemberBridge } from "./page-members";
+import { recordAuditEvent } from "./audit";
 
 type LoginBody = {
   email?: string;
@@ -600,6 +602,16 @@ export async function savePage(
     await replaceSlugMap(env, canonicalPageId, normalizedSlugs);
   }
 
+  const actorUserId =
+    (await getSessionSubject(env, "page", token)) ||
+    (await getSessionSubject(env, "super", token)) ||
+    "unknown";
+  await recordAuditEvent(env, {
+    pageId: canonicalPageId,
+    actorUserId,
+    action: "page.updated",
+  });
+
   return jsonResponse({ success: true, message: "Page saved" }, 200, headers);
 }
 
@@ -640,6 +652,16 @@ export async function rotateAccessCode(
 
   await env.PAGE_KV.put(`page:${canonicalPageId}`, JSON.stringify(updated));
 
+  const actorUserId =
+    (await getSessionSubject(env, "page", token)) ||
+    (await getSessionSubject(env, "super", token)) ||
+    "unknown";
+  await recordAuditEvent(env, {
+    pageId: canonicalPageId,
+    actorUserId,
+    action: "page.access_code.rotated",
+  });
+
   return jsonResponse({ pageId: canonicalPageId, accessControl: updated.accessControl }, 200, headers);
 }
 
@@ -675,6 +697,16 @@ export async function disableAccessCode(
   };
 
   await env.PAGE_KV.put(`page:${canonicalPageId}`, JSON.stringify(updated));
+
+  const actorUserId =
+    (await getSessionSubject(env, "page", token)) ||
+    (await getSessionSubject(env, "super", token)) ||
+    "unknown";
+  await recordAuditEvent(env, {
+    pageId: canonicalPageId,
+    actorUserId,
+    action: "page.access_code.disabled",
+  });
 
   return jsonResponse({ pageId: canonicalPageId, accessControl: updated.accessControl }, 200, headers);
 }

@@ -3,6 +3,7 @@ import {
   getBearerToken,
   hasSessionSecret,
   revokeSessionToken,
+  getSessionSubject,
   verifySessionToken,
 } from "./auth";
 import { resolvePageId } from "./slug";
@@ -39,6 +40,7 @@ import {
   getLoginThrottle,
   recordFailedLogin,
 } from "./login-throttle";
+import { recordAuditEvent } from "./audit";
 
 type CreatePageBody = {
   pageId: string;
@@ -580,6 +582,14 @@ export async function createPage(
     }
     const normalized = normalizeCreatePageBody(body);
     await persistCreatePage(env, normalized);
+    const token = getBearerToken(req);
+    const actorUserId = (await getSessionSubject(env, "super", token)) || "super-admin";
+    await recordAuditEvent(env, {
+      pageId: normalized.pageId,
+      actorUserId,
+      action: "page.created.super",
+      metadata: { plan: normalized.plan },
+    });
     return jsonResponse({ success: true, message: "Page created" }, 201, headers);
   } catch (error) {
     if (error instanceof CreatePageError) {
@@ -613,6 +623,8 @@ export async function bulkCreatePages(
   }
 
   const results: { pageId: string; success: boolean; message: string; status: number }[] = [];
+  const token = getBearerToken(req);
+  const actorUserId = (await getSessionSubject(env, "super", token)) || "super-admin";
 
   for (const raw of body.pages) {
     let normalized: NormalizedCreatePage;
@@ -624,6 +636,12 @@ export async function bulkCreatePages(
         success: true,
         message: "created",
         status: 201,
+      });
+      await recordAuditEvent(env, {
+        pageId: normalized.pageId,
+        actorUserId,
+        action: "page.created.bulk",
+        metadata: { plan: normalized.plan },
       });
     } catch (error) {
       const status =
@@ -848,6 +866,12 @@ export async function deletePage(
     .bind(canonicalPageId)
     .run();
 
+  await recordAuditEvent(env, {
+    pageId: canonicalPageId,
+    actorUserId: "super-admin",
+    action: "page.deleted.super",
+  });
+
   return jsonResponse({ success: true, message: "Page deleted" }, 200, headers);
 }
 
@@ -1042,6 +1066,14 @@ export async function updatePage(
   if (slugs) {
     await replaceSlugMap(env, canonicalPageId, slugs);
   }
+
+  const token = getBearerToken(req);
+  const actorUserId = (await getSessionSubject(env, "super", token)) || "super-admin";
+  await recordAuditEvent(env, {
+    pageId: canonicalPageId,
+    actorUserId,
+    action: "page.updated.super",
+  });
 
   return jsonResponse({ success: true, message: "Page updated" }, 200, headers);
 }
