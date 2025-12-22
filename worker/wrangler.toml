@@ -5,6 +5,8 @@ compatibility_date = "2024-04-03"
 [vars]
 # 환경 변수는 개발 기본값만 두고, 운영 값은 env 섹션에서 설정하세요.
 ALLOWED_ORIGINS = "http://localhost:8787,https://infl-page09.pages.dev"
+PRIVATE_LINK_RETENTION_DAYS = "30"
+PRIVATE_LINK_PRUNE_INTERVAL_MINUTES = "60"
 
 [[kv_namespaces]]
 binding = "PAGE_KV"
@@ -18,8 +20,11 @@ database_name = "infl_db"
 [env.preview]
 [env.preview.vars]
 ALLOWED_ORIGINS = "https://preview.infl-page09.pages.dev,https://infl-page09.pages.dev"
+PRIVATE_LINK_RETENTION_DAYS = "30"
+PRIVATE_LINK_PRUNE_INTERVAL_MINUTES = "60"
 
 [env.production]
+name = "infl-worker"
 [[env.production.kv_namespaces]]
 binding = "PAGE_KV"
 id = "df984fdb34cf4546816e70f8e029b47a"
@@ -33,3 +38,8 @@ database_name = "infl_db"
 ALLOWED_ORIGINS = "https://infl-page09.pages.dev"
 TOKEN_SECRET = "fdmadskfjlq123"
 SESSION_SECRET = "ewqjeiojos231fa"
+PRIVATE_LINK_RETENTION_DAYS = "30"
+PRIVATE_LINK_PRUNE_INTERVAL_MINUTES = "60"
+
+[triggers]
+crons = ["0 3 * * *"]

@@ -50,6 +50,22 @@ function privateTokenKey(pageId: string, token: string) {
   return `private:${pageId}:token:${token}`;
 }
 
+function getRetentionMs(env: any) {
+  const raw = Number(env.PRIVATE_LINK_RETENTION_DAYS ?? 30);
+  const days = Number.isFinite(raw) && raw > 0 ? raw : 30;
+  return days * 24 * 60 * 60 * 1000;
+}
+
+function getPruneIntervalMs(env: any) {
+  const raw = Number(env.PRIVATE_LINK_PRUNE_INTERVAL_MINUTES ?? 60);
+  const minutes = Number.isFinite(raw) && raw > 0 ? raw : 60;
+  return minutes * 60 * 1000;
+}
+
+function pruneMarkerKey(pageId: string) {
+  return `private:${pageId}:prune`;
+}
+
 async function readTokenList(env: any, pageId: string): Promise<PrivateLinkRecord[]> {
   const raw = await env.PAGE_KV.get(privateListKey(pageId));
   if (!raw) return [];
@@ -96,6 +112,14 @@ function computeStatus(record: PrivateLinkRecord) {
   return "active";
 }
 
+function getInactiveTimestamp(record: PrivateLinkRecord) {
+  const candidate =
+    record.revokedAt || record.expiresAt || record.lastUsedAt || record.createdAt;
+  if (!candidate) return null;
+  const parsed = Date.parse(candidate);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 async function persistPrivateLink(env: any, pageId: string, record: PrivateLinkRecord) {
   await env.DB.prepare(
     "INSERT OR REPLACE INTO private_links (page_id, token, status, created_at, expires_at, max_uses, uses, revoked_at, last_used_at, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
@@ -113,6 +137,87 @@ async function persistPrivateLink(env: any, pageId: string, record: PrivateLinkR
       record.note ?? null
     )
     .run();
+}
+
+async function shouldPrunePrivateLinks(env: any, pageId: string, force: boolean) {
+  if (force) return true;
+  const intervalMs = getPruneIntervalMs(env);
+  if (!intervalMs) return false;
+  const last = await env.PAGE_KV.get(pruneMarkerKey(pageId));
+  if (!last) return true;
+  const parsed = Date.parse(last);
+  if (!Number.isFinite(parsed)) return true;
+  return Date.now() - parsed >= intervalMs;
+}
+
+async function markPrivateLinksPruned(env: any, pageId: string) {
+  await env.PAGE_KV.put(pruneMarkerKey(pageId), new Date().toISOString());
+}
+
+export async function prunePrivateLinksForPage(
+  env: any,
+  pageId: string,
+  { force = false } = {}
+) {
+  const shouldPrune = await shouldPrunePrivateLinks(env, pageId, force);
+  if (!shouldPrune) return { removed: 0, updated: 0 };
+
+  await ensurePrivateLinksMigrated(env, pageId);
+  const list = await readTokenList(env, pageId);
+  if (list.length === 0) {
+    await markPrivateLinksPruned(env, pageId);
+    return { removed: 0, updated: 0 };
+  }
+
+  const retentionMs = getRetentionMs(env);
+  const now = Date.now();
+  const next: PrivateLinkRecord[] = [];
+  const tokensToDelete: string[] = [];
+  let updatedCount = 0;
+
+  for (const record of list) {
+    const status = computeStatus(record);
+    const nextRecord = status !== record.status ? { ...record, status } : record;
+    if (status !== record.status) {
+      updatedCount += 1;
+      await env.PAGE_KV.put(privateTokenKey(pageId, record.token), JSON.stringify(nextRecord));
+      await persistPrivateLink(env, pageId, nextRecord);
+    }
+
+    if (status === "active") {
+      next.push(nextRecord);
+      continue;
+    }
+
+    const inactiveAt = getInactiveTimestamp(nextRecord);
+    if (inactiveAt && now - inactiveAt > retentionMs) {
+      tokensToDelete.push(record.token);
+      continue;
+    }
+    next.push(nextRecord);
+  }
+
+  if (tokensToDelete.length > 0 || next.length !== list.length) {
+    await writeTokenList(env, pageId, next);
+  }
+
+  if (tokensToDelete.length > 0) {
+    await Promise.all(
+      tokensToDelete.map((token) =>
+        env.PAGE_KV.delete(privateTokenKey(pageId, token))
+      )
+    );
+    const deletes = tokensToDelete.map((token) =>
+      env.DB.prepare("DELETE FROM private_links WHERE page_id = ? AND token = ?").bind(
+        pageId,
+        token
+      )
+    );
+    await env.DB.batch(deletes);
+  }
+
+  await markPrivateLinksPruned(env, pageId);
+  return { removed: tokensToDelete.length, updated: updatedCount };
 }
 
 export async function createPrivateLinkRecord(
@@ -147,6 +252,11 @@ export async function createPrivateLinkRecord(
 
 export async function countActivePrivateLinks(env: any, pageId: string) {
   await ensurePrivateLinksMigrated(env, pageId);
+  try {
+    await prunePrivateLinksForPage(env, pageId);
+  } catch (error) {
+    console.warn("private link prune failed", error);
+  }
   const row = await env.DB.prepare(
     "SELECT COUNT(*) AS count FROM private_links WHERE page_id = ? AND status = 'active'"
   )
@@ -173,6 +283,11 @@ export async function listPrivateLinks(
   pageId: string
 ) {
   await ensurePrivateLinksMigrated(env, pageId);
+  try {
+    await prunePrivateLinksForPage(env, pageId);
+  } catch (error) {
+    console.warn("private link prune failed", error);
+  }
   const list = await readTokenList(env, pageId);
   const refreshed = await Promise.all(
     list.map(async (record) => {
@@ -187,6 +302,21 @@ export async function listPrivateLinks(
     })
   );
   return jsonResponse({ items: refreshed }, 200, headers);
+}
+
+export async function prunePrivateLinks(env: any) {
+  const rows = await env.DB.prepare("SELECT DISTINCT page_id FROM private_links").all<{
+    page_id: string;
+  }>();
+  const pageIds = (rows?.results ?? []).map((row) => row.page_id).filter(Boolean);
+
+  for (const pageId of pageIds) {
+    try {
+      await prunePrivateLinksForPage(env, pageId, { force: true });
+    } catch (error) {
+      console.warn("private link prune failed", { pageId, error });
+    }
+  }
 }
 
 export async function revokePrivateLink(

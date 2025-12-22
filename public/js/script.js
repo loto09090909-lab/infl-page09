@@ -146,7 +146,7 @@ function resolveApiBases() {
     }
 
     if (APP_CONFIG.usePagesDerivedBase !== false && window.location.hostname.endsWith('pages.dev')) {
-        const guessedWorker = window.location.origin.replace('.workers.dev');
+        const guessedWorker = window.location.origin.replace('.pages.dev', '.workers.dev');
         pushBase(guessedWorker);
     }
 
@@ -897,10 +897,28 @@ const pageIdFromPath =
     pathSegments.length >= 2 && pathSegments[1] === 'admin' ? pathSegments[0] : '';
 const isUserPage = pathSegments.length === 2 && pathSegments[0] === 'user' && pathSegments[1];
 const isPrivateLink = pathSegments.length === 3 && pathSegments[1] === 'private';
+const reservedRoutes = new Set([
+    'admin',
+    'admin.html',
+    'login',
+    'login.html',
+    'super-admin',
+    'super-admin.html',
+    'page-admin-login',
+    'page-admin-login.html',
+    'signup',
+    'signup.html',
+    'user-login',
+    'user-login.html',
+    'dashboard',
+    'user-dashboard.html',
+    'user',
+    'user.html',
+]);
 const looksLikeSlugPage =
     pathSegments.length === 1 &&
     !pathSegments[0].includes('.') &&
-    !['admin', 'login', 'super-admin', 'super-admin.html', 'page-admin-login'].includes(pathSegments[0]);
+    !reservedRoutes.has(pathSegments[0]);
 const isAdminHtml = pathSegments.length === 1 && pathSegments[0].startsWith('admin');
 const isUserHtml = window.location.pathname.endsWith('/user.html');
 const isPublicView = !pageRole && (isUserPage || looksLikeSlugPage || isUserHtml || isPrivateLink);
