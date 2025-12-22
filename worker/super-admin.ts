@@ -21,7 +21,12 @@ import {
   hasPrivateLinks,
   PlanLimitError,
 } from "./plan-limits";
-import { findOrCreateUser, hashPassword, updateUserPassword, verifyPassword } from "./users";
+import {
+  findOrCreateUser,
+  hashPassword,
+  updateUserPassword,
+  verifyPasswordWithUpgrade,
+} from "./users";
 import {
   buildLoginIdentifier,
   clearLoginAttempts,
@@ -457,11 +462,23 @@ export async function superAdminLogin(
     .bind(username)
     .first<{ username: string; password_hash: string }>();
 
-  const passwordValid = await verifyPassword(body.password, row?.password_hash ?? null);
+  const passwordCheck = await verifyPasswordWithUpgrade(
+    env,
+    body.password,
+    row?.password_hash ?? null
+  );
 
-  if (!row || !passwordValid) {
+  if (!row || !passwordCheck.valid) {
     await recordFailedLogin(env, "super", loginIdentifier);
     return errorResponse("인증에 실패했습니다", 401, headers);
+  }
+
+  if (passwordCheck.upgradedHash) {
+    await env.DB.prepare(
+      "UPDATE super_admins SET password_hash = ? WHERE username = ?"
+    )
+      .bind(passwordCheck.upgradedHash, username)
+      .run();
   }
 
   await clearLoginAttempts(env, "super", loginIdentifier);

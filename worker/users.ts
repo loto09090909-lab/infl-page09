@@ -30,6 +30,7 @@ const PBKDF2_KEY_LENGTH = 32; // bytes
 const PBKDF2_PREFIX = "pbkdf2";
 const DEFAULT_PLAN = "free";
 const MAX_PAGE_ID_ATTEMPTS = 6;
+const LEGACY_HASH_ENV_KEY = "ALLOW_LEGACY_SHA256";
 
 function bufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
@@ -147,6 +148,14 @@ function isLegacySha256(hash: string) {
   return /^[a-f0-9]{64}$/i.test(hash);
 }
 
+function allowLegacySha256(env: any) {
+  const raw = env?.[LEGACY_HASH_ENV_KEY];
+  if (raw === undefined || raw === null) {
+    return true;
+  }
+  return String(raw).toLowerCase() !== "false";
+}
+
 async function verifyPbkdf2(password: string, stored: string) {
   const parts = stored.split("$");
   if (parts.length !== 4 || parts[0] !== PBKDF2_PREFIX) return false;
@@ -181,17 +190,30 @@ async function verifyLegacySha256(password: string, stored: string) {
   return hex === stored;
 }
 
-export async function verifyPassword(password: string, stored: string | null) {
-  if (!stored) return false;
+export async function verifyPasswordWithUpgrade(
+  env: any,
+  password: string,
+  stored: string | null
+) {
+  if (!stored) return { valid: false } as const;
   if (stored.startsWith(`${PBKDF2_PREFIX}$`)) {
-    return verifyPbkdf2(password, stored);
+    const valid = await verifyPbkdf2(password, stored);
+    return valid ? ({ valid: true } as const) : ({ valid: false } as const);
   }
 
   if (isLegacySha256(stored)) {
-    return verifyLegacySha256(password, stored);
+    if (!allowLegacySha256(env)) {
+      return { valid: false } as const;
+    }
+    const valid = await verifyLegacySha256(password, stored);
+    if (!valid) {
+      return { valid: false } as const;
+    }
+    const upgradedHash = await hashPassword(password);
+    return { valid: true, upgradedHash } as const;
   }
 
-  return false;
+  return { valid: false } as const;
 }
 
 async function getUserByEmail(env: any, email: string) {
@@ -326,13 +348,18 @@ export async function login(req: Request, env: any, headers: HeadersInit) {
     return errorResponse("로그인 시도가 일시적으로 제한되었습니다", 423, headers);
   }
 
-  const authResult = await authenticateUser(normalized, body);
-  if (!authResult) {
+  const authResult = await authenticateUser(env, normalized, body);
+  if (!authResult.authenticated) {
     await recordFailure(env, normalized.id);
     return errorResponse("인증에 실패했습니다", 401, headers);
   }
 
   await clearFailures(env, normalized.id);
+  if (authResult.upgradedHash) {
+    await env.DB.prepare("UPDATE users SET password_hash = ? WHERE id = ?")
+      .bind(authResult.upgradedHash, normalized.id)
+      .run();
+  }
   const session = await createSessionToken(env, "user", normalized.id);
   return jsonResponse(session, 200, headers);
 }
@@ -411,13 +438,18 @@ export async function authenticateExistingUser(env: any, credentials: AuthBody) 
     return { error: "로그인 시도가 일시적으로 제한되었습니다", status: 423 } as const;
   }
 
-  const authenticated = await authenticateUser(normalized, credentials);
-  if (!authenticated) {
+  const authResult = await authenticateUser(env, normalized, credentials);
+  if (!authResult.authenticated) {
     await recordFailure(env, normalized.id);
     return { error: "인증에 실패했습니다", status: 401 } as const;
   }
 
   await clearFailures(env, normalized.id);
+  if (authResult.upgradedHash) {
+    await env.DB.prepare("UPDATE users SET password_hash = ? WHERE id = ?")
+      .bind(authResult.upgradedHash, normalized.id)
+      .run();
+  }
   return { user: normalized } as const;
 }
 
@@ -438,20 +470,26 @@ export async function deleteUserById(env: any, headers: HeadersInit, userId: str
   return jsonResponse({ success: true, id: userId }, 200, headers);
 }
 
-async function authenticateUser(user: UserRow, credentials: AuthBody) {
+async function authenticateUser(env: any, user: UserRow, credentials: AuthBody) {
   const isOAuth = !!(credentials.oauthProvider && credentials.oauthId);
 
   if (isOAuth) {
-    return (
-      user.oauth_provider === credentials.oauthProvider &&
-      user.oauth_id === credentials.oauthId &&
-      !!user.oauth_provider
-    );
+    return {
+      authenticated:
+        user.oauth_provider === credentials.oauthProvider &&
+        user.oauth_id === credentials.oauthId &&
+        !!user.oauth_provider,
+    };
   }
 
   if (!credentials.password || !user.password_hash) {
-    return false;
+    return { authenticated: false } as const;
   }
 
-  return verifyPassword(credentials.password, user.password_hash);
+  const { valid, upgradedHash } = await verifyPasswordWithUpgrade(
+    env,
+    credentials.password,
+    user.password_hash
+  );
+  return { authenticated: valid, upgradedHash } as const;
 }
