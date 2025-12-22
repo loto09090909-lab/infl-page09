@@ -378,8 +378,8 @@ export async function login(req: Request, env: any, headers: HeadersInit) {
 }
 
 export async function findOrCreateUser(env: any, data: AuthBody) {
-  const email = (data.email || "").trim().toLowerCase();
-  if (!email) {
+  const { email, error: emailError } = validateEmail(data.email);
+  if (emailError || !email) {
     throw new Error("이메일이 필요합니다");
   }
 
@@ -396,7 +396,10 @@ export async function findOrCreateOAuthUser(
   env: any,
   data: { email: string; oauthProvider: string; oauthId: string }
 ) {
-  const email = data.email.trim().toLowerCase();
+  const { email, error: emailError } = validateEmail(data.email);
+  if (emailError || !email) {
+    throw new Error("이메일이 필요합니다");
+  }
   const existing = await getUserByEmail(env, email);
 
   if (existing) {
