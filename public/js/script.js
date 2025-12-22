@@ -1,8 +1,5 @@
 window.APP_CONFIG = window.APP_CONFIG || {};
 
-window.APP_CONFIG.preferredApiBase = "https://infl-worker.loto09090909.workers.dev";
-window.APP_CONFIG.allowQueryApiBase = true;
-
 const APP_CONFIG = window.APP_CONFIG;
 
 const urlParams = new URLSearchParams(window.location.search);
@@ -158,7 +155,7 @@ function resolveApiBases() {
     }
 
     if (APP_CONFIG.useKnownWorkerBase !== false) {
-        const knownWorkerBase = APP_CONFIG.knownWorkerBase || 'https://infl-worker.loto09090909.workers.dev';
+        const knownWorkerBase = APP_CONFIG.knownWorkerBase;
         pushBase(knownWorkerBase);
     }
 

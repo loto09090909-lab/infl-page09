@@ -41,6 +41,8 @@ const inferPlatformFromLink = platformHelpers.inferPlatformFromLink || function 
     return null;
 };
 
+const APP_CONFIG = window.APP_CONFIG || {};
+
 function createPlatformIcon(preset, className = 'platform-icon') {
     if (!preset) return null;
 
@@ -81,8 +83,7 @@ function resolveApiBases() {
 
     pushBase(window.API_BASE);
 
-    const knownWorkerBase = 'https://infl-worker.loto09090909.workers.dev';
-    pushBase(knownWorkerBase);
+    pushBase(APP_CONFIG.knownWorkerBase);
 
     return bases;
 }

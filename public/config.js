@@ -9,7 +9,7 @@ window.APP_CONFIG = window.APP_CONFIG || {
   // 헬스체크 경로 (기본값: /api/health)
   healthPath: "/api/health",
   // 특정 호스트를 항상 우선 사용하려면 preferredApiBase를 지정하세요
-  preferredApiBase: undefined,
+  preferredApiBase: "https://infl-worker.loto09090909.workers.dev",
   // 쿼리파라미터(api_base)로 베이스 오버라이드를 허용하지 않으려면 false로 설정
   allowQueryApiBase: true,
   // pages.dev -> workers.dev 유추, meta/api-base, 현재 origin, 알려진 워커를 끄고 싶다면 false로 설정
@@ -19,7 +19,7 @@ window.APP_CONFIG = window.APP_CONFIG || {
   useKnownWorkerBase: true,
   useCurrentOriginBase: true,
   // 기본 알려진 워커 베이스를 바꾸고 싶을 때 지정
-  knownWorkerBase: undefined,
+  knownWorkerBase: "https://infl-worker.loto09090909.workers.dev",
   // Turnstile 사이트 키 (없으면 자동으로 비활성화)
   turnstileSiteKey: undefined,
 };
