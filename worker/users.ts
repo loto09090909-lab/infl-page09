@@ -432,6 +432,9 @@ export async function findOrCreateOAuthUser(
 }
 
 export async function updateUserPassword(env: any, userId: string, password: string) {
+  if (!password || password.trim().length < 8) {
+    throw new Error("비밀번호는 8자 이상이어야 합니다");
+  }
   const passwordHash = await hashPassword(password);
   await env.DB.prepare("UPDATE users SET password_hash = ? WHERE id = ?")
     .bind(passwordHash, userId)
