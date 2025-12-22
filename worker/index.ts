@@ -106,6 +106,18 @@ export default {
         return new Response(null, { status: 204, headers: responseHeaders });
       }
 
+    if (path.startsWith("/api/super-admin/")) {
+      const redirectUrl = new URL(req.url);
+      redirectUrl.pathname = path.replace("/api/super-admin/", "/api/admin/");
+      return new Response(null, {
+        status: 308,
+        headers: {
+          ...responseHeaders,
+          Location: redirectUrl.toString(),
+        },
+      });
+    }
+
     if (
       method === "GET" &&
       path.startsWith("/api/pages/") &&
