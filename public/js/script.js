@@ -120,6 +120,7 @@ function resolveApiBases() {
         const trimmed = String(value).trim();
         if (!trimmed) return;
         const normalized = trimmed.replace(/\/+$/, '');
+        if (normalized.includes('.pages.dev')) return;
         if (!bases.includes(normalized)) {
             bases.push(normalized);
         }
@@ -143,19 +144,6 @@ function resolveApiBases() {
     if (APP_CONFIG.useKnownWorkerBase !== false) {
         const knownWorkerBase = APP_CONFIG.knownWorkerBase || 'https://infl-worker.loto09090909.workers.dev';
         pushBase(knownWorkerBase);
-    }
-
-    if (APP_CONFIG.usePagesDerivedBase !== false && window.location.hostname.endsWith('pages.dev')) {
-        const guessedWorker = window.location.origin.replace('.pages.dev', '.workers.dev');
-        pushBase(guessedWorker);
-    }
-
-    if (APP_CONFIG.useCurrentOriginBase !== false) {
-        const origin = window.location.origin;
-        // 현재 도메인이 pages.dev라면 API 베이스 후보에서 제외 (Workers만 API를 담당하므로)
-        if (!origin.endsWith('pages.dev')) {
-            pushBase(origin);
-        }
     }
 
     return bases;

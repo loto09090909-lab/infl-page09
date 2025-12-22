@@ -67,29 +67,22 @@ function createPlatformIcon(preset, className = 'platform-icon') {
 
 function resolveApiBases() {
     const bases = [];
+    const pushBase = (value) => {
+        if (!value) return;
+        const normalized = String(value).trim().replace(/\/+$/, '');
+        if (!normalized || normalized.includes('.pages.dev')) return;
+        if (!bases.includes(normalized)) {
+            bases.push(normalized);
+        }
+    };
 
     const metaApiBase = document.querySelector('meta[name="api-base"]')?.content?.trim();
-    if (metaApiBase) {
-        bases.push(metaApiBase);
-    }
+    pushBase(metaApiBase);
 
-    if (window.API_BASE) {
-        bases.push(window.API_BASE);
-    }
+    pushBase(window.API_BASE);
 
     const knownWorkerBase = 'https://infl-worker.loto09090909.workers.dev';
-    if (!bases.includes(knownWorkerBase)) {
-        bases.push(knownWorkerBase);
-    }
-
-    if (window.location.hostname.endsWith('pages.dev')) {
-        const guessedWorker = window.location.origin.replace('.pages.dev', '.workers.dev');
-        if (!bases.includes(guessedWorker)) {
-            bases.push(guessedWorker);
-        }
-    }
-
-    bases.push(window.location.origin);
+    pushBase(knownWorkerBase);
 
     return bases;
 }

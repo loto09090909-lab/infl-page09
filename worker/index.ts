@@ -54,17 +54,24 @@ export default {
     const allowedOrigins = rawOrigins.split(",").map((o: string) => o.trim()).filter(Boolean);
 
     const originHeader = req.headers.get("Origin");
+    const hasWildcard = allowedOrigins.includes("*");
+    const isAllowedOrigin = originHeader ? allowedOrigins.includes(originHeader) : false;
 
-    const corsOrigin =
-      originHeader && allowedOrigins.includes(originHeader)
-        ? originHeader
-        : originHeader || allowedOrigins[0] || "*";
+    const corsOrigin = hasWildcard
+      ? "*"
+      : isAllowedOrigin
+      ? originHeader
+      : originHeader
+      ? allowedOrigins[0] || "null"
+      : allowedOrigins[0] || "*";
+    const allowCredentials = !hasWildcard && isAllowedOrigin;
 
     const corsHeaders = {
       "Access-Control-Allow-Origin": corsOrigin,
       "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type, Authorization",
-      "Access-Control-Allow-Credentials": corsOrigin !== "*" ? "true" : "false",
+      "Access-Control-Allow-Credentials": allowCredentials ? "true" : "false",
+      Vary: "Origin",
     };
 
     // 1. 전역 에러 핸들러 추가
