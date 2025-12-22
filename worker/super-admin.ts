@@ -13,7 +13,13 @@ import {
   normalizeSlugs,
   replaceSlugMap,
 } from "./slug-map";
-import { errorResponse, errorResponseWithCode, jsonResponse, parseJsonBody } from "./utils";
+import {
+  errorResponse,
+  errorResponseWithCode,
+  jsonResponse,
+  parseJsonBody,
+  parseJsonBodyWithLimit,
+} from "./utils";
 import {
   enforceContactFieldLimit,
   enforcePlanLimit,
@@ -101,6 +107,7 @@ class CreatePageError extends Error {
 
 const MAX_LINKS = 100;
 const ALLOWED_THEMES = new Set(["classic", "midnight", "sunset", "mint"]);
+const MAX_BODY_BYTES = 256 * 1024;
 
 function sanitizeString(value: unknown, maxLength: number): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -564,7 +571,13 @@ export async function createPage(
   headers: HeadersInit
 ): Promise<Response> {
   try {
-    const body = await parseJsonBody<CreatePageBody>(req);
+    const { data: body, error: bodyError } = await parseJsonBodyWithLimit<CreatePageBody>(
+      req,
+      MAX_BODY_BYTES
+    );
+    if (bodyError) {
+      return errorResponse(bodyError, 413, headers);
+    }
     const normalized = normalizeCreatePageBody(body);
     await persistCreatePage(env, normalized);
     return jsonResponse({ success: true, message: "Page created" }, 201, headers);
@@ -584,7 +597,13 @@ export async function bulkCreatePages(
   env: any,
   headers: HeadersInit
 ): Promise<Response> {
-  const body = await parseJsonBody<BulkCreateBody>(req);
+  const { data: body, error: bodyError } = await parseJsonBodyWithLimit<BulkCreateBody>(
+    req,
+    MAX_BODY_BYTES
+  );
+  if (bodyError) {
+    return errorResponse(bodyError, 413, headers);
+  }
   if (!body || !Array.isArray(body.pages) || !body.pages.length) {
     return errorResponse(
       "업로드할 페이지 데이터가 없습니다. pages 배열을 확인하세요.",
@@ -845,7 +864,13 @@ export async function updatePage(
     return errorResponse("Page not found", 404, headers);
   }
 
-  const body = await parseJsonBody<UpdatePageBody>(req);
+  const { data: body, error: bodyError } = await parseJsonBodyWithLimit<UpdatePageBody>(
+    req,
+    MAX_BODY_BYTES
+  );
+  if (bodyError) {
+    return errorResponse(bodyError, 413, headers);
+  }
   if (!body) {
     return errorResponse("잘못된 요청 본문입니다", 400, headers);
   }

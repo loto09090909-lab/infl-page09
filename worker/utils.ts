@@ -54,3 +54,23 @@ export async function parseJsonBody<T>(req: Request): Promise<T | null> {
     return null;
   }
 }
+
+export async function parseJsonBodyWithLimit<T>(
+  req: Request,
+  maxBytes: number
+): Promise<{ data: T | null; error?: string }> {
+  const text = await req.text();
+  if (maxBytes > 0 && text.length > maxBytes) {
+    return { data: null, error: "요청 본문이 너무 큽니다" };
+  }
+
+  if (!text.trim()) {
+    return { data: null };
+  }
+
+  try {
+    return { data: JSON.parse(text) as T };
+  } catch (error) {
+    return { data: null };
+  }
+}

@@ -13,7 +13,13 @@ import {
   normalizeSlugs,
   replaceSlugMap,
 } from "./slug-map";
-import { errorResponse, errorResponseWithCode, jsonResponse, parseJsonBody } from "./utils";
+import {
+  errorResponse,
+  errorResponseWithCode,
+  jsonResponse,
+  parseJsonBody,
+  parseJsonBodyWithLimit,
+} from "./utils";
 import { authenticateExistingUser } from "./users";
 import {
   enforceContactFieldLimit,
@@ -54,6 +60,7 @@ type SavePageBody = {
 };
 
 const MAX_LINKS = 100;
+const MAX_BODY_BYTES = 256 * 1024;
 const ALLOWED_THEMES = new Set(["classic", "midnight", "sunset", "mint"]);
 
 function sanitizeString(value: unknown, maxLength: number): string | undefined {
@@ -433,7 +440,13 @@ export async function savePage(
     return errorResponse("인증이 필요합니다", 401, headers);
   }
 
-  const body = await parseJsonBody<SavePageBody>(req);
+  const { data: body, error: bodyError } = await parseJsonBodyWithLimit<SavePageBody>(
+    req,
+    MAX_BODY_BYTES
+  );
+  if (bodyError) {
+    return errorResponse(bodyError, 413, headers);
+  }
   if (!body) {
     return errorResponse("잘못된 요청 본문입니다", 400, headers);
   }
