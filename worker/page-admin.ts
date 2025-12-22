@@ -20,6 +20,7 @@ import {
   jsonResponse,
   parseJsonBody,
   parseJsonBodyWithLimit,
+  validateEmail,
 } from "./utils";
 import { authenticateExistingUser } from "./users";
 import {
@@ -254,11 +255,15 @@ export async function pageAdminLogin(
   }
 
   const body = await parseJsonBody<LoginBody>(req);
-  if (!body || typeof body.email !== "string") {
+  if (!body) {
     return errorResponse("이메일을 입력하세요", 400, headers);
   }
+  const { email, error: emailError } = validateEmail(body.email);
+  if (emailError) {
+    return errorResponse(emailError, 400, headers);
+  }
 
-  const loginIdentifier = buildLoginIdentifier(req, body.email);
+  const loginIdentifier = buildLoginIdentifier(req, email);
   const throttleState = await getLoginThrottle(env, "page", loginIdentifier);
   if (throttleState.blocked) {
     const waitSeconds = Math.max(1, Math.ceil((throttleState.resetAt - Date.now()) / 1000));
@@ -289,7 +294,7 @@ export async function pageAdminLogin(
   }
 
   const result = await authenticateExistingUser(env, {
-    email: body.email,
+    email,
     password: body.password,
     oauthProvider: body.oauthProvider,
     oauthId: body.oauthId,
