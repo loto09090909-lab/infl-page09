@@ -20,6 +20,7 @@ import {
   jsonResponse,
   parseJsonBody,
   parseJsonBodyWithLimit,
+  validatePageId,
 } from "./utils";
 import {
   enforceContactFieldLimit,
@@ -292,8 +293,13 @@ function validateTheme(raw: unknown) {
 function normalizeCreatePageBody(
   body: CreatePageBody | null
 ): NormalizedCreatePage {
-  if (!body || typeof body.pageId !== "string" || !body.pageId.trim()) {
+  if (!body) {
     throw new CreatePageError("pageId와 관리자 이메일은 필수입니다", 400);
+  }
+
+  const { pageId, error: pageIdError } = validatePageId(body.pageId);
+  if (pageIdError) {
+    throw new CreatePageError(pageIdError, 400);
   }
 
   if (typeof body.adminEmail !== "string" || !body.adminEmail.trim()) {
@@ -307,7 +313,6 @@ function normalizeCreatePageBody(
     throw new CreatePageError("관리자 비밀번호가 필요합니다", 400);
   }
 
-  const pageId = body.pageId.trim();
   const { error: profileError, profile } = validateProfile(body.profile);
   if (profileError) {
     throw new CreatePageError(profileError, 400);

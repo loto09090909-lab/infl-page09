@@ -74,3 +74,20 @@ export async function parseJsonBodyWithLimit<T>(
     return { data: null };
   }
 }
+
+export function validatePageId(value: unknown): { pageId?: string; error?: string } {
+  if (typeof value !== "string") {
+    return { error: "pageId는 문자열이어야 합니다" };
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return { error: "pageId가 필요합니다" };
+  }
+  if (trimmed.length > 64) {
+    return { error: "pageId는 64자 이내여야 합니다" };
+  }
+  if (!/^[a-z0-9-]+$/i.test(trimmed)) {
+    return { error: "pageId는 영문/숫자/하이픈만 사용할 수 있습니다" };
+  }
+  return { pageId: trimmed };
+}
