@@ -18,4 +18,4 @@
 /:slug/private/:token /user.html           200!
 /:slug               /user.html            200!
 
-/*                   /index.html           200
+/*                   /index.html           200!
