@@ -11,7 +11,13 @@ import {
   hasPrivateLinks,
   PlanLimitError,
 } from "./plan-limits";
-import { errorResponse, errorResponseWithCode, jsonResponse, parseJsonBody } from "./utils";
+import {
+  errorResponse,
+  errorResponseWithCode,
+  jsonResponse,
+  parseJsonBody,
+  validatePageId,
+} from "./utils";
 import { clearContactSubmissionsData, countSubmissions, fetchSubmissions } from "./contact";
 import { getPageStats } from "./stats";
 import {
@@ -328,11 +334,14 @@ export async function createUserPage(req: Request, env: any, headers: HeadersIni
   }
 
   const body = await parseJsonBody<CreatePageBody>(req);
-  if (!body || typeof body.pageId !== "string" || !body.pageId.trim()) {
+  if (!body) {
     return errorResponse("pageId가 필요합니다", 400, headers);
   }
 
-  const pageId = body.pageId.trim();
+  const { pageId, error: pageIdError } = validatePageId(body.pageId);
+  if (pageIdError) {
+    return errorResponse(pageIdError, 400, headers);
+  }
   const existing = await env.PAGE_KV.get(`page:${pageId}`);
   if (existing) {
     return errorResponse("이미 존재하는 페이지입니다", 409, headers);
