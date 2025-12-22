@@ -49,29 +49,29 @@ import { startOAuth, handleOAuthCallback } from "./oauth";
 
 export default {
   async fetch(req: Request, env: any): Promise<Response> {
-      // 1. 전역 에러 핸들러 추가
-      try {
-        const url = new URL(req.url);
-        const path = url.pathname;
-        const method = req.method;
+    // 2. CORS 안전하게 처리
+    const rawOrigins = env.ALLOWED_ORIGINS || "";
+    const allowedOrigins = rawOrigins.split(",").map((o: string) => o.trim()).filter(Boolean);
 
-      // 2. CORS 안전하게 처리
-      const rawOrigins = env.ALLOWED_ORIGINS || "";
-      const allowedOrigins = rawOrigins.split(",").map((o: string) => o.trim()).filter(Boolean);
+    const originHeader = req.headers.get("Origin");
 
-      const originHeader = req.headers.get("Origin");
+    const corsOrigin =
+      originHeader && allowedOrigins.includes(originHeader)
+        ? originHeader
+        : originHeader || allowedOrigins[0] || "*";
 
-      const corsOrigin =
-        originHeader && allowedOrigins.includes(originHeader)
-          ? originHeader
-          : allowedOrigins[0];
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": corsOrigin,
+      "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      "Access-Control-Allow-Credentials": corsOrigin !== "*" ? "true" : "false",
+    };
 
-      const corsHeaders = {
-        "Access-Control-Allow-Origin": corsOrigin,
-        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
-        "Access-Control-Allow-Credentials": "true",
-      };
+    // 1. 전역 에러 핸들러 추가
+    try {
+      const url = new URL(req.url);
+      const path = url.pathname;
+      const method = req.method;
 
       if (method === "OPTIONS") {
         return new Response(null, { status: 204, headers: corsHeaders });
@@ -458,7 +458,7 @@ export default {
           status: 500,
           headers: {
             "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
+            ...corsHeaders,
           },
         }
       );
