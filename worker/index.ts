@@ -44,7 +44,7 @@ import {
   revokeUserPageInvite,
   getUserPagePlanStatus,
 } from "./user-pages";
-import { createRandomPrivateLink, getPrivatePage } from "./private-links";
+import { createRandomPrivateLink, getPrivatePage, prunePrivateLinks } from "./private-links";
 import { startOAuth, handleOAuthCallback } from "./oauth";
 
 export default {
@@ -463,5 +463,8 @@ export default {
         }
       );
     }
+  },
+  async scheduled(_event: ScheduledEvent, env: any, ctx: ExecutionContext) {
+    ctx.waitUntil(prunePrivateLinks(env));
   },
 };
