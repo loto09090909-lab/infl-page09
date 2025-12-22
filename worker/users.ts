@@ -2,7 +2,13 @@ import { createSessionToken, hasSessionSecret } from "./auth";
 import { enforcePlanLimit, PlanLimitError } from "./plan-limits";
 import { normalizeSlugs, replaceSlugMap, findConflictingSlug } from "./slug-map";
 import { slugify } from "./slug";
-import { errorResponse, errorResponseWithCode, jsonResponse, parseJsonBody } from "./utils";
+import {
+  errorResponse,
+  errorResponseWithCode,
+  jsonResponse,
+  parseJsonBody,
+  validateEmail,
+} from "./utils";
 
 export type UserRow = {
   id: string;
@@ -297,11 +303,13 @@ export async function signup(req: Request, env: any, headers: HeadersInit) {
   }
 
   const body = await parseJsonBody<AuthBody>(req);
-  if (!body || typeof body.email !== "string") {
+  if (!body) {
     return errorResponse("이메일을 입력하세요", 400, headers);
   }
-
-  const email = body.email.trim().toLowerCase();
+  const { email, error: emailError } = validateEmail(body.email);
+  if (emailError) {
+    return errorResponse(emailError, 400, headers);
+  }
   const isOAuth = !!(body.oauthProvider && body.oauthId);
 
   if (!isOAuth && typeof body.password !== "string") {
@@ -333,11 +341,13 @@ export async function login(req: Request, env: any, headers: HeadersInit) {
   }
 
   const body = await parseJsonBody<AuthBody>(req);
-  if (!body || typeof body.email !== "string") {
+  if (!body) {
     return errorResponse("이메일을 입력하세요", 400, headers);
   }
-
-  const email = body.email.trim().toLowerCase();
+  const { email, error: emailError } = validateEmail(body.email);
+  if (emailError) {
+    return errorResponse(emailError, 400, headers);
+  }
   const user = await getUserByEmail(env, email);
   const normalized = await ensureUserPlan(env, user);
   if (!normalized) {
@@ -423,9 +433,9 @@ export async function updateUserPassword(env: any, userId: string, password: str
 }
 
 export async function authenticateExistingUser(env: any, credentials: AuthBody) {
-  const email = (credentials.email || "").trim().toLowerCase();
-  if (!email) {
-    return { error: "이메일이 필요합니다", status: 400 } as const;
+  const { email, error: emailError } = validateEmail(credentials.email);
+  if (emailError) {
+    return { error: emailError, status: 400 } as const;
   }
 
   const user = await getUserByEmail(env, email);

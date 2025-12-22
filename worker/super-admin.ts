@@ -20,6 +20,7 @@ import {
   jsonResponse,
   parseJsonBody,
   parseJsonBodyWithLimit,
+  validateEmail,
   validatePageId,
 } from "./utils";
 import {
@@ -302,8 +303,9 @@ function normalizeCreatePageBody(
     throw new CreatePageError(pageIdError, 400);
   }
 
-  if (typeof body.adminEmail !== "string" || !body.adminEmail.trim()) {
-    throw new CreatePageError("pageId와 관리자 이메일은 필수입니다", 400);
+  const { email: adminEmail, error: emailError } = validateEmail(body.adminEmail);
+  if (emailError) {
+    throw new CreatePageError(emailError, 400);
   }
 
   const isOAuth =
@@ -358,7 +360,7 @@ function normalizeCreatePageBody(
     contactSchema: contactSchema ?? [],
     contactSettings: contactSettings ?? { enabled: false },
     accessControl: accessControl ?? { enabled: false },
-    adminEmail: body.adminEmail.trim().toLowerCase(),
+    adminEmail,
     adminPassword: body.adminPassword,
     adminOauthProvider: body.adminOauthProvider,
     adminOauthId: body.adminOauthId,

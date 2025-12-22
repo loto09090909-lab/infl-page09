@@ -91,3 +91,21 @@ export function validatePageId(value: unknown): { pageId?: string; error?: strin
   }
   return { pageId: trimmed };
 }
+
+export function validateEmail(value: unknown): { email?: string; error?: string } {
+  if (typeof value !== "string") {
+    return { error: "이메일을 입력하세요" };
+  }
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) {
+    return { error: "이메일을 입력하세요" };
+  }
+  if (trimmed.length > 254) {
+    return { error: "이메일이 너무 깁니다" };
+  }
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(trimmed)) {
+    return { error: "이메일 형식이 올바르지 않습니다" };
+  }
+  return { email: trimmed };
+}
