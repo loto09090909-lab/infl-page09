@@ -16,6 +16,7 @@ import {
   errorResponseWithCode,
   jsonResponse,
   parseJsonBody,
+  parseJsonBodyWithLimit,
   validatePageId,
   validatePlanId,
 } from "./utils";
@@ -62,6 +63,7 @@ type UpdatePageBody = {
 };
 
 const MAX_LINKS = 100;
+const MAX_BODY_BYTES = 256 * 1024;
 const ALLOWED_THEMES = new Set(["classic", "midnight", "sunset", "mint"]);
 
 function sanitizeString(value: unknown, maxLength: number): string | undefined {
@@ -334,7 +336,13 @@ export async function createUserPage(req: Request, env: any, headers: HeadersIni
     throw error;
   }
 
-  const body = await parseJsonBody<CreatePageBody>(req);
+  const { data: body, error: bodyError } = await parseJsonBodyWithLimit<CreatePageBody>(
+    req,
+    MAX_BODY_BYTES
+  );
+  if (bodyError) {
+    return errorResponse(bodyError, 413, headers);
+  }
   if (!body) {
     return errorResponse("pageId가 필요합니다", 400, headers);
   }
@@ -568,7 +576,13 @@ export async function updateUserPage(
     return errorResponse("Page not found", 404, headers);
   }
 
-  const body = await parseJsonBody<UpdatePageBody>(req);
+  const { data: body, error: bodyError } = await parseJsonBodyWithLimit<UpdatePageBody>(
+    req,
+    MAX_BODY_BYTES
+  );
+  if (bodyError) {
+    return errorResponse(bodyError, 413, headers);
+  }
   if (!body) {
     return errorResponse("잘못된 요청 본문입니다", 400, headers);
   }
