@@ -20,6 +20,7 @@ database_name = "infl_db"
 ALLOWED_ORIGINS = "https://preview.infl-page09.pages.dev,https://infl-page09.pages.dev"
 
 [env.production]
+name = "infl-worker"
 [[env.production.kv_namespaces]]
 binding = "PAGE_KV"
 id = "df984fdb34cf4546816e70f8e029b47a"

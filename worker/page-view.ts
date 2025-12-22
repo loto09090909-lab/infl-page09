@@ -72,6 +72,7 @@ export async function getPage(
         accessControl: includePrivate
           ? accessControl ?? { enabled: false }
           : { enabled: accessControl?.enabled === true },
+        customDomains: includePrivate ? kvParsed?.customDomains ?? [] : undefined,
         theme: typeof kvParsed?.theme === "string" ? kvParsed.theme : "classic",
         privateLinks: includePrivate ? kvParsed?.privateLinks ?? [] : undefined,
         slugs: includePrivate
@@ -120,6 +121,7 @@ export async function getPage(
         accessControl: includePrivate
           ? accessControl ?? { enabled: false }
           : { enabled: accessControl?.enabled === true },
+        customDomains: includePrivate ? parsed.customDomains ?? [] : undefined,
         theme: typeof parsed.theme === "string" ? parsed.theme : "classic",
         slugs: includePrivate
           ? parsed.slugs ?? (await getSlugsForPage(env, resolvedPageId))

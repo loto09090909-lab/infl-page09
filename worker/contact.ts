@@ -2,6 +2,7 @@ import { getBearerToken, verifySessionToken } from "./auth";
 import { resolvePageId } from "./slug";
 import { errorResponse, errorResponseWithCode, jsonResponse } from "./utils";
 import { enforcePlanLimit, getPagePlanId, PlanLimitError } from "./plan-limits";
+import { logStructuredEvent, notifyOps } from "./notifications";
 
 type ContactField = {
   label: string;
@@ -213,6 +214,22 @@ async function forwardSubmission(
   }
 }
 
+async function notifyContactOps(env: any, submission: ContactSubmission) {
+  const message = `컨택트 제출: ${submission.pageId}`;
+  await notifyOps(env, {
+    event: "contact.submitted",
+    message,
+    metadata: {
+      pageId: submission.pageId,
+      submissionId: submission.id,
+      submittedAt: submission.submittedAt,
+      ip: submission.ip ?? null,
+      userAgent: submission.userAgent ?? null,
+      answers: submission.answers,
+    },
+  });
+}
+
 async function storeSubmission(env: any, submission: ContactSubmission) {
   const indexKey = `contact:${submission.pageId}:index`;
   const submissionKey = `contact:${submission.pageId}:${submission.id}`;
@@ -355,6 +372,18 @@ export async function submitContact(
 
   await storeSubmission(env, submission);
   forwardSubmission(env, submission, settings);
+
+  logStructuredEvent({
+    event: "contact.submitted",
+    message: `page=${submission.pageId}`,
+    metadata: {
+      submissionId: submission.id,
+      ip: submission.ip ?? null,
+      userAgent: submission.userAgent ?? null,
+      answerCount: submission.answers.length,
+    },
+  });
+  await notifyContactOps(env, submission);
 
   return jsonResponse({ ok: true, id: submission.id }, 201, headers);
 }

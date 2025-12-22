@@ -31,6 +31,14 @@
 - `database_name` 값이 실제 D1 이름과 일치해야 합니다.
 - 기존 D1에 `plan_id` 컬럼이 없다면 `db/migrations/2025-add-plan-id-to-users.sql` 마이그레이션을 적용하세요.
 
+## 2-1) 플랜 정책 (free/basic/premium)
+
+| 플랜 | 페이지 생성 | 슬러그 변경 | 프라이빗 링크 | 최대 페이지 | 최대 프라이빗 링크 | 최대 컨택트 필드 | CSV 내보내기 | 통계 보관 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| free | 가능 | 불가 | 불가 | 1 | 3 | 5 | 불가 | 7일 |
+| basic | 가능 | 가능 | 가능 | 3 | 10 | 15 | 가능 | 30일 |
+| premium | 가능 | 가능 | 가능 | 10 | 50 | 50 | 가능 | 365일 |
+
 ## 3) OAuth 리다이렉트 설정
 ### Google
 - 콜백 URL: `{OAUTH_REDIRECT_BASE}/api/auth/google/callback`
@@ -61,3 +69,10 @@
 - OAuth 가입/로그인 이후의 사용자 전용 대시보드 경로 확정 필요.
 - 컨택트 보관 기간/자동 삭제 정책 확정 필요.
  - `/api/*` 프록시 도메인은 환경별로 분리 적용 필요(Preview/Prod).
+
+## 9) 알림 채널 확장 (선택)
+- 운영 알림/컨택트 제출 알림을 전송할 때 아래 환경 변수를 사용할 수 있습니다.
+- `OPS_WEBHOOK_URL` : 운영 알림용 일반 웹훅 (JSON POST)
+- `OPS_SLACK_WEBHOOK_URL` : 운영 알림용 슬랙 Incoming Webhook
+- `OPS_EMAIL_WEBHOOK_URL` : 이메일 연동 웹훅 (SendGrid 등)
+- `OPS_EMAIL_TO` : 이메일 수신 주소

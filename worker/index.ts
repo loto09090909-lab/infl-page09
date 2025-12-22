@@ -6,6 +6,9 @@ import {
   rotateAccessCode,
   savePage,
   verifyPageSession,
+  listPagePrivateLinks,
+  createPagePrivateLink,
+  revokePagePrivateLink,
 } from "./page-admin";
 import {
   createPage,
@@ -46,36 +49,42 @@ import {
 } from "./user-pages";
 import { createRandomPrivateLink, getPrivatePage } from "./private-links";
 import { startOAuth, handleOAuthCallback } from "./oauth";
+import { notifyOps } from "./notifications";
 
 export default {
   async fetch(req: Request, env: any): Promise<Response> {
-      // 1. 전역 에러 핸들러 추가
-      try {
-        const url = new URL(req.url);
-        const path = url.pathname;
-        const method = req.method;
+    const url = new URL(req.url);
+    const path = url.pathname;
+    const method = req.method;
+    const originHeader = req.headers.get("Origin");
 
-      // 2. CORS 안전하게 처리
-      const rawOrigins = env.ALLOWED_ORIGINS || "";
-      const allowedOrigins = rawOrigins.split(",").map((o: string) => o.trim()).filter(Boolean);
+    const allowedOrigins = (env.ALLOWED_ORIGINS || "")
+      .split(",")
+      .map((o: string) => o.trim())
+      .filter(Boolean);
 
-      const originHeader = req.headers.get("Origin");
+    let corsOrigin = "*";
+    if (originHeader && (allowedOrigins.includes(originHeader) || allowedOrigins.includes("*"))) {
+      corsOrigin = originHeader;
+    } else if (originHeader && allowedOrigins.length === 0) {
+      corsOrigin = originHeader;
+    }
 
-      const corsOrigin =
-        originHeader && allowedOrigins.includes(originHeader)
-          ? originHeader
-          : allowedOrigins[0];
+    const allowCredentials = corsOrigin !== "*";
 
-      const corsHeaders = {
-        "Access-Control-Allow-Origin": corsOrigin,
-        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
-        "Access-Control-Allow-Credentials": "true",
-      };
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": corsOrigin,
+      "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization, x-session-secret",
+      "Access-Control-Allow-Credentials": allowCredentials ? "true" : "false",
+    };
 
-      if (method === "OPTIONS") {
-        return new Response(null, { status: 204, headers: corsHeaders });
-      }
+    if (method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: corsHeaders });
+    }
+
+    // 1. 전역 에러 핸들러 추가
+    try {
 
     if (
       method === "GET" &&
@@ -420,6 +429,19 @@ export default {
         return getPagePlanStatus(req, env, pageId, corsHeaders);
       }
 
+      if (action === "private-links") {
+        const token = pathSegments[4];
+        if (!token && method === "GET") {
+          return listPagePrivateLinks(req, env, pageId, corsHeaders);
+        }
+        if (!token && method === "POST") {
+          return createPagePrivateLink(req, env, pageId, corsHeaders);
+        }
+        if (token && method === "DELETE") {
+          return revokePagePrivateLink(req, env, pageId, token, corsHeaders);
+        }
+      }
+
       if (action === "private-templates") {
         const templateId = pathSegments[4];
         const actionNext = pathSegments[5];
@@ -449,6 +471,17 @@ export default {
 
     } catch (err: any) {
       console.error("Worker Runtime Error", err);
+      try {
+        await notifyOps(env, {
+          event: "worker.error",
+          message: err?.message || "Unexpected error",
+          metadata: {
+            stack: err?.stack,
+          },
+        });
+      } catch (notifyError) {
+        console.error("Worker notifyOps Error", notifyError);
+      }
       return new Response(
         JSON.stringify({
           error: "Worker Runtime Error",
@@ -457,8 +490,8 @@ export default {
         {
           status: 500,
           headers: {
+            ...corsHeaders,
             "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
           },
         }
       );
