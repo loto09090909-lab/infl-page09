@@ -21,6 +21,7 @@ import {
   parseJsonBody,
   parseJsonBodyWithLimit,
   validateEmail,
+  validatePlanId,
   validatePageId,
 } from "./utils";
 import {
@@ -354,6 +355,11 @@ function normalizeCreatePageBody(
     throw new CreatePageError(themeError, 400);
   }
 
+  const { planId, error: planError } = validatePlanId(body.plan);
+  if (planError) {
+    throw new CreatePageError(planError, 400);
+  }
+
   return {
     pageId,
     profile: profile ?? {},
@@ -364,8 +370,7 @@ function normalizeCreatePageBody(
     adminPassword: body.adminPassword,
     adminOauthProvider: body.adminOauthProvider,
     adminOauthId: body.adminOauthId,
-    plan:
-      typeof body.plan === "string" ? sanitizeString(body.plan, 30) ?? null : body.plan ?? null,
+    plan: planId ?? null,
     links: publicLinks ?? [],
     privateLinks: [
       ...(privateLinks ?? []),
@@ -906,6 +911,11 @@ export async function updatePage(
     return errorResponse("잘못된 요청 본문입니다", 400, headers);
   }
 
+  const { planId: nextPlanId, error: planError } = validatePlanId(body.plan);
+  if (planError) {
+    return errorResponse(planError, 400, headers);
+  }
+
   let existingPlan: unknown = null;
   let existingData: any = {};
   try {
@@ -929,7 +939,7 @@ export async function updatePage(
     }
 
     try {
-      await enforcePlanLimit(env, body.plan ?? existingPlan, "update_slug");
+      await enforcePlanLimit(env, nextPlanId ?? existingPlan, "update_slug");
     } catch (error) {
       if (error instanceof PlanLimitError) {
         return errorResponseWithCode(error.message, "PLAN_LIMIT_EXCEEDED", error.status, headers);
@@ -1004,10 +1014,7 @@ export async function updatePage(
         : existingData.contactSchema ?? [],
     contactSettings: contactSettings ?? existingData.contactSettings ?? { enabled: false },
     accessControl: accessControl ?? existingData.accessControl ?? { enabled: false },
-    plan:
-      typeof body.plan === "string"
-        ? sanitizeString(body.plan, 30) ?? existingPlan ?? null
-        : body.plan ?? existingPlan ?? null,
+    plan: nextPlanId ?? existingPlan ?? null,
     slugs: slugs ?? existingData.slugs ?? [],
     theme:
       typeof theme === "string"

@@ -17,6 +17,7 @@ import {
   jsonResponse,
   parseJsonBody,
   validatePageId,
+  validatePlanId,
 } from "./utils";
 import { clearContactSubmissionsData, countSubmissions, fetchSubmissions } from "./contact";
 import { getPageStats } from "./stats";
@@ -401,7 +402,20 @@ export async function createUserPage(req: Request, env: any, headers: HeadersIni
     return errorResponse(themeError, 400, headers);
   }
 
-  const plan = userPlan;
+  const { planId: nextPlanId, error: planError } = validatePlanId(body.plan);
+  if (planError) {
+    return errorResponse(planError, 400, headers);
+  }
+
+  const { planId: nextPlanId, error: planError } = validatePlanId(body.plan);
+  if (planError) {
+    return errorResponse(planError, 400, headers);
+  }
+  if (nextPlanId && nextPlanId !== userPlan) {
+    return errorResponseWithCode("플랜 변경 권한이 없습니다", "FORBIDDEN", 403, headers);
+  }
+
+  const plan = nextPlanId ?? userPlan;
 
   const slugs = normalizeSlugs(body.slugs, pageId);
   if (body.slugs !== undefined) {
@@ -652,7 +666,7 @@ export async function updateUserPage(
     contactSettings: contactSettings ?? existingData.contactSettings ?? { enabled: false },
     accessControl: accessControl ?? existingData.accessControl ?? { enabled: false },
     slugs: slugs ?? existingData.slugs ?? [],
-    plan: existingData.plan ?? "free",
+    plan: nextPlanId ?? existingData.plan ?? "free",
     theme:
       typeof theme === "string"
         ? theme

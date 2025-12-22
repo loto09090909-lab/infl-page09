@@ -21,6 +21,7 @@ import {
   parseJsonBody,
   parseJsonBodyWithLimit,
   validateEmail,
+  validatePlanId,
 } from "./utils";
 import { authenticateExistingUser } from "./users";
 import {
@@ -497,6 +498,11 @@ export async function savePage(
     return errorResponse(themeError, 400, headers);
   }
 
+  const { planId: nextPlanId, error: planError } = validatePlanId(body.plan);
+  if (planError) {
+    return errorResponse(planError, 400, headers);
+  }
+
   const existingRaw = await env.PAGE_KV.get(`page:${canonicalPageId}`);
   let existingData: any = {};
   if (existingRaw) {
@@ -550,10 +556,7 @@ export async function savePage(
     contactSettings: contactSettings ?? existingData.contactSettings ?? { enabled: false },
     accessControl: accessControl ?? existingData.accessControl ?? { enabled: false },
     slugs: normalizedSlugs,
-    plan:
-      typeof body.plan === "string"
-        ? sanitizeString(body.plan, 30)
-        : existingData.plan ?? null,
+    plan: nextPlanId ?? existingData.plan ?? null,
     theme:
       typeof theme === "string"
         ? theme

@@ -109,3 +109,23 @@ export function validateEmail(value: unknown): { email?: string; error?: string 
   }
   return { email: trimmed };
 }
+
+export function validatePlanId(value: unknown): { planId?: string; error?: string } {
+  if (value === undefined || value === null) {
+    return { planId: undefined };
+  }
+  if (typeof value !== "string") {
+    return { error: "plan은 문자열이어야 합니다" };
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return { planId: undefined };
+  }
+  if (trimmed.length > 30) {
+    return { error: "plan 값이 너무 깁니다" };
+  }
+  if (!/^[a-z0-9_-]+$/i.test(trimmed)) {
+    return { error: "plan 값 형식이 올바르지 않습니다" };
+  }
+  return { planId: trimmed };
+}
