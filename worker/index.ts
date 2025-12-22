@@ -66,13 +66,17 @@ export default {
     let corsOrigin = "*";
     if (originHeader && (allowedOrigins.includes(originHeader) || allowedOrigins.includes("*"))) {
       corsOrigin = originHeader;
+    } else if (originHeader && allowedOrigins.length === 0) {
+      corsOrigin = originHeader;
     }
+
+    const allowCredentials = corsOrigin !== "*";
 
     const corsHeaders = {
       "Access-Control-Allow-Origin": corsOrigin,
       "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type, Authorization, x-session-secret",
-      "Access-Control-Allow-Credentials": "true",
+      "Access-Control-Allow-Credentials": allowCredentials ? "true" : "false",
     };
 
     if (method === "OPTIONS") {
