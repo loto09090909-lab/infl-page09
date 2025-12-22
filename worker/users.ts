@@ -315,6 +315,9 @@ export async function signup(req: Request, env: any, headers: HeadersInit) {
   if (!isOAuth && typeof body.password !== "string") {
     return errorResponse("비밀번호를 입력하세요", 400, headers);
   }
+  if (!isOAuth && body.password.trim().length < 8) {
+    return errorResponse("비밀번호는 8자 이상이어야 합니다", 400, headers);
+  }
 
   const existing = await getUserByEmail(env, email);
   if (existing) {
