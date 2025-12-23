@@ -2915,18 +2915,32 @@ function renderContactSubmissions() {
             const row = document.createElement('div');
             row.className = 'contact-answer';
 
-            const label = document.createElement('div');
-            label.className = 'label';
-            label.innerText = answer.label;
+        const label = document.createElement('div');
+        label.className = 'label';
+        label.innerText = answer.label;
 
-            const value = document.createElement('div');
-            value.className = 'value';
-            value.innerText = answer.value;
+        const value = document.createElement('div');
+        value.className = 'value';
+        value.innerText = answer.value;
 
-            row.appendChild(label);
-            row.appendChild(value);
-            item.appendChild(row);
-        });
+        row.appendChild(label);
+        row.appendChild(value);
+        item.appendChild(row);
+    });
+
+    if (Array.isArray(submission.deliveryErrors) && submission.deliveryErrors.length) {
+        const errorRow = document.createElement('div');
+        errorRow.className = 'contact-answer delivery-errors';
+        const errorLabel = document.createElement('div');
+        errorLabel.className = 'label';
+        errorLabel.innerText = '전송 실패';
+        const errorValue = document.createElement('div');
+        errorValue.className = 'value';
+        errorValue.innerText = submission.deliveryErrors.join(', ');
+        errorRow.appendChild(errorLabel);
+        errorRow.appendChild(errorValue);
+        item.appendChild(errorRow);
+    }
 
         list.appendChild(item);
     });
