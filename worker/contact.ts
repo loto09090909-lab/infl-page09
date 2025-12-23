@@ -30,6 +30,7 @@ type ContactSubmission = {
   submittedAt: string;
   answers: { label: string; type: string; value: string }[];
   consentChecked?: boolean;
+  deliveryErrors?: string[];
   ip?: string | null;
   userAgent?: string | null;
 };
@@ -246,9 +247,10 @@ async function forwardSubmission(
     (url) => url.startsWith("http://") || url.startsWith("https://")
   );
   if (!targets.length) {
-    return;
+    return [] as string[];
   }
 
+  const errors: string[] = [];
   await Promise.all(
     targets.map(async (url) => {
       try {
@@ -269,9 +271,11 @@ async function forwardSubmission(
         });
       } catch (error) {
         console.error("contact webhook failed", { url, error });
+        errors.push(`webhook:${url}`);
       }
     })
   );
+  return errors;
 }
 
 async function sendEmailNotification(
@@ -285,7 +289,7 @@ async function sendEmailNotification(
       : typeof env.CONTACT_EMAIL_RECIPIENTS === "string"
       ? env.CONTACT_EMAIL_RECIPIENTS.split(",").map((email: string) => email.trim()).filter(Boolean)
       : [];
-  if (!recipients.length) return;
+  if (!recipients.length) return [] as string[];
 
   const from =
     typeof env.CONTACT_EMAIL_FROM === "string" && env.CONTACT_EMAIL_FROM.includes("@")
@@ -293,7 +297,7 @@ async function sendEmailNotification(
       : "";
   if (!from) {
     console.warn("contact email skipped: CONTACT_EMAIL_FROM is missing");
-    return;
+    return ["email:missing_from"];
   }
 
   const subject =
@@ -328,8 +332,28 @@ async function sendEmailNotification(
         content: [{ type: "text/plain", value: lines.join("\n") }],
       }),
     });
+    return [] as string[];
   } catch (error) {
     console.error("contact email failed", error);
+    return ["email:send_failed"];
+  }
+}
+
+async function recordDeliveryFailures(
+  env: any,
+  submission: ContactSubmission,
+  failures: string[]
+) {
+  if (!failures.length) return;
+  const submissionKey = `contact:${submission.pageId}:${submission.id}`;
+  const raw = await env.PAGE_KV.get(submissionKey);
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw) as ContactSubmission & { deliveryErrors?: string[] };
+    const next = { ...parsed, deliveryErrors: failures };
+    await env.PAGE_KV.put(submissionKey, JSON.stringify(next));
+  } catch (error) {
+    console.error("contact delivery error record failed", error);
   }
 }
 
@@ -482,8 +506,12 @@ export async function submitContact(
   }
 
   await storeSubmission(env, submission);
-  forwardSubmission(env, submission, settings);
-  sendEmailNotification(env, submission, settings);
+  const [webhookFailures, emailFailures] = await Promise.all([
+    forwardSubmission(env, submission, settings),
+    sendEmailNotification(env, submission, settings),
+  ]);
+  const deliveryFailures = [...(webhookFailures ?? []), ...(emailFailures ?? [])];
+  await recordDeliveryFailures(env, submission, deliveryFailures);
 
   return jsonResponse({ ok: true, id: submission.id }, 201, headers);
 }
