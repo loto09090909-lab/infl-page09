@@ -1,4 +1,4 @@
-import { createSessionToken, hasSessionSecret } from "./auth";
+import { createSessionToken, hasSessionSecret, resolveSessionTtl } from "./auth";
 import { enforcePlanLimit, PlanLimitError } from "./plan-limits";
 import { normalizeSlugs, replaceSlugMap, findConflictingSlug } from "./slug-map";
 import { slugify } from "./slug";
@@ -334,7 +334,8 @@ export async function signup(req: Request, env: any, headers: HeadersInit) {
     }
     throw error;
   }
-  const session = await createSessionToken(env, "user", created.id);
+  const ttlSeconds = resolveSessionTtl(env, "user");
+  const session = await createSessionToken(env, "user", created.id, ttlSeconds);
   return jsonResponse({ ...session, pageId }, 201, headers);
 }
 
@@ -373,7 +374,8 @@ export async function login(req: Request, env: any, headers: HeadersInit) {
       .bind(authResult.upgradedHash, normalized.id)
       .run();
   }
-  const session = await createSessionToken(env, "user", normalized.id);
+  const ttlSeconds = resolveSessionTtl(env, "user");
+  const session = await createSessionToken(env, "user", normalized.id, ttlSeconds);
   return jsonResponse(session, 200, headers);
 }
 

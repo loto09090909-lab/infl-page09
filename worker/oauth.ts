@@ -1,4 +1,4 @@
-import { createSessionToken, hasSessionSecret } from "./auth";
+import { createSessionToken, hasSessionSecret, resolveSessionTtl } from "./auth";
 import { errorResponse, jsonResponse } from "./utils";
 import { findOrCreateOAuthUser } from "./users";
 
@@ -246,7 +246,8 @@ export async function handleOAuthCallback(
     return errorResponse(error?.message || "OAuth 사용자 생성에 실패했습니다", 409, headers);
   }
 
-  const session = await createSessionToken(env, "user", user.id);
+  const ttlSeconds = resolveSessionTtl(env, "user");
+  const session = await createSessionToken(env, "user", user.id, ttlSeconds);
   const redirect = stored.redirect;
   if (redirect) {
     const redirectUrl = new URL(redirect);

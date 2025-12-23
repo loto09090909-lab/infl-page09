@@ -2,6 +2,7 @@ import {
   createSessionToken,
   getBearerToken,
   hasSessionSecret,
+  resolveSessionTtl,
   revokeSessionToken,
   getSessionSubject,
   verifySessionToken,
@@ -127,7 +128,11 @@ export async function pageAdminLogin(
     return errorResponse(
       `로그인 시도가 너무 많습니다. ${waitSeconds}초 후 다시 시도하세요`,
       429,
-      headers
+      {
+        ...headers,
+        "Retry-After": String(waitSeconds),
+        "X-RateLimit-Reset": new Date(throttleState.resetAt).toISOString(),
+      }
     );
   }
 
@@ -176,7 +181,8 @@ export async function pageAdminLogin(
 
   await ensurePageMemberBridge(env, canonicalPageId, result.user.id);
   await clearLoginAttempts(env, "page", loginIdentifier);
-  const session = await createSessionToken(env, "page", canonicalPageId);
+  const ttlSeconds = resolveSessionTtl(env, "page");
+  const session = await createSessionToken(env, "page", canonicalPageId, ttlSeconds);
   return jsonResponse(session, 200, headers);
 }
 

@@ -5,6 +5,7 @@ import {
   revokeSessionToken,
   getSessionSubject,
   verifySessionToken,
+  resolveSessionTtl,
 } from "./auth";
 import { resolvePageId } from "./slug";
 import {
@@ -329,7 +330,11 @@ export async function superAdminLogin(
     return errorResponse(
       `로그인 시도가 너무 많습니다. ${waitSeconds}초 후 다시 시도하세요`,
       429,
-      headers
+      {
+        ...headers,
+        "Retry-After": String(waitSeconds),
+        "X-RateLimit-Reset": new Date(throttleState.resetAt).toISOString(),
+      }
     );
   }
 
@@ -359,7 +364,8 @@ export async function superAdminLogin(
   }
 
   await clearLoginAttempts(env, "super", loginIdentifier);
-  const session = await createSessionToken(env, "super", "super-admin");
+  const ttlSeconds = resolveSessionTtl(env, "super");
+  const session = await createSessionToken(env, "super", "super-admin", ttlSeconds);
   return jsonResponse(session, 200, headers);
 }
 
