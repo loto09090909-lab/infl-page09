@@ -93,6 +93,10 @@ function resolveApiBases() {
         pushBase(window.API_BASE);
     }
 
+    if (APP_CONFIG.useCurrentOriginBase !== false) {
+        pushBase(window.location?.origin);
+    }
+
     if (APP_CONFIG.useKnownWorkerBase !== false) {
         pushBase(APP_CONFIG.knownWorkerBase);
     }

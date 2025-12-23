@@ -154,6 +154,10 @@ function resolveApiBases() {
         pushBase(window.API_BASE);
     }
 
+    if (APP_CONFIG.useCurrentOriginBase !== false) {
+        pushBase(window.location?.origin);
+    }
+
     if (APP_CONFIG.useKnownWorkerBase !== false) {
         const knownWorkerBase = APP_CONFIG.knownWorkerBase;
         pushBase(knownWorkerBase);
