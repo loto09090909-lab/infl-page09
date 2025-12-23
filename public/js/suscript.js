@@ -426,7 +426,6 @@ async function submitPage() {
     } else {
         const errText = await res.text();
         setSuperAdminStatus(`페이지 저장 실패: ${errText || res.status}`, 'error');
-        alert(`페이지 저장 실패: ${errText || res.status}`);
     }
 }
 
@@ -543,7 +542,6 @@ async function deletePage(pageId) {
     } else {
         const errText = await res.text();
         setSuperAdminStatus(`페이지 삭제 실패: ${errText || res.status}`, 'error');
-        alert(`페이지 삭제 실패: ${errText || res.status}`);
     }
 }
 
@@ -561,8 +559,7 @@ async function editPage(pageId) {
 
   if (!res.ok) {
     const errText = await res.text();
-    setSuperAdminStatus(`페이지 정보를 불러오지 못했습니다: ${errText || res.status}`,'error');
-    alert(`페이지 정보를 불러오지 못했습니다: ${errText || res.status}`);
+    setSuperAdminStatus(`페이지 정보를 불러오지 못했습니다: ${errText || res.status}`, 'error');
     return;
   }
 
@@ -894,14 +891,17 @@ async function submitBulkUpload() {
 
   if (!res.ok) {
     const errText = await res.text();
-    alert(`업로드 실패: ${errText || res.status}`);
+    setSuperAdminStatus(`업로드 실패: ${errText || res.status}`, 'error');
     return;
   }
 
   const result = await res.json();
   const summary = result?.summary;
 
-  alert(`업로드 완료: ${summary?.success || 0}개 성공, ${summary?.failed || 0}개 실패`);
+  setSuperAdminStatus(
+    `업로드 완료: ${summary?.success || 0}개 성공, ${summary?.failed || 0}개 실패`,
+    'success'
+  );
   resetBulkUpload();
   loadPageList();
 }
