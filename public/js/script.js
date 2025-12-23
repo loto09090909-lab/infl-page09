@@ -244,6 +244,12 @@ async function apiFetch(
                 controller
             );
 
+            if (res.status === 401 || res.status === 403) {
+                if (document.getElementById('page-login-status')) {
+                    setPageLoginStatus('세션이 만료되었습니다. 다시 로그인해주세요.', 'error');
+                }
+            }
+
             if (res.ok) {
                 LAST_API_BASE_USED = base;
                 updateEnvBadge(base);

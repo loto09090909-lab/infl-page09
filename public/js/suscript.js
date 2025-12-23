@@ -100,6 +100,9 @@ async function apiFetch(
     for (const base of API_BASES) {
         try {
             const res = await fetch(`${base}${path}`, options);
+            if (res.status === 401 || res.status === 403) {
+                setSuperAdminStatus('슈퍼 관리자 세션이 필요합니다. 다시 로그인해주세요.', 'error');
+            }
             if (res.ok) {
                 return res;
             }
