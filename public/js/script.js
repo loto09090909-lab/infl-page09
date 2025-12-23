@@ -1638,7 +1638,9 @@ async function bootstrapSuperAdmin() {
     const password = passwordInput ? passwordInput.value : '';
 
     if (!username || !password) {
-        alert('아이디와 비밀번호를 모두 입력하세요.');
+        if (!setAuthStatus('super-login-status', '아이디와 비밀번호를 모두 입력하세요.', 'error')) {
+            alert('아이디와 비밀번호를 모두 입력하세요.');
+        }
         return;
     }
 
@@ -1656,10 +1658,22 @@ async function bootstrapSuperAdmin() {
 
     if (res.ok) {
         const payload = await res.json().catch(() => ({}));
-        alert(`계정을 준비했습니다: ${payload.username || username} (${payload.mode || 'created'})`);
+        if (!setAuthStatus(
+            'super-login-status',
+            `계정을 준비했습니다: ${payload.username || username} (${payload.mode || 'created'})`,
+            'success'
+        )) {
+            alert(`계정을 준비했습니다: ${payload.username || username} (${payload.mode || 'created'})`);
+        }
     } else {
         const errText = await res.text();
-        alert(`계정 생성/재설정 실패: ${errText || res.status}`);
+        if (!setAuthStatus(
+            'super-login-status',
+            `계정 생성/재설정 실패: ${errText || res.status}`,
+            'error'
+        )) {
+            alert(`계정 생성/재설정 실패: ${errText || res.status}`);
+        }
     }
 }
 
