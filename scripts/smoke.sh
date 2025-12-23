@@ -137,6 +137,9 @@ curl -sSf -X POST "$BASE/api/pages/$page_id/contact" \
   -H "Content-Type: application/json" \
   -d "$contact_payload" >/dev/null
 
+curl -sSf -H "Authorization: Bearer $page_admin_token" \
+  "$BASE/api/page/$page_id/contact-submissions" >/dev/null
+
 template=$(curl -sSf -X POST "$BASE/api/page/$page_id/private-templates" \
   -H "Authorization: Bearer $page_admin_token" \
   -H "Content-Type: application/json" \
