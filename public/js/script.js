@@ -335,6 +335,20 @@ function setPageLoginStatus(message, tone = 'info') {
     statusEl.style.display = 'block';
 }
 
+function setAuthStatus(targetId, message, tone = 'info') {
+    const statusEl = document.getElementById(targetId);
+    if (!statusEl) return false;
+    if (!message) {
+        statusEl.style.display = 'none';
+        statusEl.textContent = '';
+        return true;
+    }
+    statusEl.textContent = message;
+    statusEl.className = `status-banner ${tone}`;
+    statusEl.style.display = 'block';
+    return true;
+}
+
 function updateEnvBadge(base) {
     const badge = document.getElementById('env-badge');
     if (!badge) return;
@@ -1384,7 +1398,9 @@ async function login() {
     const password = passwordInput ? passwordInput.value : '';
 
     if (!username || !password) {
-        alert('아이디와 비밀번호를 모두 입력하세요.');
+        if (!setAuthStatus('super-login-status', '아이디와 비밀번호를 모두 입력하세요.', 'error')) {
+            alert('아이디와 비밀번호를 모두 입력하세요.');
+        }
         return;
     }
 
@@ -1402,7 +1418,9 @@ async function login() {
         window.location.href = "/super-admin.html";  // 슈퍼 관리자 페이지로 리디렉션
     } else {
         const errText = await res.text();
-        alert(`로그인 실패: ${errText || res.status}`);
+        if (!setAuthStatus('super-login-status', `로그인 실패: ${errText || res.status}`, 'error')) {
+            alert(`로그인 실패: ${errText || res.status}`);
+        }
     }
 }
 
@@ -1508,7 +1526,9 @@ async function userSignup() {
     const password = passwordInput ? passwordInput.value : '';
 
     if (!email || !password) {
-        alert('이메일과 비밀번호를 입력하세요.');
+        if (!setAuthStatus('user-signup-status', '이메일과 비밀번호를 입력하세요.', 'error')) {
+            alert('이메일과 비밀번호를 입력하세요.');
+        }
         return;
     }
 
@@ -1520,7 +1540,9 @@ async function userSignup() {
 
     if (!res.ok) {
         const msg = await res.text();
-        alert(`회원가입 실패: ${msg || res.status}`);
+        if (!setAuthStatus('user-signup-status', `회원가입 실패: ${msg || res.status}`, 'error')) {
+            alert(`회원가입 실패: ${msg || res.status}`);
+        }
         return;
     }
 
@@ -1538,7 +1560,9 @@ async function userLogin() {
     const password = passwordInput ? passwordInput.value : '';
 
     if (!email || !password) {
-        alert('이메일과 비밀번호를 입력하세요.');
+        if (!setAuthStatus('user-login-status', '이메일과 비밀번호를 입력하세요.', 'error')) {
+            alert('이메일과 비밀번호를 입력하세요.');
+        }
         return;
     }
 
@@ -1550,7 +1574,9 @@ async function userLogin() {
 
     if (!res.ok) {
         const msg = await res.text();
-        alert(`로그인 실패: ${msg || res.status}`);
+        if (!setAuthStatus('user-login-status', `로그인 실패: ${msg || res.status}`, 'error')) {
+            alert(`로그인 실패: ${msg || res.status}`);
+        }
         return;
     }
 
