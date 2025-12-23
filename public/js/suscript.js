@@ -5,7 +5,7 @@ function slugify(value) {
         .replace(/[\s\p{P}\p{S}_]+/gu, '-')
         .replace(/-+/g, '-');
 
-    const cleaned = separated.replace(/[^a-z0-9-]/g, '');
+    const cleaned = separated.replace(/[^\p{L}\p{N}-]/gu, '');
     const collapsed = cleaned.replace(/-+/g, '-').replace(/^-+|-+$/g, '');
 
     if (collapsed) {
