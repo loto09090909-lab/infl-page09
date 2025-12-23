@@ -1469,7 +1469,11 @@ async function fetchUserPages() {
 
     if (!res.ok) {
         const msg = await res.text().catch(() => '');
-        setAuthStatus('user-dashboard-status', `페이지 목록을 불러오지 못했습니다: ${msg || res.status}`, 'error');
+        setAuthStatus(
+            'user-dashboard-status',
+            formatStatusWithRequestId(`페이지 목록을 불러오지 못했습니다: ${msg || res.status}`, res),
+            'error'
+        );
         return [];
     }
     setAuthStatus('user-dashboard-status', '', 'info');
