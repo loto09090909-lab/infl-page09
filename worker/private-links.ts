@@ -1,4 +1,9 @@
-import { errorResponse, errorResponseWithCode, jsonResponse, parseJsonBody } from "./utils";
+import {
+  errorResponse,
+  errorResponseWithCode,
+  jsonResponse,
+  parseJsonBodyWithLimit,
+} from "./utils";
 import { resolvePageId } from "./slug";
 import { getBearerToken, verifySessionToken } from "./auth";
 import {
@@ -26,6 +31,10 @@ type CreatePrivateLinkBody = {
   note?: string;
 };
 
+const MAX_PRIVATE_LINK_BODY_BYTES = 8 * 1024;
+const MAX_PRIVATE_LINK_USES = 1000;
+const MAX_PRIVATE_LINK_TTL_DAYS = 365;
+
 function sanitizeString(value: unknown, maxLength: number): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
@@ -36,6 +45,40 @@ function parsePositiveInt(value: unknown): number | undefined {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
   return Math.floor(parsed);
+}
+
+function validatePrivateLinkBody(body: CreatePrivateLinkBody | null) {
+  if (!body) return { body: null as CreatePrivateLinkBody | null };
+  const expiresAt = sanitizeString(body.expiresAt, 40);
+  let normalizedExpiresAt: string | undefined;
+  if (expiresAt) {
+    const timestamp = Date.parse(expiresAt);
+    if (!Number.isFinite(timestamp)) {
+      return { error: "expiresAt 형식이 올바르지 않습니다" };
+    }
+    const maxAllowed = Date.now() + MAX_PRIVATE_LINK_TTL_DAYS * 24 * 60 * 60 * 1000;
+    if (timestamp <= Date.now()) {
+      return { error: "expiresAt은 현재 시각 이후여야 합니다" };
+    }
+    if (timestamp > maxAllowed) {
+      return { error: "expiresAt은 1년 이내로 설정해야 합니다" };
+    }
+    normalizedExpiresAt = new Date(timestamp).toISOString();
+  }
+
+  const maxUses = parsePositiveInt(body.maxUses);
+  if (maxUses && maxUses > MAX_PRIVATE_LINK_USES) {
+    return { error: `maxUses는 ${MAX_PRIVATE_LINK_USES} 이하로 설정해야 합니다` };
+  }
+
+  const note = sanitizeString(body.note, 120);
+  return {
+    body: {
+      ...(normalizedExpiresAt ? { expiresAt: normalizedExpiresAt } : {}),
+      ...(maxUses ? { maxUses } : {}),
+      ...(note ? { note } : {}),
+    },
+  };
 }
 
 function buildToken() {
@@ -225,9 +268,13 @@ export async function createPrivateLinkRecord(
   pageId: string,
   body: CreatePrivateLinkBody | null
 ) {
-  const expiresAt = sanitizeString(body?.expiresAt, 40);
-  const maxUses = parsePositiveInt(body?.maxUses);
-  const note = sanitizeString(body?.note, 120);
+  const { body: normalized, error } = validatePrivateLinkBody(body);
+  if (error) {
+    return { error };
+  }
+  const expiresAt = normalized?.expiresAt;
+  const maxUses = normalized?.maxUses;
+  const note = normalized?.note;
 
   const token = buildToken();
   const now = new Date().toISOString();
@@ -271,8 +318,17 @@ export async function createPrivateLink(
   headers: HeadersInit,
   pageId: string
 ) {
-  const body = await parseJsonBody<CreatePrivateLinkBody>(req);
-  const created = await createPrivateLinkRecord(env, pageId, body);
+  const { data: body, error } = await parseJsonBodyWithLimit<CreatePrivateLinkBody>(
+    req,
+    MAX_PRIVATE_LINK_BODY_BYTES
+  );
+  if (error) {
+    return errorResponse(error, 413, headers);
+  }
+  const created = await createPrivateLinkRecord(env, pageId, body ?? null);
+  if ("error" in created) {
+    return errorResponse(created.error, 400, headers);
+  }
   return jsonResponse(created, 201, headers);
 }
 

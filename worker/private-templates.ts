@@ -160,5 +160,8 @@ export async function issuePrivateLinkFromTemplate(
   }
 
   const created = await createPrivateLinkRecord(env, auth.pageId, payload);
+  if ("error" in created) {
+    return errorResponse(created.error, 400, headers);
+  }
   return jsonResponse(created, 201, headers);
 }

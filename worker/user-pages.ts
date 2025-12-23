@@ -260,15 +260,13 @@ export async function createUserPage(req: Request, env: any, headers: HeadersIni
   if (accessError) {
     return errorResponse(accessError, 400, headers);
   }
+  if (body.accessControl !== undefined && access.role !== "owner") {
+    return errorResponseWithCode("접근 제어 변경 권한이 없습니다", "FORBIDDEN", 403, headers);
+  }
 
   const { error: themeError, theme } = validateTheme(body.theme);
   if (themeError) {
     return errorResponse(themeError, 400, headers);
-  }
-
-  const { planId: nextPlanId, error: planError } = validatePlanId(body.plan);
-  if (planError) {
-    return errorResponse(planError, 400, headers);
   }
 
   const { planId: nextPlanId, error: planError } = validatePlanId(body.plan);
@@ -283,6 +281,9 @@ export async function createUserPage(req: Request, env: any, headers: HeadersIni
 
   const slugs = normalizeSlugs(body.slugs, pageId);
   if (body.slugs !== undefined) {
+    if (access.role !== "owner") {
+      return errorResponseWithCode("슬러그 변경 권한이 없습니다", "FORBIDDEN", 403, headers);
+    }
     try {
       await enforcePlanLimit(env, plan, "update_slug");
     } catch (error) {
@@ -302,6 +303,11 @@ export async function createUserPage(req: Request, env: any, headers: HeadersIni
     ...(privateLinks ?? []),
     ...(providedPrivate?.privateLinks ?? []),
   ];
+  const privateLinksTouched =
+    providedPrivate.provided || (linksProvided && privateLinks !== undefined);
+  if (access.role !== "owner" && (privateLinksTouched || combinedPrivateLinks.length > 0)) {
+    return errorResponseWithCode("프라이빗 링크 변경 권한이 없습니다", "FORBIDDEN", 403, headers);
+  }
   if (hasPrivateLinks([...(publicLinks ?? []), ...combinedPrivateLinks])) {
     try {
       await enforcePlanLimit(env, plan, "create_private_link");
@@ -902,7 +908,7 @@ export async function createUserPrivateLink(
   const access = await requireUserPageAccess(req, env, headers, pageId);
   if ("error" in access) return access.error;
 
-  if (access.role === "viewer") {
+  if (access.role !== "owner") {
     return errorResponseWithCode("프라이빗 링크 생성 권한이 없습니다", "FORBIDDEN", 403, headers);
   }
 
@@ -949,7 +955,7 @@ export async function deleteUserPrivateLink(
   const access = await requireUserPageAccess(req, env, headers, pageId);
   if ("error" in access) return access.error;
 
-  if (access.role === "viewer") {
+  if (access.role !== "owner") {
     return errorResponseWithCode("프라이빗 링크 삭제 권한이 없습니다", "FORBIDDEN", 403, headers);
   }
 
