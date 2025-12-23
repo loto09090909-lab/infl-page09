@@ -133,6 +133,10 @@ export async function createInvite(
       return errorResponse("expiresAt은 현재 시각 이후여야 합니다", 400, headers);
     }
   }
+  const defaultTtlDaysRaw = Number(env.INVITE_DEFAULT_TTL_DAYS ?? 7);
+  const defaultTtlDays = Number.isFinite(defaultTtlDaysRaw) && defaultTtlDaysRaw > 0 ? defaultTtlDaysRaw : 7;
+  const effectiveExpiresAt =
+    expiresAt || new Date(Date.now() + defaultTtlDays * 24 * 60 * 60 * 1000).toISOString();
 
   if (!email) {
     return errorResponse("이메일이 필요합니다", 400, headers);
@@ -142,7 +146,7 @@ export async function createInvite(
   await env.DB.prepare(
     "INSERT OR REPLACE INTO page_invites (token, page_id, email, role, created_by, expires_at) VALUES (?, ?, ?, ?, ?, ?)"
   )
-    .bind(token, pageId, email.toLowerCase(), inviteRole, actorUserId, expiresAt ?? null)
+    .bind(token, pageId, email.toLowerCase(), inviteRole, actorUserId, effectiveExpiresAt)
     .run();
 
   await recordAuditEvent(env, {
@@ -152,7 +156,7 @@ export async function createInvite(
     metadata: { email, role: inviteRole },
   });
 
-  return jsonResponse({ token, pageId, email, role: inviteRole, expiresAt }, 201, headers);
+  return jsonResponse({ token, pageId, email, role: inviteRole, expiresAt: effectiveExpiresAt }, 201, headers);
 }
 
 export async function listInvites(
@@ -178,7 +182,14 @@ export async function listInvites(
       created_by: string;
     }>();
 
-  return { items: rows?.results ?? [] } as const;
+  const items = (rows?.results ?? []).map((row) => {
+    const expiresAt = row.expires_at;
+    const parsed = expiresAt ? Date.parse(expiresAt) : NaN;
+    const expired = Number.isFinite(parsed) ? parsed <= Date.now() : false;
+    return { ...row, expired };
+  });
+
+  return { items } as const;
 }
 
 export async function revokeInvite(
@@ -229,6 +240,7 @@ export async function acceptInvite(
   if (invite.expires_at) {
     const parsed = Date.parse(invite.expires_at);
     if (Number.isFinite(parsed) && parsed <= Date.now()) {
+      await env.DB.prepare("DELETE FROM page_invites WHERE token = ?").bind(token).run();
       return { error: "초대가 만료되었습니다", status: 410 } as const;
     }
   }
