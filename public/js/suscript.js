@@ -274,6 +274,12 @@ function setSuperAdminStatus(message, tone = 'info') {
     statusEl.className = `status-banner ${tone}`;
 }
 
+function formatStatusWithRequestId(message, res) {
+    if (!res || typeof res.headers?.get !== 'function') return message;
+    const requestId = res.headers.get('X-Request-Id');
+    return requestId ? `${message} (요청 ID: ${requestId})` : message;
+}
+
 function createCustomLinkIcon(url, alt = '') {
     if (!url) return null;
 
@@ -425,7 +431,10 @@ async function submitPage() {
         loadPageList();  // 페이지 목록 갱신
     } else {
         const errText = await res.text();
-        setSuperAdminStatus(`페이지 저장 실패: ${errText || res.status}`, 'error');
+        setSuperAdminStatus(
+            formatStatusWithRequestId(`페이지 저장 실패: ${errText || res.status}`, res),
+            'error'
+        );
     }
 }
 
@@ -452,7 +461,10 @@ async function loadPageList(page = pageListState.page) {
 
     if (!res.ok) {
         const errText = await res.text();
-        setSuperAdminStatus(`페이지 목록 불러오기 실패: ${errText || res.status}`, 'error');
+        setSuperAdminStatus(
+            formatStatusWithRequestId(`페이지 목록 불러오기 실패: ${errText || res.status}`, res),
+            'error'
+        );
         return;
     }
 
@@ -541,7 +553,10 @@ async function deletePage(pageId) {
         loadPageList();  // 페이지 목록 갱신
     } else {
         const errText = await res.text();
-        setSuperAdminStatus(`페이지 삭제 실패: ${errText || res.status}`, 'error');
+        setSuperAdminStatus(
+            formatStatusWithRequestId(`페이지 삭제 실패: ${errText || res.status}`, res),
+            'error'
+        );
     }
 }
 
@@ -559,7 +574,10 @@ async function editPage(pageId) {
 
   if (!res.ok) {
     const errText = await res.text();
-    setSuperAdminStatus(`페이지 정보를 불러오지 못했습니다: ${errText || res.status}`, 'error');
+    setSuperAdminStatus(
+      formatStatusWithRequestId(`페이지 정보를 불러오지 못했습니다: ${errText || res.status}`, res),
+      'error'
+    );
     return;
   }
 
@@ -891,7 +909,10 @@ async function submitBulkUpload() {
 
   if (!res.ok) {
     const errText = await res.text();
-    setSuperAdminStatus(`업로드 실패: ${errText || res.status}`, 'error');
+    setSuperAdminStatus(
+      formatStatusWithRequestId(`업로드 실패: ${errText || res.status}`, res),
+      'error'
+    );
     return;
   }
 
