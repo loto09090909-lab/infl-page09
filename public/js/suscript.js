@@ -77,12 +77,26 @@ function resolveApiBases() {
             bases.push(normalized);
         }
     };
+    const pushPreferredBase = (value) => {
+        if (!value) return;
+        const normalized = String(value).trim().replace(/\/+$/, '');
+        if (!normalized || normalized.includes('.pages.dev')) return;
+        const existingIndex = bases.indexOf(normalized);
+        if (existingIndex !== -1) {
+            bases.splice(existingIndex, 1);
+        }
+        bases.unshift(normalized);
+    };
 
     if (typeof APP_CONFIG.apiBase === 'string') {
         pushBase(APP_CONFIG.apiBase);
     }
 
     (APP_CONFIG.apiBases || []).forEach((base) => pushBase(base));
+
+    if (APP_CONFIG.preferredApiBase) {
+        pushPreferredBase(APP_CONFIG.preferredApiBase);
+    }
 
     if (APP_CONFIG.useMetaApiBase !== false) {
         const metaApiBase = document.querySelector('meta[name="api-base"]')?.content?.trim();
