@@ -11,9 +11,9 @@ window.APP_CONFIG = window.APP_CONFIG || {
   // 특정 호스트를 항상 우선 사용하려면 preferredApiBase를 지정하세요
   preferredApiBase: "https://infl-worker.loto09090909.workers.dev",
   // 쿼리파라미터(api_base)로 베이스 오버라이드를 허용하지 않으려면 false로 설정
-  allowQueryApiBase: true,
+  allowQueryApiBase: false,
   // pages.dev -> workers.dev 유추, meta/api-base, 현재 origin, 알려진 워커를 끄고 싶다면 false로 설정
-  usePagesDerivedBase: true,
+  usePagesDerivedBase: false,
   useMetaApiBase: true,
   useGlobalApiBase: true,
   useKnownWorkerBase: true,
