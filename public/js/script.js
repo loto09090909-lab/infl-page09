@@ -126,6 +126,29 @@ function renderTurnstileWidget() {
     });
 }
 
+function normalizeContactSettings(raw) {
+    if (!raw || typeof raw !== 'object') {
+        return { enabled: false };
+    }
+    const webhookUrl = typeof raw.webhookUrl === 'string' ? raw.webhookUrl.trim() : '';
+    const webhookUrls = Array.isArray(raw.webhookUrls)
+        ? raw.webhookUrls.map((url) => (typeof url === 'string' ? url.trim() : '')).filter(Boolean)
+        : [];
+    const formTitle = typeof raw.formTitle === 'string' ? raw.formTitle.trim() : '';
+    const formDescription = typeof raw.formDescription === 'string' ? raw.formDescription.trim() : '';
+    const consentText = typeof raw.consentText === 'string' ? raw.consentText.trim() : '';
+    const consentRequired = raw.consentRequired === true;
+    return {
+        enabled: raw.enabled === true,
+        ...(webhookUrl ? { webhookUrl } : {}),
+        ...(webhookUrls.length ? { webhookUrls } : {}),
+        ...(formTitle ? { formTitle } : {}),
+        ...(formDescription ? { formDescription } : {}),
+        ...(consentText ? { consentText } : {}),
+        ...(consentRequired ? { consentRequired: true } : {}),
+    };
+}
+
 function resolveApiBases() {
     const bases = [];
     const pushBase = (value) => {
@@ -519,6 +542,7 @@ let adminSlugs = [];
 let adminContactSchema = [];
 let publicContactSchema = [];
 let contactSettings = { enabled: false };
+let publicContactSettings = { enabled: false };
 let contactEnabled = false;
 let currentPageId = '';
 let pagePlan = 'free';
@@ -704,6 +728,7 @@ function ensureUserViewContainer() {
     contactSection.id = 'user-contact-section';
     const contactHeader = document.createElement('h3');
     contactHeader.innerText = '문의하기';
+    contactHeader.id = 'user-contact-title';
     contactSection.appendChild(contactHeader);
 
     const contactHelp = document.createElement('p');
@@ -824,7 +849,8 @@ async function loadPageData(pageId, options = {}) {
 
         renderUserLinks(publicLinks);
         publicContactSchema = Array.isArray(data.contactSchema) ? data.contactSchema : [];
-        contactEnabled = data?.contactSettings?.enabled === true;
+        publicContactSettings = normalizeContactSettings(data?.contactSettings);
+        contactEnabled = publicContactSettings.enabled === true;
         renderPublicContactForm();
 
         if (includeAdmin) {
@@ -844,9 +870,7 @@ async function loadPageData(pageId, options = {}) {
             ];
             adminSlugs = Array.isArray(data.slugs) && data.slugs.length ? data.slugs : [pageId];
             adminContactSchema = Array.isArray(data.contactSchema) ? data.contactSchema : [];
-            contactSettings = typeof data.contactSettings === 'object' && data.contactSettings
-                ? { enabled: data.contactSettings.enabled === true, ...(data.contactSettings.webhookUrl ? { webhookUrl: data.contactSettings.webhookUrl } : {}) }
-                : { enabled: false };
+            contactSettings = normalizeContactSettings(data?.contactSettings);
             pagePlan = data.plan || 'free';
             renderAdminLinks();
             renderSlugEditor();
@@ -1153,6 +1177,7 @@ async function savePage() {
             label: (field.label || '').trim(),
             type: field.type || 'text',
             ...(field.placeholder ? { placeholder: field.placeholder } : {}),
+            ...(field.helpText ? { helpText: field.helpText } : {}),
             ...(field.required ? { required: true } : {}),
             ...(Array.isArray(field.options) && field.options.length
                 ? { options: field.options.filter(Boolean).map((item) => (item || '').trim()).filter(Boolean) }
@@ -1163,6 +1188,13 @@ async function savePage() {
             ...(contactSettings && contactSettings.webhookUrl
                 ? { webhookUrl: contactSettings.webhookUrl.trim() }
                 : {}),
+            ...(Array.isArray(contactSettings.webhookUrls) && contactSettings.webhookUrls.length
+                ? { webhookUrls: contactSettings.webhookUrls }
+                : {}),
+            ...(contactSettings.formTitle ? { formTitle: contactSettings.formTitle.trim() } : {}),
+            ...(contactSettings.formDescription ? { formDescription: contactSettings.formDescription.trim() } : {}),
+            ...(contactSettings.consentText ? { consentText: contactSettings.consentText.trim() } : {}),
+            ...(contactSettings.consentRequired ? { consentRequired: true } : {}),
         },
         slugs: adminSlugs,
         plan: pagePlan,
@@ -1873,6 +1905,7 @@ function renderPublicContactForm() {
     const section = document.getElementById('user-contact-section');
     const fieldsHost = document.getElementById('user-contact-fields');
     const help = document.getElementById('user-contact-help');
+    const title = document.getElementById('user-contact-title');
     const submitBtn = document.getElementById('user-contact-submit');
     const form = document.getElementById('user-contact-form');
 
@@ -1895,7 +1928,12 @@ function renderPublicContactForm() {
     }
 
     form.style.display = 'block';
-    help.innerText = '아래 항목을 입력해 페이지 관리자에게 문의를 전달하세요.';
+    const defaultTitle = '문의하기';
+    const defaultHelp = '아래 항목을 입력해 페이지 관리자에게 문의를 전달하세요.';
+    if (title) {
+        title.innerText = publicContactSettings.formTitle || defaultTitle;
+    }
+    help.innerText = publicContactSettings.formDescription || defaultHelp;
 
     publicContactSchema.forEach((field, idx) => {
         const baseId = `user-contact-${idx}`;
@@ -1989,8 +2027,35 @@ function renderPublicContactForm() {
             wrapper.appendChild(input);
         }
 
+        if (field.helpText) {
+            const helper = document.createElement('p');
+            helper.className = 'help-text';
+            helper.innerText = field.helpText;
+            wrapper.appendChild(helper);
+        }
+
         fieldsHost.appendChild(wrapper);
     });
+
+    const existingConsent = document.getElementById('user-contact-consent');
+    if (existingConsent) {
+        existingConsent.remove();
+    }
+    if (publicContactSettings.consentText || publicContactSettings.consentRequired) {
+        const consentWrap = document.createElement('label');
+        consentWrap.className = 'checkbox-item';
+        consentWrap.id = 'user-contact-consent';
+        const consentInput = document.createElement('input');
+        consentInput.type = 'checkbox';
+        consentInput.id = 'user-contact-consent-input';
+        consentInput.required = !!publicContactSettings.consentRequired;
+        consentWrap.appendChild(consentInput);
+        const consentLabel = document.createElement('span');
+        consentLabel.innerText =
+            publicContactSettings.consentText || '개인정보 수집/이용에 동의합니다.';
+        consentWrap.appendChild(consentLabel);
+        fieldsHost.appendChild(consentWrap);
+    }
 
     renderTurnstileWidget();
     setContactStatus('');
@@ -2039,6 +2104,14 @@ async function submitContactForm(event) {
         return;
     }
 
+    if (publicContactSettings.consentRequired) {
+        const consentInput = document.getElementById('user-contact-consent-input');
+        if (!consentInput?.checked) {
+            setContactStatus('개인정보 수집/이용에 동의해주세요.', 'error');
+            return;
+        }
+    }
+
     try {
         submitBtn.disabled = true;
         setContactStatus('문의 내용을 전송하는 중입니다...', 'info');
@@ -2052,6 +2125,7 @@ async function submitContactForm(event) {
             body: JSON.stringify({
                 answers,
                 company: honeypot?.value || '',
+                consentChecked: document.getElementById('user-contact-consent-input')?.checked || false,
                 turnstileToken: turnstileToken || undefined,
             }),
         }, [400, 404, 422]);
@@ -2659,6 +2733,14 @@ function renderContactSchema() {
             adminContactSchema[idx] = { ...current, placeholder: e.target.value };
         };
 
+        const helpTextInput = document.createElement('input');
+        helpTextInput.placeholder = '도움말';
+        helpTextInput.value = field.helpText || '';
+        helpTextInput.oninput = (e) => {
+            const current = adminContactSchema[idx] || {};
+            adminContactSchema[idx] = { ...current, helpText: e.target.value };
+        };
+
         const requiredToggle = document.createElement('label');
         requiredToggle.className = 'inline-toggle';
         const requiredInput = document.createElement('input');
@@ -2694,6 +2776,7 @@ function renderContactSchema() {
         row.appendChild(labelInput);
         row.appendChild(typeSelect);
         row.appendChild(placeholderInput);
+        row.appendChild(helpTextInput);
         row.appendChild(optionsInput);
         row.appendChild(requiredToggle);
         row.appendChild(removeBtn);
@@ -2704,8 +2787,19 @@ function renderContactSchema() {
 
 function hydrateContactSettings() {
     const webhookInput = document.getElementById('contactWebhook');
+    const webhookUrlsInput = document.getElementById('contactWebhookUrls');
+    const formTitleInput = document.getElementById('contactFormTitle');
+    const formDescriptionInput = document.getElementById('contactFormDescription');
+    const consentTextInput = document.getElementById('contactConsentText');
+    const consentRequiredInput = document.getElementById('contactConsentRequired');
     const enabledInput = document.getElementById('contactEnabled');
     if (!webhookInput || !enabledInput) return;
+
+    const parseWebhookUrls = (value) =>
+        value
+            .split('\n')
+            .map((item) => item.trim())
+            .filter(Boolean);
 
     webhookInput.value = contactSettings.webhookUrl || '';
     webhookInput.oninput = (e) => {
@@ -2713,6 +2807,46 @@ function hydrateContactSettings() {
         const enabled = contactSettings.enabled === true;
         contactSettings = value ? { ...contactSettings, webhookUrl: value } : { enabled };
     };
+
+    if (webhookUrlsInput) {
+        webhookUrlsInput.value = Array.isArray(contactSettings.webhookUrls)
+            ? contactSettings.webhookUrls.join('\n')
+            : '';
+        webhookUrlsInput.oninput = (e) => {
+            const list = parseWebhookUrls(e.target.value || '');
+            contactSettings = list.length
+                ? { ...contactSettings, webhookUrls: list }
+                : { ...contactSettings, webhookUrls: [] };
+        };
+    }
+
+    if (formTitleInput) {
+        formTitleInput.value = contactSettings.formTitle || '';
+        formTitleInput.oninput = (e) => {
+            contactSettings = { ...contactSettings, formTitle: e.target.value || '' };
+        };
+    }
+
+    if (formDescriptionInput) {
+        formDescriptionInput.value = contactSettings.formDescription || '';
+        formDescriptionInput.oninput = (e) => {
+            contactSettings = { ...contactSettings, formDescription: e.target.value || '' };
+        };
+    }
+
+    if (consentTextInput) {
+        consentTextInput.value = contactSettings.consentText || '';
+        consentTextInput.oninput = (e) => {
+            contactSettings = { ...contactSettings, consentText: e.target.value || '' };
+        };
+    }
+
+    if (consentRequiredInput) {
+        consentRequiredInput.checked = contactSettings.consentRequired === true;
+        consentRequiredInput.onchange = (e) => {
+            contactSettings = { ...contactSettings, consentRequired: !!e.target.checked };
+        };
+    }
 
     enabledInput.checked = contactSettings.enabled === true;
     enabledInput.onchange = (e) => {
@@ -2807,12 +2941,14 @@ function addContactField() {
     const labelInput = document.getElementById('contactLabel');
     const typeInput = document.getElementById('contactType');
     const placeholderInput = document.getElementById('contactPlaceholder');
+    const helpTextInput = document.getElementById('contactHelpText');
     const optionsInput = document.getElementById('contactOptions');
     const requiredInput = document.getElementById('contactRequired');
 
     const label = labelInput?.value?.trim();
     const type = typeInput?.value || 'text';
     const placeholder = placeholderInput?.value || '';
+    const helpText = helpTextInput?.value || '';
     const rawOptions = (optionsInput?.value || '').split(',');
     const options = rawOptions.map((item) => item.trim()).filter(Boolean);
     const required = requiredInput?.checked || false;
@@ -2832,12 +2968,20 @@ function addContactField() {
         return;
     }
 
-    adminContactSchema.push({ label, type, placeholder, ...(required ? { required: true } : {}), ...(options.length ? { options } : {}) });
+    adminContactSchema.push({
+        label,
+        type,
+        placeholder,
+        helpText,
+        ...(required ? { required: true } : {}),
+        ...(options.length ? { options } : {}),
+    });
     renderContactSchema();
     renderUsage();
 
     if (labelInput) labelInput.value = '';
     if (placeholderInput) placeholderInput.value = '';
+    if (helpTextInput) helpTextInput.value = '';
     if (optionsInput) optionsInput.value = '';
     if (requiredInput) requiredInput.checked = false;
 }

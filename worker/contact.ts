@@ -7,13 +7,19 @@ type ContactField = {
   label: string;
   type: string;
   placeholder?: string;
+  helpText?: string;
   required?: boolean;
   options?: string[];
 };
 
 type ContactSettings = {
   webhookUrl?: string;
+  webhookUrls?: string[];
   enabled?: boolean;
+  formTitle?: string;
+  formDescription?: string;
+  consentText?: string;
+  consentRequired?: boolean;
 };
 
 type ContactSubmission = {
@@ -21,6 +27,7 @@ type ContactSubmission = {
   pageId: string;
   submittedAt: string;
   answers: { label: string; type: string; value: string }[];
+  consentChecked?: boolean;
   ip?: string | null;
   userAgent?: string | null;
 };
@@ -66,6 +73,7 @@ async function readContactSchema(env: any, pageId: string): Promise<{
             if (!label || !type || !ALLOWED_CONTACT_TYPES.has(type)) return null;
 
             const placeholder = sanitizeString(field.placeholder, 200);
+            const helpText = sanitizeString(field.helpText, 400);
             const required = field.required === true;
             const options = Array.isArray(field.options)
               ? field.options
@@ -76,26 +84,52 @@ async function readContactSchema(env: any, pageId: string): Promise<{
 
             if ((type === "select" || type === "checkbox") && options.length === 0) return null;
 
-            return {
-              label,
-              type,
-              ...(placeholder ? { placeholder } : {}),
-              ...(required ? { required: true } : {}),
-              ...(options.length ? { options } : {}),
-            } satisfies ContactField;
-          })
-          .filter(Boolean)
+              return {
+                label,
+                type,
+                ...(placeholder ? { placeholder } : {}),
+                ...(helpText ? { helpText } : {}),
+                ...(required ? { required: true } : {}),
+                ...(options.length ? { options } : {}),
+              } satisfies ContactField;
+            })
+            .filter(Boolean)
       : [];
     const settings: ContactSettings = { enabled: false };
     if (parsed?.contactSettings && typeof parsed.contactSettings === "object") {
       const webhookUrl = typeof parsed.contactSettings.webhookUrl === "string"
         ? parsed.contactSettings.webhookUrl.trim()
         : "";
+      const webhookUrls = Array.isArray(parsed.contactSettings.webhookUrls)
+        ? parsed.contactSettings.webhookUrls
+            .map((url: unknown) => (typeof url === "string" ? url.trim() : ""))
+            .filter((url: string) => !!url && (url.startsWith("http://") || url.startsWith("https://")))
+            .slice(0, 5)
+        : [];
       if (webhookUrl && (webhookUrl.startsWith("http://") || webhookUrl.startsWith("https://"))) {
         settings.webhookUrl = webhookUrl;
       }
+      if (webhookUrls.length) {
+        settings.webhookUrls = webhookUrls;
+      }
 
       settings.enabled = parsed.contactSettings.enabled === true;
+      const formTitle = typeof parsed.contactSettings.formTitle === "string"
+        ? parsed.contactSettings.formTitle.trim()
+        : "";
+      if (formTitle) settings.formTitle = formTitle.slice(0, 120);
+
+      const formDescription = typeof parsed.contactSettings.formDescription === "string"
+        ? parsed.contactSettings.formDescription.trim()
+        : "";
+      if (formDescription) settings.formDescription = formDescription.slice(0, 400);
+
+      const consentText = typeof parsed.contactSettings.consentText === "string"
+        ? parsed.contactSettings.consentText.trim()
+        : "";
+      if (consentText) settings.consentText = consentText.slice(0, 200);
+
+      settings.consentRequired = parsed.contactSettings.consentRequired === true;
     }
     const accessControl =
       parsed?.accessControl && typeof parsed.accessControl === "object"
@@ -188,29 +222,41 @@ async function forwardSubmission(
   submission: ContactSubmission,
   settings: ContactSettings
 ) {
-  const webhookUrl = settings.webhookUrl || env.CONTACT_WEBHOOK_URL;
-  if (!webhookUrl || !(webhookUrl.startsWith("http://") || webhookUrl.startsWith("https://"))) {
+  const urls = [
+    settings.webhookUrl,
+    ...(settings.webhookUrls ?? []),
+    env.CONTACT_WEBHOOK_URL,
+  ].filter(Boolean) as string[];
+  const targets = Array.from(new Set(urls)).filter(
+    (url) => url.startsWith("http://") || url.startsWith("https://")
+  );
+  if (!targets.length) {
     return;
   }
 
-  try {
-    await fetch(webhookUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        pageId: submission.pageId,
-        submittedAt: submission.submittedAt,
-        answers: submission.answers,
-        ip: submission.ip,
-        userAgent: submission.userAgent,
-        id: submission.id,
-      }),
-    });
-  } catch (error) {
-    console.error("contact webhook failed", error);
-  }
+  await Promise.all(
+    targets.map(async (url) => {
+      try {
+        await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            pageId: submission.pageId,
+            submittedAt: submission.submittedAt,
+            answers: submission.answers,
+            consentChecked: submission.consentChecked === true,
+            ip: submission.ip,
+            userAgent: submission.userAgent,
+            id: submission.id,
+          }),
+        });
+      } catch (error) {
+        console.error("contact webhook failed", { url, error });
+      }
+    })
+  );
 }
 
 async function storeSubmission(env: any, submission: ContactSubmission) {
@@ -268,6 +314,13 @@ export async function submitContact(
   const honeypot = typeof body?.company === "string" ? body.company.trim() : "";
   if (honeypot) {
     return jsonResponse({ ok: true, ignored: true }, 202, headers);
+  }
+
+  if (settings.consentRequired) {
+    const consent = body?.consentChecked === true;
+    if (!consent) {
+      return errorResponse("개인정보 수집 동의가 필요합니다", 422, headers);
+    }
   }
 
   const ip = req.headers.get("CF-Connecting-IP") || req.headers.get("x-forwarded-for");
@@ -343,6 +396,7 @@ export async function submitContact(
     pageId: canonicalPageId,
     submittedAt: new Date().toISOString(),
     answers,
+    consentChecked: body?.consentChecked === true,
     ip,
     userAgent,
   };

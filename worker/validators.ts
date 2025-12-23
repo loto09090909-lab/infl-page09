@@ -101,6 +101,7 @@ export function validateContactSchema(raw: unknown) {
       const label = sanitizeString((field as any).label, 120);
       const type = sanitizeString((field as any).type, 30);
       const placeholder = sanitizeString((field as any).placeholder, 200);
+      const helpText = sanitizeString((field as any).helpText, 400);
       const required = (field as any).required === true;
       const optionsRaw = Array.isArray((field as any).options) ? (field as any).options : [];
       const options = optionsRaw
@@ -114,6 +115,7 @@ export function validateContactSchema(raw: unknown) {
         label,
         type,
         ...(placeholder ? { placeholder } : {}),
+        ...(helpText ? { helpText } : {}),
         ...(required ? { required: true } : {}),
         ...(options.length ? { options } : {}),
       };
@@ -130,15 +132,32 @@ export function validateContactSettings(raw: unknown) {
   }
 
   const webhookUrl = sanitizeString((raw as any).webhookUrl, 1000);
+  const webhookUrlsRaw = Array.isArray((raw as any).webhookUrls) ? (raw as any).webhookUrls : [];
+  const webhookUrls = webhookUrlsRaw
+    .map((url) => sanitizeString(url, 1000))
+    .filter((url): url is string => !!url);
   const enabled = (raw as any).enabled === true;
+  const formTitle = sanitizeString((raw as any).formTitle, 120);
+  const formDescription = sanitizeString((raw as any).formDescription, 400);
+  const consentText = sanitizeString((raw as any).consentText, 200);
+  const consentRequired = (raw as any).consentRequired === true;
   if (webhookUrl && !isHttpUrl(webhookUrl)) {
     return { error: "webhookUrl은 http(s)여야 합니다" };
+  }
+  const invalidWebhook = webhookUrls.find((url) => !isHttpUrl(url));
+  if (invalidWebhook) {
+    return { error: "webhookUrls는 http(s)여야 합니다" };
   }
 
   return {
     settings: {
       ...(enabled ? { enabled: true } : { enabled: false }),
       ...(webhookUrl ? { webhookUrl } : {}),
+      ...(webhookUrls.length ? { webhookUrls } : {}),
+      ...(formTitle ? { formTitle } : {}),
+      ...(formDescription ? { formDescription } : {}),
+      ...(consentText ? { consentText } : {}),
+      ...(consentRequired ? { consentRequired: true } : {}),
     },
   };
 }
