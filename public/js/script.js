@@ -1450,14 +1450,22 @@ async function fetchUserPrimaryPage() {
 
 async function fetchUserPages() {
     const token = sessionStorage.getItem('user_token');
-    if (!token) return [];
+    if (!token) {
+        setAuthStatus('user-dashboard-status', '로그인이 필요합니다.', 'error');
+        return [];
+    }
 
     const res = await apiFetch('/api/user/pages', {
         method: 'GET',
         headers: { Authorization: `Bearer ${token}` },
     }, [401, 403, 404]);
 
-    if (!res.ok) return [];
+    if (!res.ok) {
+        const msg = await res.text().catch(() => '');
+        setAuthStatus('user-dashboard-status', `페이지 목록을 불러오지 못했습니다: ${msg || res.status}`, 'error');
+        return [];
+    }
+    setAuthStatus('user-dashboard-status', '', 'info');
     const payload = await res.json().catch(() => null);
     return Array.isArray(payload?.items) ? payload.items : [];
 }
@@ -1505,6 +1513,7 @@ async function refreshUserDashboard() {
 
     const token = sessionStorage.getItem('user_token');
     if (!token) {
+        setAuthStatus('user-dashboard-status', '로그인이 필요합니다.', 'error');
         window.location.href = '/user-login';
         return;
     }
