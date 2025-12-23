@@ -351,8 +351,29 @@ export async function superAdminLogin(
   );
 
   if (!row || !passwordCheck.valid) {
-    await recordFailedLogin(env, "super", loginIdentifier);
-    return errorResponse("인증에 실패했습니다", 401, headers);
+    const nextState = await recordFailedLogin(env, "super", loginIdentifier);
+    const waitSeconds = Math.max(1, Math.ceil((nextState.resetAt - Date.now()) / 1000));
+    if (nextState.blocked) {
+      return errorResponse(
+        `로그인 시도가 너무 많습니다. ${waitSeconds}초 후 다시 시도하세요`,
+        429,
+        {
+          ...headers,
+          "Retry-After": String(waitSeconds),
+          "X-RateLimit-Remaining": "0",
+          "X-RateLimit-Reset": new Date(nextState.resetAt).toISOString(),
+        }
+      );
+    }
+    return errorResponse(
+      `인증에 실패했습니다. 남은 시도 횟수: ${nextState.remaining}`,
+      401,
+      {
+        ...headers,
+        "X-RateLimit-Remaining": String(nextState.remaining),
+        "X-RateLimit-Reset": new Date(nextState.resetAt).toISOString(),
+      }
+    );
   }
 
   if (passwordCheck.upgradedHash) {

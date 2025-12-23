@@ -1,5 +1,5 @@
 // 전역 앱 설정을 정의합니다. 배포 환경에 맞게 apiBases와 envLabel을 수정하세요.
-window.APP_CONFIG = window.APP_CONFIG || {
+const DEFAULT_APP_CONFIG = {
   // 우선순위가 높은 API 베이스 URL 목록 (프로토콜 포함)
   apiBases: [],
   // 단일 기본 API 베이스(배열보다 우선, 값이 있으면 첫 번째 후보가 됩니다)
@@ -22,4 +22,10 @@ window.APP_CONFIG = window.APP_CONFIG || {
   knownWorkerBase: "https://infl-worker.loto09090909.workers.dev",
   // Turnstile 사이트 키 (없으면 자동으로 비활성화)
   turnstileSiteKey: undefined,
+};
+
+window.APP_CONFIG = {
+  ...DEFAULT_APP_CONFIG,
+  ...(window.__APP_CONFIG__ || {}),
+  ...(window.APP_CONFIG || {}),
 };
