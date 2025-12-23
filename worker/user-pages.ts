@@ -800,10 +800,13 @@ export async function exportUserPageContactSubmissions(
   }
 
   const submissions = await fetchSubmissions(env, access.pageId, 200);
-  const header = ["id", "pageId", "submittedAt", "ip", "userAgent", "answers"].join(",");
+  const header = ["id", "pageId", "submittedAt", "ip", "userAgent", "answers", "deliveryErrors"].join(",");
   const rows = submissions.map((s) => {
     const answers = s.answers.map((a) => `${a.label}:${a.value}`).join(" | ");
-    return [s.id, s.pageId, s.submittedAt, s.ip ?? "", s.userAgent ?? "", answers]
+    const deliveryErrors = Array.isArray((s as any).deliveryErrors)
+      ? (s as any).deliveryErrors.join(" | ")
+      : "";
+    return [s.id, s.pageId, s.submittedAt, s.ip ?? "", s.userAgent ?? "", answers, deliveryErrors]
       .map((value) => `"${(value ?? "").toString().replace(/"/g, '""')}"`)
       .join(",");
   });
