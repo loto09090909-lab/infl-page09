@@ -136,11 +136,18 @@ export function validateContactSettings(raw: unknown) {
   const webhookUrls = webhookUrlsRaw
     .map((url) => sanitizeString(url, 1000))
     .filter((url): url is string => !!url);
+  const emailRecipientsRaw = Array.isArray((raw as any).emailRecipients)
+    ? (raw as any).emailRecipients
+    : [];
+  const emailRecipients = emailRecipientsRaw
+    .map((email) => sanitizeString(email, 254))
+    .filter((email): email is string => !!email);
   const enabled = (raw as any).enabled === true;
   const formTitle = sanitizeString((raw as any).formTitle, 120);
   const formDescription = sanitizeString((raw as any).formDescription, 400);
   const consentText = sanitizeString((raw as any).consentText, 200);
   const consentRequired = (raw as any).consentRequired === true;
+  const emailSubject = sanitizeString((raw as any).emailSubject, 120);
   if (webhookUrl && !isHttpUrl(webhookUrl)) {
     return { error: "webhookUrl은 http(s)여야 합니다" };
   }
@@ -148,12 +155,18 @@ export function validateContactSettings(raw: unknown) {
   if (invalidWebhook) {
     return { error: "webhookUrls는 http(s)여야 합니다" };
   }
+  const invalidEmail = emailRecipients.find((email) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
+  if (invalidEmail) {
+    return { error: "emailRecipients는 유효한 이메일 주소여야 합니다" };
+  }
 
   return {
     settings: {
       ...(enabled ? { enabled: true } : { enabled: false }),
       ...(webhookUrl ? { webhookUrl } : {}),
       ...(webhookUrls.length ? { webhookUrls } : {}),
+      ...(emailRecipients.length ? { emailRecipients } : {}),
+      ...(emailSubject ? { emailSubject } : {}),
       ...(formTitle ? { formTitle } : {}),
       ...(formDescription ? { formDescription } : {}),
       ...(consentText ? { consentText } : {}),

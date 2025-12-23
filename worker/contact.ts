@@ -20,6 +20,8 @@ type ContactSettings = {
   formDescription?: string;
   consentText?: string;
   consentRequired?: boolean;
+  emailRecipients?: string[];
+  emailSubject?: string;
 };
 
 type ContactSubmission = {
@@ -112,6 +114,15 @@ async function readContactSchema(env: any, pageId: string): Promise<{
       if (webhookUrls.length) {
         settings.webhookUrls = webhookUrls;
       }
+      const emailRecipients = Array.isArray(parsed.contactSettings.emailRecipients)
+        ? parsed.contactSettings.emailRecipients
+            .map((email: unknown) => (typeof email === "string" ? email.trim().toLowerCase() : ""))
+            .filter((email: string) => !!email)
+            .slice(0, 10)
+        : [];
+      if (emailRecipients.length) {
+        settings.emailRecipients = emailRecipients;
+      }
 
       settings.enabled = parsed.contactSettings.enabled === true;
       const formTitle = typeof parsed.contactSettings.formTitle === "string"
@@ -130,6 +141,10 @@ async function readContactSchema(env: any, pageId: string): Promise<{
       if (consentText) settings.consentText = consentText.slice(0, 200);
 
       settings.consentRequired = parsed.contactSettings.consentRequired === true;
+      const emailSubject = typeof parsed.contactSettings.emailSubject === "string"
+        ? parsed.contactSettings.emailSubject.trim()
+        : "";
+      if (emailSubject) settings.emailSubject = emailSubject.slice(0, 120);
     }
     const accessControl =
       parsed?.accessControl && typeof parsed.accessControl === "object"
@@ -257,6 +272,65 @@ async function forwardSubmission(
       }
     })
   );
+}
+
+async function sendEmailNotification(
+  env: any,
+  submission: ContactSubmission,
+  settings: ContactSettings
+) {
+  const recipients =
+    settings.emailRecipients && settings.emailRecipients.length
+      ? settings.emailRecipients
+      : typeof env.CONTACT_EMAIL_RECIPIENTS === "string"
+      ? env.CONTACT_EMAIL_RECIPIENTS.split(",").map((email: string) => email.trim()).filter(Boolean)
+      : [];
+  if (!recipients.length) return;
+
+  const from =
+    typeof env.CONTACT_EMAIL_FROM === "string" && env.CONTACT_EMAIL_FROM.includes("@")
+      ? env.CONTACT_EMAIL_FROM
+      : "";
+  if (!from) {
+    console.warn("contact email skipped: CONTACT_EMAIL_FROM is missing");
+    return;
+  }
+
+  const subject =
+    settings.emailSubject ||
+    (typeof env.CONTACT_EMAIL_SUBJECT === "string" && env.CONTACT_EMAIL_SUBJECT.trim()) ||
+    "새로운 문의가 도착했습니다";
+
+  const lines = [
+    `Page ID: ${submission.pageId}`,
+    `Submitted At: ${submission.submittedAt}`,
+    submission.consentChecked === true ? "Consent: yes" : "Consent: no",
+    "",
+    "Answers:",
+    ...submission.answers.map((answer) => `- ${answer.label}: ${answer.value}`),
+    "",
+    submission.ip ? `IP: ${submission.ip}` : "",
+    submission.userAgent ? `User-Agent: ${submission.userAgent}` : "",
+  ].filter(Boolean);
+
+  try {
+    await fetch("https://api.mailchannels.net/tx/v1/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        personalizations: [
+          {
+            to: recipients.map((email: string) => ({ email })),
+          },
+        ],
+        from: { email: from, name: "Contact Form" },
+        subject,
+        content: [{ type: "text/plain", value: lines.join("\n") }],
+      }),
+    });
+  } catch (error) {
+    console.error("contact email failed", error);
+  }
 }
 
 async function storeSubmission(env: any, submission: ContactSubmission) {
@@ -409,6 +483,7 @@ export async function submitContact(
 
   await storeSubmission(env, submission);
   forwardSubmission(env, submission, settings);
+  sendEmailNotification(env, submission, settings);
 
   return jsonResponse({ ok: true, id: submission.id }, 201, headers);
 }

@@ -1191,6 +1191,10 @@ async function savePage() {
             ...(Array.isArray(contactSettings.webhookUrls) && contactSettings.webhookUrls.length
                 ? { webhookUrls: contactSettings.webhookUrls }
                 : {}),
+            ...(Array.isArray(contactSettings.emailRecipients) && contactSettings.emailRecipients.length
+                ? { emailRecipients: contactSettings.emailRecipients }
+                : {}),
+            ...(contactSettings.emailSubject ? { emailSubject: contactSettings.emailSubject.trim() } : {}),
             ...(contactSettings.formTitle ? { formTitle: contactSettings.formTitle.trim() } : {}),
             ...(contactSettings.formDescription ? { formDescription: contactSettings.formDescription.trim() } : {}),
             ...(contactSettings.consentText ? { consentText: contactSettings.consentText.trim() } : {}),
@@ -2792,10 +2796,12 @@ function hydrateContactSettings() {
     const formDescriptionInput = document.getElementById('contactFormDescription');
     const consentTextInput = document.getElementById('contactConsentText');
     const consentRequiredInput = document.getElementById('contactConsentRequired');
+    const emailRecipientsInput = document.getElementById('contactEmailRecipients');
+    const emailSubjectInput = document.getElementById('contactEmailSubject');
     const enabledInput = document.getElementById('contactEnabled');
     if (!webhookInput || !enabledInput) return;
 
-    const parseWebhookUrls = (value) =>
+    const parseLines = (value) =>
         value
             .split('\n')
             .map((item) => item.trim())
@@ -2813,7 +2819,7 @@ function hydrateContactSettings() {
             ? contactSettings.webhookUrls.join('\n')
             : '';
         webhookUrlsInput.oninput = (e) => {
-            const list = parseWebhookUrls(e.target.value || '');
+            const list = parseLines(e.target.value || '');
             contactSettings = list.length
                 ? { ...contactSettings, webhookUrls: list }
                 : { ...contactSettings, webhookUrls: [] };
@@ -2845,6 +2851,26 @@ function hydrateContactSettings() {
         consentRequiredInput.checked = contactSettings.consentRequired === true;
         consentRequiredInput.onchange = (e) => {
             contactSettings = { ...contactSettings, consentRequired: !!e.target.checked };
+        };
+    }
+
+    if (emailRecipientsInput) {
+        emailRecipientsInput.value = Array.isArray(contactSettings.emailRecipients)
+            ? contactSettings.emailRecipients.join('\n')
+            : '';
+        emailRecipientsInput.oninput = (e) => {
+            const raw = (e.target.value || '').split(/[\n,]/);
+            const list = raw.map((item) => item.trim()).filter(Boolean);
+            contactSettings = list.length
+                ? { ...contactSettings, emailRecipients: list }
+                : { ...contactSettings, emailRecipients: [] };
+        };
+    }
+
+    if (emailSubjectInput) {
+        emailSubjectInput.value = contactSettings.emailSubject || '';
+        emailSubjectInput.oninput = (e) => {
+            contactSettings = { ...contactSettings, emailSubject: e.target.value || '' };
         };
     }
 
