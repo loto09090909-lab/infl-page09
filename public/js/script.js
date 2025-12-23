@@ -349,6 +349,12 @@ function setAuthStatus(targetId, message, tone = 'info') {
     return true;
 }
 
+function formatStatusWithRequestId(message, res) {
+    if (!res || typeof res.headers?.get !== 'function') return message;
+    const requestId = res.headers.get('X-Request-Id');
+    return requestId ? `${message} (요청 ID: ${requestId})` : message;
+}
+
 function updateEnvBadge(base) {
     const badge = document.getElementById('env-badge');
     if (!badge) return;
@@ -1418,8 +1424,9 @@ async function login() {
         window.location.href = "/super-admin.html";  // 슈퍼 관리자 페이지로 리디렉션
     } else {
         const errText = await res.text();
-        if (!setAuthStatus('super-login-status', `로그인 실패: ${errText || res.status}`, 'error')) {
-            alert(`로그인 실패: ${errText || res.status}`);
+        const message = formatStatusWithRequestId(`로그인 실패: ${errText || res.status}`, res);
+        if (!setAuthStatus('super-login-status', message, 'error')) {
+            alert(message);
         }
     }
 }
@@ -1549,8 +1556,9 @@ async function userSignup() {
 
     if (!res.ok) {
         const msg = await res.text();
-        if (!setAuthStatus('user-signup-status', `회원가입 실패: ${msg || res.status}`, 'error')) {
-            alert(`회원가입 실패: ${msg || res.status}`);
+        const message = formatStatusWithRequestId(`회원가입 실패: ${msg || res.status}`, res);
+        if (!setAuthStatus('user-signup-status', message, 'error')) {
+            alert(message);
         }
         return;
     }
@@ -1583,8 +1591,9 @@ async function userLogin() {
 
     if (!res.ok) {
         const msg = await res.text();
-        if (!setAuthStatus('user-login-status', `로그인 실패: ${msg || res.status}`, 'error')) {
-            alert(`로그인 실패: ${msg || res.status}`);
+        const message = formatStatusWithRequestId(`로그인 실패: ${msg || res.status}`, res);
+        if (!setAuthStatus('user-login-status', message, 'error')) {
+            alert(message);
         }
         return;
     }
@@ -1676,12 +1685,12 @@ async function bootstrapSuperAdmin() {
         }
     } else {
         const errText = await res.text();
-        if (!setAuthStatus(
-            'super-login-status',
+        const message = formatStatusWithRequestId(
             `계정 생성/재설정 실패: ${errText || res.status}`,
-            'error'
-        )) {
-            alert(`계정 생성/재설정 실패: ${errText || res.status}`);
+            res
+        );
+        if (!setAuthStatus('super-login-status', message, 'error')) {
+            alert(message);
         }
     }
 }
