@@ -78,12 +78,24 @@ function resolveApiBases() {
         }
     };
 
-    const metaApiBase = document.querySelector('meta[name="api-base"]')?.content?.trim();
-    pushBase(metaApiBase);
+    if (typeof APP_CONFIG.apiBase === 'string') {
+        pushBase(APP_CONFIG.apiBase);
+    }
 
-    pushBase(window.API_BASE);
+    (APP_CONFIG.apiBases || []).forEach((base) => pushBase(base));
 
-    pushBase(APP_CONFIG.knownWorkerBase);
+    if (APP_CONFIG.useMetaApiBase !== false) {
+        const metaApiBase = document.querySelector('meta[name="api-base"]')?.content?.trim();
+        pushBase(metaApiBase);
+    }
+
+    if (APP_CONFIG.useGlobalApiBase !== false) {
+        pushBase(window.API_BASE);
+    }
+
+    if (APP_CONFIG.useKnownWorkerBase !== false) {
+        pushBase(APP_CONFIG.knownWorkerBase);
+    }
 
     return bases;
 }
