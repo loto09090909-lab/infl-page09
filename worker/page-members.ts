@@ -124,6 +124,15 @@ export async function createInvite(
   const email = sanitizeString(body?.email, 200);
   const inviteRole = normalizeRole(body?.role) ?? "viewer";
   const expiresAt = sanitizeString(body?.expiresAt, 40);
+  if (expiresAt) {
+    const parsed = Date.parse(expiresAt);
+    if (!Number.isFinite(parsed)) {
+      return errorResponse("expiresAt 형식이 올바르지 않습니다", 400, headers);
+    }
+    if (parsed <= Date.now()) {
+      return errorResponse("expiresAt은 현재 시각 이후여야 합니다", 400, headers);
+    }
+  }
 
   if (!email) {
     return errorResponse("이메일이 필요합니다", 400, headers);
@@ -216,6 +225,12 @@ export async function acceptInvite(
 
   if (!invite) {
     return { error: "초대를 찾을 수 없습니다", status: 404 } as const;
+  }
+  if (invite.expires_at) {
+    const parsed = Date.parse(invite.expires_at);
+    if (Number.isFinite(parsed) && parsed <= Date.now()) {
+      return { error: "초대가 만료되었습니다", status: 410 } as const;
+    }
   }
 
   if (invite.expires_at) {
