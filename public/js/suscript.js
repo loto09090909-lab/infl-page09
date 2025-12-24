@@ -5,7 +5,7 @@ function slugify(value) {
         .replace(/[\s\p{P}\p{S}_]+/gu, '-')
         .replace(/-+/g, '-');
 
-    const cleaned = separated.replace(/[^a-z0-9-]/g, '');
+    const cleaned = separated.replace(/[^\p{L}\p{N}-]/gu, '');
     const collapsed = cleaned.replace(/-+/g, '-').replace(/^-+|-+$/g, '');
 
     if (collapsed) {
@@ -41,6 +41,21 @@ const inferPlatformFromLink = platformHelpers.inferPlatformFromLink || function 
     return null;
 };
 
+const APP_CONFIG = window.APP_CONFIG || {};
+
+const PLAN_LABELS = {
+    free: 'free',
+    basic: 'basic',
+    premium: 'premium',
+};
+
+function normalizePlanId(value) {
+    const trimmed = (value || '').toString().trim().toLowerCase();
+    if (trimmed === 'pro') return 'premium';
+    if (trimmed && PLAN_LABELS[trimmed]) return trimmed;
+    return 'free';
+}
+
 function createPlatformIcon(preset, className = 'platform-icon') {
     if (!preset) return null;
 
@@ -67,29 +82,51 @@ function createPlatformIcon(preset, className = 'platform-icon') {
 
 function resolveApiBases() {
     const bases = [];
-
-    const metaApiBase = document.querySelector('meta[name="api-base"]')?.content?.trim();
-    if (metaApiBase) {
-        bases.push(metaApiBase);
-    }
-
-    if (window.API_BASE) {
-        bases.push(window.API_BASE);
-    }
-
-    const knownWorkerBase = 'https://infl-worker.loto09090909.workers.dev';
-    if (!bases.includes(knownWorkerBase)) {
-        bases.push(knownWorkerBase);
-    }
-
-    if (window.location.hostname.endsWith('pages.dev')) {
-        const guessedWorker = window.location.origin.replace('.pages.dev', '.workers.dev');
-        if (!bases.includes(guessedWorker)) {
-            bases.push(guessedWorker);
+    const pushBase = (value) => {
+        if (!value) return;
+        const normalized = String(value).trim().replace(/\/+$/, '');
+        if (!normalized || normalized.includes('.pages.dev')) return;
+        if (!bases.includes(normalized)) {
+            bases.push(normalized);
         }
+    };
+    const pushPreferredBase = (value) => {
+        if (!value) return;
+        const normalized = String(value).trim().replace(/\/+$/, '');
+        if (!normalized || normalized.includes('.pages.dev')) return;
+        const existingIndex = bases.indexOf(normalized);
+        if (existingIndex !== -1) {
+            bases.splice(existingIndex, 1);
+        }
+        bases.unshift(normalized);
+    };
+
+    if (typeof APP_CONFIG.apiBase === 'string') {
+        pushBase(APP_CONFIG.apiBase);
     }
 
-    bases.push(window.location.origin);
+    (APP_CONFIG.apiBases || []).forEach((base) => pushBase(base));
+
+    if (APP_CONFIG.preferredApiBase) {
+        pushPreferredBase(APP_CONFIG.preferredApiBase);
+    }
+
+    if (APP_CONFIG.useMetaApiBase !== false) {
+        const metaApiBase = document.querySelector('meta[name="api-base"]')?.content?.trim();
+        pushBase(metaApiBase);
+    }
+
+    if (APP_CONFIG.useGlobalApiBase !== false) {
+        pushBase(window.API_BASE);
+    }
+
+    if (APP_CONFIG.useCurrentOriginBase !== false) {
+        pushBase(window.location?.origin);
+    }
+
+    if (APP_CONFIG.useKnownWorkerBase !== false) {
+        pushBase(APP_CONFIG.knownWorkerBase);
+    }
 
     return bases;
 }
@@ -106,6 +143,9 @@ async function apiFetch(
     for (const base of API_BASES) {
         try {
             const res = await fetch(`${base}${path}`, options);
+            if (res.status === 401 || res.status === 403) {
+                setSuperAdminStatus('슈퍼 관리자 세션이 필요합니다. 다시 로그인해주세요.', 'error');
+            }
             if (res.ok) {
                 return res;
             }
@@ -277,6 +317,12 @@ function setSuperAdminStatus(message, tone = 'info') {
     statusEl.className = `status-banner ${tone}`;
 }
 
+function formatStatusWithRequestId(message, res) {
+    if (!res || typeof res.headers?.get !== 'function') return message;
+    const requestId = res.headers.get('X-Request-Id');
+    return requestId ? `${message} (요청 ID: ${requestId})` : message;
+}
+
 function createCustomLinkIcon(url, alt = '') {
     if (!url) return null;
 
@@ -358,7 +404,7 @@ async function submitPage() {
     const description = document.getElementById('pageDescription').value.trim();
     const photoUrl = document.getElementById('pagePhoto').value.trim();
     const adminPassword = document.getElementById('adminPassword').value;
-    const plan = document.getElementById('plan').value || 'free';
+    const plan = normalizePlanId(document.getElementById('plan').value || 'free');
 
     if (!editingPageId && ((!rawSlug && !normalizedSlug) || !adminPassword || !adminEmail)) {
         alert('슬러그, 관리자 이메일, 관리자 비밀번호는 필수 입력입니다.');
@@ -428,8 +474,10 @@ async function submitPage() {
         loadPageList();  // 페이지 목록 갱신
     } else {
         const errText = await res.text();
-        setSuperAdminStatus(`페이지 저장 실패: ${errText || res.status}`, 'error');
-        alert(`페이지 저장 실패: ${errText || res.status}`);
+        setSuperAdminStatus(
+            formatStatusWithRequestId(`페이지 저장 실패: ${errText || res.status}`, res),
+            'error'
+        );
     }
 }
 
@@ -456,7 +504,10 @@ async function loadPageList(page = pageListState.page) {
 
     if (!res.ok) {
         const errText = await res.text();
-        setSuperAdminStatus(`페이지 목록 불러오기 실패: ${errText || res.status}`, 'error');
+        setSuperAdminStatus(
+            formatStatusWithRequestId(`페이지 목록 불러오기 실패: ${errText || res.status}`, res),
+            'error'
+        );
         return;
     }
 
@@ -492,7 +543,7 @@ function renderPageList(pages) {
         <li>
             <div class="page-meta">
                 <strong title="${slugTitle}">${page.profile?.name || page.pageId}</strong>
-                <span class="plan-badge">플랜: ${page.plan || 'free'}</span>
+                <span class="plan-badge">플랜: ${PLAN_LABELS[normalizePlanId(page.plan)]}</span>
             </div>
             <div class="page-actions">
                 <a class="preview-link" href="/${primarySlug}" target="_blank" rel="noopener">페이지 보기</a>
@@ -545,8 +596,10 @@ async function deletePage(pageId) {
         loadPageList();  // 페이지 목록 갱신
     } else {
         const errText = await res.text();
-        setSuperAdminStatus(`페이지 삭제 실패: ${errText || res.status}`, 'error');
-        alert(`페이지 삭제 실패: ${errText || res.status}`);
+        setSuperAdminStatus(
+            formatStatusWithRequestId(`페이지 삭제 실패: ${errText || res.status}`, res),
+            'error'
+        );
     }
 }
 
@@ -564,8 +617,10 @@ async function editPage(pageId) {
 
   if (!res.ok) {
     const errText = await res.text();
-    setSuperAdminStatus(`페이지 정보를 불러오지 못했습니다: ${errText || res.status}`,'error');
-    alert(`페이지 정보를 불러오지 못했습니다: ${errText || res.status}`);
+    setSuperAdminStatus(
+      formatStatusWithRequestId(`페이지 정보를 불러오지 못했습니다: ${errText || res.status}`, res),
+      'error'
+    );
     return;
   }
 
@@ -588,7 +643,7 @@ async function editPage(pageId) {
   document.getElementById('pageDescription').value = page.profile?.description || '';
   document.getElementById('pagePhoto').value = page.profile?.photoUrl || '';
   document.getElementById('adminPassword').value = '';
-  document.getElementById('plan').value = page.plan || 'free';
+  document.getElementById('plan').value = normalizePlanId(page.plan || 'free');
   pageTheme = typeof page.theme === 'string' ? page.theme : 'classic';
   selectedPlatformId = PLATFORM_PRESETS[0]?.id || '';
   document.getElementById('saPlatformHandle').value = '';
@@ -897,14 +952,20 @@ async function submitBulkUpload() {
 
   if (!res.ok) {
     const errText = await res.text();
-    alert(`업로드 실패: ${errText || res.status}`);
+    setSuperAdminStatus(
+      formatStatusWithRequestId(`업로드 실패: ${errText || res.status}`, res),
+      'error'
+    );
     return;
   }
 
   const result = await res.json();
   const summary = result?.summary;
 
-  alert(`업로드 완료: ${summary?.success || 0}개 성공, ${summary?.failed || 0}개 실패`);
+  setSuperAdminStatus(
+    `업로드 완료: ${summary?.success || 0}개 성공, ${summary?.failed || 0}개 실패`,
+    'success'
+  );
   resetBulkUpload();
   loadPageList();
 }

@@ -7,13 +7,21 @@ type ContactField = {
   label: string;
   type: string;
   placeholder?: string;
+  helpText?: string;
   required?: boolean;
   options?: string[];
 };
 
 type ContactSettings = {
   webhookUrl?: string;
+  webhookUrls?: string[];
   enabled?: boolean;
+  formTitle?: string;
+  formDescription?: string;
+  consentText?: string;
+  consentRequired?: boolean;
+  emailRecipients?: string[];
+  emailSubject?: string;
 };
 
 type ContactSubmission = {
@@ -21,6 +29,8 @@ type ContactSubmission = {
   pageId: string;
   submittedAt: string;
   answers: { label: string; type: string; value: string }[];
+  consentChecked?: boolean;
+  deliveryErrors?: string[];
   ip?: string | null;
   userAgent?: string | null;
 };
@@ -66,6 +76,7 @@ async function readContactSchema(env: any, pageId: string): Promise<{
             if (!label || !type || !ALLOWED_CONTACT_TYPES.has(type)) return null;
 
             const placeholder = sanitizeString(field.placeholder, 200);
+            const helpText = sanitizeString(field.helpText, 400);
             const required = field.required === true;
             const options = Array.isArray(field.options)
               ? field.options
@@ -76,26 +87,65 @@ async function readContactSchema(env: any, pageId: string): Promise<{
 
             if ((type === "select" || type === "checkbox") && options.length === 0) return null;
 
-            return {
-              label,
-              type,
-              ...(placeholder ? { placeholder } : {}),
-              ...(required ? { required: true } : {}),
-              ...(options.length ? { options } : {}),
-            } satisfies ContactField;
-          })
-          .filter(Boolean)
+              return {
+                label,
+                type,
+                ...(placeholder ? { placeholder } : {}),
+                ...(helpText ? { helpText } : {}),
+                ...(required ? { required: true } : {}),
+                ...(options.length ? { options } : {}),
+              } satisfies ContactField;
+            })
+            .filter(Boolean)
       : [];
     const settings: ContactSettings = { enabled: false };
     if (parsed?.contactSettings && typeof parsed.contactSettings === "object") {
       const webhookUrl = typeof parsed.contactSettings.webhookUrl === "string"
         ? parsed.contactSettings.webhookUrl.trim()
         : "";
+      const webhookUrls = Array.isArray(parsed.contactSettings.webhookUrls)
+        ? parsed.contactSettings.webhookUrls
+            .map((url: unknown) => (typeof url === "string" ? url.trim() : ""))
+            .filter((url: string) => !!url && (url.startsWith("http://") || url.startsWith("https://")))
+            .slice(0, 5)
+        : [];
       if (webhookUrl && (webhookUrl.startsWith("http://") || webhookUrl.startsWith("https://"))) {
         settings.webhookUrl = webhookUrl;
       }
+      if (webhookUrls.length) {
+        settings.webhookUrls = webhookUrls;
+      }
+      const emailRecipients = Array.isArray(parsed.contactSettings.emailRecipients)
+        ? parsed.contactSettings.emailRecipients
+            .map((email: unknown) => (typeof email === "string" ? email.trim().toLowerCase() : ""))
+            .filter((email: string) => !!email)
+            .slice(0, 10)
+        : [];
+      if (emailRecipients.length) {
+        settings.emailRecipients = emailRecipients;
+      }
 
       settings.enabled = parsed.contactSettings.enabled === true;
+      const formTitle = typeof parsed.contactSettings.formTitle === "string"
+        ? parsed.contactSettings.formTitle.trim()
+        : "";
+      if (formTitle) settings.formTitle = formTitle.slice(0, 120);
+
+      const formDescription = typeof parsed.contactSettings.formDescription === "string"
+        ? parsed.contactSettings.formDescription.trim()
+        : "";
+      if (formDescription) settings.formDescription = formDescription.slice(0, 400);
+
+      const consentText = typeof parsed.contactSettings.consentText === "string"
+        ? parsed.contactSettings.consentText.trim()
+        : "";
+      if (consentText) settings.consentText = consentText.slice(0, 200);
+
+      settings.consentRequired = parsed.contactSettings.consentRequired === true;
+      const emailSubject = typeof parsed.contactSettings.emailSubject === "string"
+        ? parsed.contactSettings.emailSubject.trim()
+        : "";
+      if (emailSubject) settings.emailSubject = emailSubject.slice(0, 120);
     }
     const accessControl =
       parsed?.accessControl && typeof parsed.accessControl === "object"
@@ -188,28 +238,122 @@ async function forwardSubmission(
   submission: ContactSubmission,
   settings: ContactSettings
 ) {
-  const webhookUrl = settings.webhookUrl || env.CONTACT_WEBHOOK_URL;
-  if (!webhookUrl || !(webhookUrl.startsWith("http://") || webhookUrl.startsWith("https://"))) {
-    return;
+  const urls = [
+    settings.webhookUrl,
+    ...(settings.webhookUrls ?? []),
+    env.CONTACT_WEBHOOK_URL,
+  ].filter(Boolean) as string[];
+  const targets = Array.from(new Set(urls)).filter(
+    (url) => url.startsWith("http://") || url.startsWith("https://")
+  );
+  if (!targets.length) {
+    return [] as string[];
   }
 
+  const errors: string[] = [];
+  await Promise.all(
+    targets.map(async (url) => {
+      try {
+        await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            pageId: submission.pageId,
+            submittedAt: submission.submittedAt,
+            answers: submission.answers,
+            consentChecked: submission.consentChecked === true,
+            ip: submission.ip,
+            userAgent: submission.userAgent,
+            id: submission.id,
+          }),
+        });
+      } catch (error) {
+        console.error("contact webhook failed", { url, error });
+        errors.push(`webhook:${url}`);
+      }
+    })
+  );
+  return errors;
+}
+
+async function sendEmailNotification(
+  env: any,
+  submission: ContactSubmission,
+  settings: ContactSettings
+) {
+  const recipients =
+    settings.emailRecipients && settings.emailRecipients.length
+      ? settings.emailRecipients
+      : typeof env.CONTACT_EMAIL_RECIPIENTS === "string"
+      ? env.CONTACT_EMAIL_RECIPIENTS.split(",").map((email: string) => email.trim()).filter(Boolean)
+      : [];
+  if (!recipients.length) return [] as string[];
+
+  const from =
+    typeof env.CONTACT_EMAIL_FROM === "string" && env.CONTACT_EMAIL_FROM.includes("@")
+      ? env.CONTACT_EMAIL_FROM
+      : "";
+  if (!from) {
+    console.warn("contact email skipped: CONTACT_EMAIL_FROM is missing");
+    return ["email:missing_from"];
+  }
+
+  const subject =
+    settings.emailSubject ||
+    (typeof env.CONTACT_EMAIL_SUBJECT === "string" && env.CONTACT_EMAIL_SUBJECT.trim()) ||
+    "새로운 문의가 도착했습니다";
+
+  const lines = [
+    `Page ID: ${submission.pageId}`,
+    `Submitted At: ${submission.submittedAt}`,
+    submission.consentChecked === true ? "Consent: yes" : "Consent: no",
+    "",
+    "Answers:",
+    ...submission.answers.map((answer) => `- ${answer.label}: ${answer.value}`),
+    "",
+    submission.ip ? `IP: ${submission.ip}` : "",
+    submission.userAgent ? `User-Agent: ${submission.userAgent}` : "",
+  ].filter(Boolean);
+
   try {
-    await fetch(webhookUrl, {
+    await fetch("https://api.mailchannels.net/tx/v1/send", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        pageId: submission.pageId,
-        submittedAt: submission.submittedAt,
-        answers: submission.answers,
-        ip: submission.ip,
-        userAgent: submission.userAgent,
-        id: submission.id,
+        personalizations: [
+          {
+            to: recipients.map((email: string) => ({ email })),
+          },
+        ],
+        from: { email: from, name: "Contact Form" },
+        subject,
+        content: [{ type: "text/plain", value: lines.join("\n") }],
       }),
     });
+    return [] as string[];
   } catch (error) {
-    console.error("contact webhook failed", error);
+    console.error("contact email failed", error);
+    return ["email:send_failed"];
+  }
+}
+
+async function recordDeliveryFailures(
+  env: any,
+  submission: ContactSubmission,
+  failures: string[]
+) {
+  if (!failures.length) return;
+  const submissionKey = `contact:${submission.pageId}:${submission.id}`;
+  const raw = await env.PAGE_KV.get(submissionKey);
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw) as ContactSubmission & { deliveryErrors?: string[] };
+    const next = { ...parsed, deliveryErrors: failures };
+    await env.PAGE_KV.put(submissionKey, JSON.stringify(next));
+  } catch (error) {
+    console.error("contact delivery error record failed", error);
   }
 }
 
@@ -268,6 +412,13 @@ export async function submitContact(
   const honeypot = typeof body?.company === "string" ? body.company.trim() : "";
   if (honeypot) {
     return jsonResponse({ ok: true, ignored: true }, 202, headers);
+  }
+
+  if (settings.consentRequired) {
+    const consent = body?.consentChecked === true;
+    if (!consent) {
+      return errorResponse("개인정보 수집 동의가 필요합니다", 422, headers);
+    }
   }
 
   const ip = req.headers.get("CF-Connecting-IP") || req.headers.get("x-forwarded-for");
@@ -343,6 +494,7 @@ export async function submitContact(
     pageId: canonicalPageId,
     submittedAt: new Date().toISOString(),
     answers,
+    consentChecked: body?.consentChecked === true,
     ip,
     userAgent,
   };
@@ -354,7 +506,12 @@ export async function submitContact(
   }
 
   await storeSubmission(env, submission);
-  forwardSubmission(env, submission, settings);
+  const [webhookFailures, emailFailures] = await Promise.all([
+    forwardSubmission(env, submission, settings),
+    sendEmailNotification(env, submission, settings),
+  ]);
+  const deliveryFailures = [...(webhookFailures ?? []), ...(emailFailures ?? [])];
+  await recordDeliveryFailures(env, submission, deliveryFailures);
 
   return jsonResponse({ ok: true, id: submission.id }, 201, headers);
 }

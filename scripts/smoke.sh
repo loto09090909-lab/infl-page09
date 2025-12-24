@@ -104,6 +104,42 @@ PY
 
 curl -sSf -H "Authorization: Bearer $page_admin_token" "$BASE/api/page/$page_id/plan-status" >/dev/null
 
+save_payload=$(cat <<EOF
+{
+  "profile": { "name": "Smoke User", "description": "Smoke test", "photoUrl": "" },
+  "links": [],
+  "privateLinks": [],
+  "contactSchema": [
+    { "label": "이메일", "type": "email", "required": true, "placeholder": "user@example.com" }
+  ],
+  "contactSettings": { "enabled": true, "consentText": "개인정보 수집에 동의합니다.", "consentRequired": true },
+  "slugs": ["$page_id"],
+  "plan": "free",
+  "theme": "classic"
+}
+EOF
+)
+
+curl -sSf -X POST "$BASE/api/page/$page_id/save" \
+  -H "Authorization: Bearer $page_admin_token" \
+  -H "Content-Type: application/json" \
+  -d "$save_payload" >/dev/null
+
+contact_payload=$(cat <<EOF
+{
+  "answers": [{ "label": "이메일", "value": "smoke.user@example.com" }],
+  "consentChecked": true
+}
+EOF
+)
+
+curl -sSf -X POST "$BASE/api/pages/$page_id/contact" \
+  -H "Content-Type: application/json" \
+  -d "$contact_payload" >/dev/null
+
+curl -sSf -H "Authorization: Bearer $page_admin_token" \
+  "$BASE/api/page/$page_id/contact-submissions" >/dev/null
+
 template=$(curl -sSf -X POST "$BASE/api/page/$page_id/private-templates" \
   -H "Authorization: Bearer $page_admin_token" \
   -H "Content-Type: application/json" \

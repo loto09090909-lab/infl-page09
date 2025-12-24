@@ -1,8 +1,14 @@
-import { createSessionToken, hasSessionSecret } from "./auth";
+import { createSessionToken, hasSessionSecret, resolveSessionTtl } from "./auth";
 import { enforcePlanLimit, PlanLimitError } from "./plan-limits";
 import { normalizeSlugs, replaceSlugMap, findConflictingSlug } from "./slug-map";
 import { slugify } from "./slug";
-import { errorResponse, errorResponseWithCode, jsonResponse, parseJsonBody } from "./utils";
+import {
+  errorResponse,
+  errorResponseWithCode,
+  jsonResponse,
+  parseJsonBody,
+  validateEmail,
+} from "./utils";
 
 export type UserRow = {
   id: string;
@@ -30,6 +36,7 @@ const PBKDF2_KEY_LENGTH = 32; // bytes
 const PBKDF2_PREFIX = "pbkdf2";
 const DEFAULT_PLAN = "free";
 const MAX_PAGE_ID_ATTEMPTS = 6;
+const LEGACY_HASH_ENV_KEY = "ALLOW_LEGACY_SHA256";
 
 function bufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
@@ -147,6 +154,14 @@ function isLegacySha256(hash: string) {
   return /^[a-f0-9]{64}$/i.test(hash);
 }
 
+function allowLegacySha256(env: any) {
+  const raw = env?.[LEGACY_HASH_ENV_KEY];
+  if (raw === undefined || raw === null) {
+    return true;
+  }
+  return String(raw).toLowerCase() !== "false";
+}
+
 async function verifyPbkdf2(password: string, stored: string) {
   const parts = stored.split("$");
   if (parts.length !== 4 || parts[0] !== PBKDF2_PREFIX) return false;
@@ -181,17 +196,30 @@ async function verifyLegacySha256(password: string, stored: string) {
   return hex === stored;
 }
 
-export async function verifyPassword(password: string, stored: string | null) {
-  if (!stored) return false;
+export async function verifyPasswordWithUpgrade(
+  env: any,
+  password: string,
+  stored: string | null
+) {
+  if (!stored) return { valid: false } as const;
   if (stored.startsWith(`${PBKDF2_PREFIX}$`)) {
-    return verifyPbkdf2(password, stored);
+    const valid = await verifyPbkdf2(password, stored);
+    return valid ? ({ valid: true } as const) : ({ valid: false } as const);
   }
 
   if (isLegacySha256(stored)) {
-    return verifyLegacySha256(password, stored);
+    if (!allowLegacySha256(env)) {
+      return { valid: false } as const;
+    }
+    const valid = await verifyLegacySha256(password, stored);
+    if (!valid) {
+      return { valid: false } as const;
+    }
+    const upgradedHash = await hashPassword(password);
+    return { valid: true, upgradedHash } as const;
   }
 
-  return false;
+  return { valid: false } as const;
 }
 
 async function getUserByEmail(env: any, email: string) {
@@ -275,15 +303,20 @@ export async function signup(req: Request, env: any, headers: HeadersInit) {
   }
 
   const body = await parseJsonBody<AuthBody>(req);
-  if (!body || typeof body.email !== "string") {
+  if (!body) {
     return errorResponse("이메일을 입력하세요", 400, headers);
   }
-
-  const email = body.email.trim().toLowerCase();
+  const { email, error: emailError } = validateEmail(body.email);
+  if (emailError) {
+    return errorResponse(emailError, 400, headers);
+  }
   const isOAuth = !!(body.oauthProvider && body.oauthId);
 
   if (!isOAuth && typeof body.password !== "string") {
     return errorResponse("비밀번호를 입력하세요", 400, headers);
+  }
+  if (!isOAuth && body.password.trim().length < 8) {
+    return errorResponse("비밀번호는 8자 이상이어야 합니다", 400, headers);
   }
 
   const existing = await getUserByEmail(env, email);
@@ -301,7 +334,8 @@ export async function signup(req: Request, env: any, headers: HeadersInit) {
     }
     throw error;
   }
-  const session = await createSessionToken(env, "user", created.id);
+  const ttlSeconds = resolveSessionTtl(env, "user");
+  const session = await createSessionToken(env, "user", created.id, ttlSeconds);
   return jsonResponse({ ...session, pageId }, 201, headers);
 }
 
@@ -311,11 +345,13 @@ export async function login(req: Request, env: any, headers: HeadersInit) {
   }
 
   const body = await parseJsonBody<AuthBody>(req);
-  if (!body || typeof body.email !== "string") {
+  if (!body) {
     return errorResponse("이메일을 입력하세요", 400, headers);
   }
-
-  const email = body.email.trim().toLowerCase();
+  const { email, error: emailError } = validateEmail(body.email);
+  if (emailError) {
+    return errorResponse(emailError, 400, headers);
+  }
   const user = await getUserByEmail(env, email);
   const normalized = await ensureUserPlan(env, user);
   if (!normalized) {
@@ -326,20 +362,26 @@ export async function login(req: Request, env: any, headers: HeadersInit) {
     return errorResponse("로그인 시도가 일시적으로 제한되었습니다", 423, headers);
   }
 
-  const authResult = await authenticateUser(normalized, body);
-  if (!authResult) {
+  const authResult = await authenticateUser(env, normalized, body);
+  if (!authResult.authenticated) {
     await recordFailure(env, normalized.id);
     return errorResponse("인증에 실패했습니다", 401, headers);
   }
 
   await clearFailures(env, normalized.id);
-  const session = await createSessionToken(env, "user", normalized.id);
+  if (authResult.upgradedHash) {
+    await env.DB.prepare("UPDATE users SET password_hash = ? WHERE id = ?")
+      .bind(authResult.upgradedHash, normalized.id)
+      .run();
+  }
+  const ttlSeconds = resolveSessionTtl(env, "user");
+  const session = await createSessionToken(env, "user", normalized.id, ttlSeconds);
   return jsonResponse(session, 200, headers);
 }
 
 export async function findOrCreateUser(env: any, data: AuthBody) {
-  const email = (data.email || "").trim().toLowerCase();
-  if (!email) {
+  const { email, error: emailError } = validateEmail(data.email);
+  if (emailError || !email) {
     throw new Error("이메일이 필요합니다");
   }
 
@@ -356,7 +398,10 @@ export async function findOrCreateOAuthUser(
   env: any,
   data: { email: string; oauthProvider: string; oauthId: string }
 ) {
-  const email = data.email.trim().toLowerCase();
+  const { email, error: emailError } = validateEmail(data.email);
+  if (emailError || !email) {
+    throw new Error("이메일이 필요합니다");
+  }
   const existing = await getUserByEmail(env, email);
 
   if (existing) {
@@ -389,6 +434,9 @@ export async function findOrCreateOAuthUser(
 }
 
 export async function updateUserPassword(env: any, userId: string, password: string) {
+  if (!password || password.trim().length < 8) {
+    throw new Error("비밀번호는 8자 이상이어야 합니다");
+  }
   const passwordHash = await hashPassword(password);
   await env.DB.prepare("UPDATE users SET password_hash = ? WHERE id = ?")
     .bind(passwordHash, userId)
@@ -396,9 +444,9 @@ export async function updateUserPassword(env: any, userId: string, password: str
 }
 
 export async function authenticateExistingUser(env: any, credentials: AuthBody) {
-  const email = (credentials.email || "").trim().toLowerCase();
-  if (!email) {
-    return { error: "이메일이 필요합니다", status: 400 } as const;
+  const { email, error: emailError } = validateEmail(credentials.email);
+  if (emailError) {
+    return { error: emailError, status: 400 } as const;
   }
 
   const user = await getUserByEmail(env, email);
@@ -411,13 +459,18 @@ export async function authenticateExistingUser(env: any, credentials: AuthBody) 
     return { error: "로그인 시도가 일시적으로 제한되었습니다", status: 423 } as const;
   }
 
-  const authenticated = await authenticateUser(normalized, credentials);
-  if (!authenticated) {
+  const authResult = await authenticateUser(env, normalized, credentials);
+  if (!authResult.authenticated) {
     await recordFailure(env, normalized.id);
     return { error: "인증에 실패했습니다", status: 401 } as const;
   }
 
   await clearFailures(env, normalized.id);
+  if (authResult.upgradedHash) {
+    await env.DB.prepare("UPDATE users SET password_hash = ? WHERE id = ?")
+      .bind(authResult.upgradedHash, normalized.id)
+      .run();
+  }
   return { user: normalized } as const;
 }
 
@@ -438,20 +491,26 @@ export async function deleteUserById(env: any, headers: HeadersInit, userId: str
   return jsonResponse({ success: true, id: userId }, 200, headers);
 }
 
-async function authenticateUser(user: UserRow, credentials: AuthBody) {
+async function authenticateUser(env: any, user: UserRow, credentials: AuthBody) {
   const isOAuth = !!(credentials.oauthProvider && credentials.oauthId);
 
   if (isOAuth) {
-    return (
-      user.oauth_provider === credentials.oauthProvider &&
-      user.oauth_id === credentials.oauthId &&
-      !!user.oauth_provider
-    );
+    return {
+      authenticated:
+        user.oauth_provider === credentials.oauthProvider &&
+        user.oauth_id === credentials.oauthId &&
+        !!user.oauth_provider,
+    };
   }
 
   if (!credentials.password || !user.password_hash) {
-    return false;
+    return { authenticated: false } as const;
   }
 
-  return verifyPassword(credentials.password, user.password_hash);
+  const { valid, upgradedHash } = await verifyPasswordWithUpgrade(
+    env,
+    credentials.password,
+    user.password_hash
+  );
+  return { authenticated: valid, upgradedHash } as const;
 }

@@ -166,6 +166,25 @@ export async function createSessionToken(
   return { token, expiresIn: ttlSeconds };
 }
 
+export function resolveSessionTtl(
+  env: any,
+  role: SessionRole,
+  defaultTtlSeconds = 3600
+) {
+  const roleKeyMap: Record<SessionRole, string> = {
+    super: "SUPER_SESSION_TTL_SECONDS",
+    page: "PAGE_SESSION_TTL_SECONDS",
+    user: "USER_SESSION_TTL_SECONDS",
+  };
+  const raw = Number(env[roleKeyMap[role]] ?? env.SESSION_TTL_SECONDS);
+  let ttl = Number.isFinite(raw) && raw > 0 ? raw : defaultTtlSeconds;
+  const maxRaw = Number(env.SESSION_MAX_TTL_SECONDS);
+  if (Number.isFinite(maxRaw) && maxRaw > 0) {
+    ttl = Math.min(ttl, maxRaw);
+  }
+  return ttl;
+}
+
 export async function verifySessionToken(
   env: any,
   role: SessionRole,

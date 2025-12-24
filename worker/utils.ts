@@ -54,3 +54,78 @@ export async function parseJsonBody<T>(req: Request): Promise<T | null> {
     return null;
   }
 }
+
+export async function parseJsonBodyWithLimit<T>(
+  req: Request,
+  maxBytes: number
+): Promise<{ data: T | null; error?: string }> {
+  const text = await req.text();
+  if (maxBytes > 0 && text.length > maxBytes) {
+    return { data: null, error: "요청 본문이 너무 큽니다" };
+  }
+
+  if (!text.trim()) {
+    return { data: null };
+  }
+
+  try {
+    return { data: JSON.parse(text) as T };
+  } catch (error) {
+    return { data: null };
+  }
+}
+
+export function validatePageId(value: unknown): { pageId?: string; error?: string } {
+  if (typeof value !== "string") {
+    return { error: "pageId는 문자열이어야 합니다" };
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return { error: "pageId가 필요합니다" };
+  }
+  if (trimmed.length > 64) {
+    return { error: "pageId는 64자 이내여야 합니다" };
+  }
+  if (!/^[\p{L}\p{N}-]+$/u.test(trimmed)) {
+    return { error: "pageId는 문자/숫자/하이픈만 사용할 수 있습니다" };
+  }
+  return { pageId: trimmed };
+}
+
+export function validateEmail(value: unknown): { email?: string; error?: string } {
+  if (typeof value !== "string") {
+    return { error: "이메일을 입력하세요" };
+  }
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) {
+    return { error: "이메일을 입력하세요" };
+  }
+  if (trimmed.length > 254) {
+    return { error: "이메일이 너무 깁니다" };
+  }
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(trimmed)) {
+    return { error: "이메일 형식이 올바르지 않습니다" };
+  }
+  return { email: trimmed };
+}
+
+export function validatePlanId(value: unknown): { planId?: string; error?: string } {
+  if (value === undefined || value === null) {
+    return { planId: undefined };
+  }
+  if (typeof value !== "string") {
+    return { error: "plan은 문자열이어야 합니다" };
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return { planId: undefined };
+  }
+  if (trimmed.length > 30) {
+    return { error: "plan 값이 너무 깁니다" };
+  }
+  if (!/^[a-z0-9_-]+$/i.test(trimmed)) {
+    return { error: "plan 값 형식이 올바르지 않습니다" };
+  }
+  return { planId: trimmed };
+}

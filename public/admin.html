@@ -186,6 +186,7 @@
                     <option value="checkbox">체크박스</option>
                 </select>
                 <input id="contactPlaceholder" placeholder="placeholder (선택)">
+                <input id="contactHelpText" placeholder="도움말 (선택)">
                 <input id="contactOptions" placeholder="옵션 (쉼표로 구분, select/checkbox)">
                 <label class="inline-toggle">
                     <input id="contactRequired" type="checkbox">
@@ -199,9 +200,26 @@
                     문의 섹션 공개 (기본 비활성화)
                 </label>
                 <p class="help-text">켜면 방문자가 퍼블릭 페이지에서 문의 폼을 볼 수 있습니다.</p>
+                <label for="contactFormTitle">폼 제목 (선택)</label>
+                <input id="contactFormTitle" type="text" placeholder="예: 문의하기">
+                <label for="contactFormDescription">폼 안내문 (선택)</label>
+                <textarea id="contactFormDescription" rows="2" placeholder="문의 내용을 입력해주세요."></textarea>
+                <label for="contactConsentText">동의 문구 (선택)</label>
+                <input id="contactConsentText" type="text" placeholder="개인정보 수집/이용에 동의합니다.">
+                <label class="inline-toggle">
+                    <input id="contactConsentRequired" type="checkbox">
+                    동의 필수
+                </label>
                 <label for="contactWebhook">웹훅 URL (선택)</label>
                 <input id="contactWebhook" type="url" placeholder="https://example.com/webhook">
                 <p class="help-text">설정하면 컨택트 제출 시 JSON 페이로드를 이 URL로 전송합니다.</p>
+                <label for="contactWebhookUrls">웹훅 URL 목록 (줄바꿈)</label>
+                <textarea id="contactWebhookUrls" rows="3" placeholder="https://example.com/webhook1&#10;https://example.com/webhook2"></textarea>
+                <p class="help-text">여러 채널로 동시에 전달하려면 URL을 줄바꿈으로 추가하세요.</p>
+                <label for="contactEmailRecipients">이메일 수신자 (쉼표 또는 줄바꿈)</label>
+                <textarea id="contactEmailRecipients" rows="2" placeholder="team@example.com&#10;ops@example.com"></textarea>
+                <label for="contactEmailSubject">이메일 제목 (선택)</label>
+                <input id="contactEmailSubject" type="text" placeholder="새로운 문의가 도착했습니다">
             </div>
             <div id="contact-schema-list" class="contact-schema-list"></div>
         </section>

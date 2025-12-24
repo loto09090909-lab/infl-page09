@@ -26,6 +26,39 @@ export type PlanLimitRow = {
   stats_retention_days: number;
 };
 
+const PLAN_DEFAULTS: Record<string, Omit<PlanLimitRow, "plan_id">> = {
+  free: {
+    can_create_pages: 1,
+    can_change_slug: 0,
+    can_create_private_links: 0,
+    max_pages: 1,
+    max_private_links: 0,
+    max_contact_fields: 5,
+    can_export_csv: 0,
+    stats_retention_days: 7,
+  },
+  basic: {
+    can_create_pages: 1,
+    can_change_slug: 1,
+    can_create_private_links: 1,
+    max_pages: 3,
+    max_private_links: 10,
+    max_contact_fields: 15,
+    can_export_csv: 1,
+    stats_retention_days: 30,
+  },
+  premium: {
+    can_create_pages: 1,
+    can_change_slug: 1,
+    can_create_private_links: 1,
+    max_pages: 10,
+    max_private_links: 50,
+    max_contact_fields: 50,
+    can_export_csv: 1,
+    stats_retention_days: 365,
+  },
+};
+
 export async function getPlanLimits(env: any, planId?: string | null): Promise<PlanLimitRow> {
   const effectivePlanId = (planId || "default").trim() || "default";
   const row = await env.DB.prepare(
@@ -34,19 +67,11 @@ export async function getPlanLimits(env: any, planId?: string | null): Promise<P
     .bind(effectivePlanId)
     .first<PlanLimitRow>();
 
-  return (
-    row || {
-      plan_id: effectivePlanId,
-      can_create_pages: 1,
-      can_change_slug: 1,
-      can_create_private_links: 1,
-      max_pages: 1,
-      max_private_links: 5,
-      max_contact_fields: 10,
-      can_export_csv: 0,
-      stats_retention_days: 30,
-    }
-  );
+  if (row) return row;
+
+  const defaults =
+    PLAN_DEFAULTS[effectivePlanId] ?? PLAN_DEFAULTS.free;
+  return { plan_id: effectivePlanId, ...defaults };
 }
 
 export async function enforcePlanLimit(env: any, planId: unknown, action: PlanAction) {
