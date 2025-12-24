@@ -419,8 +419,6 @@ async function primeApiBaseSelection() {
     return null;
 }
 
-const platformHelpers = window.PlatformHelpers || {};
-const PLATFORM_PRESETS = platformHelpers.PLATFORM_PRESETS || [];
 const getPlatformPreset = platformHelpers.getPlatformPreset || ((platformId) => PLATFORM_PRESETS.find((preset) => preset.id === platformId));
 const buildPlatformUrl = platformHelpers.buildPlatformUrl || function (preset, handle) {
     const cleanHandle = (handle || '').trim().replace(/^\/+/, '');
