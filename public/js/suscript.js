@@ -43,6 +43,19 @@ const inferPlatformFromLink = platformHelpers.inferPlatformFromLink || function 
 
 const APP_CONFIG = window.APP_CONFIG || {};
 
+const PLAN_LABELS = {
+    free: 'free',
+    basic: 'basic',
+    premium: 'premium',
+};
+
+function normalizePlanId(value) {
+    const trimmed = (value || '').toString().trim().toLowerCase();
+    if (trimmed === 'pro') return 'premium';
+    if (trimmed && PLAN_LABELS[trimmed]) return trimmed;
+    return 'free';
+}
+
 function createPlatformIcon(preset, className = 'platform-icon') {
     if (!preset) return null;
 
@@ -391,7 +404,7 @@ async function submitPage() {
     const description = document.getElementById('pageDescription').value.trim();
     const photoUrl = document.getElementById('pagePhoto').value.trim();
     const adminPassword = document.getElementById('adminPassword').value;
-    const plan = document.getElementById('plan').value || 'free';
+    const plan = normalizePlanId(document.getElementById('plan').value || 'free');
 
     if (!editingPageId && ((!rawSlug && !normalizedSlug) || !adminPassword || !adminEmail)) {
         alert('슬러그, 관리자 이메일, 관리자 비밀번호는 필수 입력입니다.');
@@ -530,7 +543,7 @@ function renderPageList(pages) {
         <li>
             <div class="page-meta">
                 <strong title="${slugTitle}">${page.profile?.name || page.pageId}</strong>
-                <span class="plan-badge">플랜: ${page.plan || 'free'}</span>
+                <span class="plan-badge">플랜: ${PLAN_LABELS[normalizePlanId(page.plan)]}</span>
             </div>
             <div class="page-actions">
                 <a class="preview-link" href="/${primarySlug}" target="_blank" rel="noopener">페이지 보기</a>
@@ -630,7 +643,7 @@ async function editPage(pageId) {
   document.getElementById('pageDescription').value = page.profile?.description || '';
   document.getElementById('pagePhoto').value = page.profile?.photoUrl || '';
   document.getElementById('adminPassword').value = '';
-  document.getElementById('plan').value = page.plan || 'free';
+  document.getElementById('plan').value = normalizePlanId(page.plan || 'free');
   pageTheme = typeof page.theme === 'string' ? page.theme : 'classic';
   selectedPlatformId = PLATFORM_PRESETS[0]?.id || '';
   document.getElementById('saPlatformHandle').value = '';
