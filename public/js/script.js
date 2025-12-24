@@ -1,5 +1,5 @@
 /**
- * 0. 보안 로직: 즉시 실행 (파일 최상단 유지)
+ * [0] 즉시 실행 보안 로직 (최우선 실행)
  */
 (function checkAuth() {
     const isPageAdmin = document.body?.dataset?.pageRole === 'page-admin';
@@ -8,65 +8,60 @@
         if (!token) {
             const pid = new URLSearchParams(window.location.search).get('pageId') || "";
             window.location.replace(`/page-admin-login.html${pid ? '?pageId=' + pid : ''}`);
-            return;
         }
     }
 })();
 
 /**
- * 1. 상태 및 설정 변수 선언 (가장 먼저 선언되어야 함)
+ * [1] 전역 설정 및 상태 변수
  */
 window.APP_CONFIG = window.APP_CONFIG || {};
 const APP_CONFIG = window.APP_CONFIG;
+
 const urlParams = new URLSearchParams(window.location.search);
 const queryApiBase = urlParams.get("api_base") || urlParams.get("apiBase");
-
-const storedManualBase =
-    (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('sessionManualApiBase')) ||
-    (typeof localStorage !== 'undefined' && localStorage.getItem('manualApiBase')) ||
-    null;
-
+const storedManualBase = (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('sessionManualApiBase')) ||
+                         (typeof localStorage !== 'undefined' && localStorage.getItem('manualApiBase')) || null;
 const isPagesDevBase = (value) => typeof value === 'string' && value.includes('.pages.dev');
-let MANUAL_API_BASE = storedManualBase && !isPagesDevBase(storedManualBase) ? storedManualBase : null;
 
-let adminLinks = [];
-let selectedPlatformId = ''; 
+let MANUAL_API_BASE = (storedManualBase && !isPagesDevBase(storedManualBase)) ? storedManualBase : null;
+
+// 상태 변수들 (중복 선언 제거됨)
+let adminLinks = []; 
 let adminSlugs = [];
 let adminContactSchema = [];
 let contactSettings = { enabled: false };
 let pagePlan = 'free';
+let pagePlanStatus = null;
+let contactSubmissions = [];
 let pageTheme = 'classic';
 let privateTemplates = [];
-let currentPageId = new URLSearchParams(window.location.search).get('pageId') || '';
+let currentPageId = urlParams.get('pageId') || '';
+let selectedPlatformId = ''; 
+let dragState = null;
+let userViewReady = document.getElementById("links-list") !== null;
+
+const MAX_CONTACT_FIELDS = 50;
+const PLAN_LIMITS = { free: 8, basic: 25, premium: 100 };
 
 /**
- * 2. 핵심 유틸리티 함수
+ * [2] API 통신 및 데이터 로드
  */
 async function getApiBase() {
     if (APP_CONFIG.apiBase && !APP_CONFIG.apiBase.startsWith('__')) {
         return APP_CONFIG.apiBase.replace(/\/+$/, '');
     }
-    if (MANUAL_API_BASE) return MANUAL_API_BASE;
+    if (MANUAL_API_BASE) return MANUAL_API_BASE.replace(/\/+$/, '');
     return window.location.origin;
 }
 
-// 통합 apiFetch (인증 체크 및 리다이렉트 포함)
 async function apiFetch(path, options = {}) {
     const base = await getApiBase();
     const token = sessionStorage.getItem('page_admin_token');
-    
-    options.headers = {
-        ...options.headers,
-        'Accept': 'application/json'
-    };
-
-    if (token) {
-        options.headers['Authorization'] = `Bearer ${token}`;
-    }
+    options.headers = { 'Accept': 'application/json', ...options.headers };
+    if (token) options.headers['Authorization'] = `Bearer ${token}`;
 
     const res = await fetch(`${base}${path}`, options);
-
-    // 401 발생 시 즉시 로그인으로 리다이렉트
     if (res.status === 401 && document.body?.dataset?.pageRole === 'page-admin') {
         sessionStorage.removeItem('page_admin_token');
         window.location.replace('/page-admin-login.html');
@@ -74,34 +69,26 @@ async function apiFetch(path, options = {}) {
     return res;
 }
 
+/**
+ * [3] 탭 전환 및 UI 로직
+ */
 function switchTab(tabId) {
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-
     const target = document.getElementById(tabId);
     if (target) target.classList.add('active');
-    
-    if (window.event && window.event.currentTarget) {
-        window.event.currentTarget.classList.add('active');
-    }
+    if (window.event && window.event.currentTarget) window.event.currentTarget.classList.add('active');
 
+    // 탭별 데이터 로드
     if (tabId === 'tab-contact') fetchContactSubmissions();
-    if (tabId === 'tab-advanced') {
-        loadPrivateTemplates();
-        renderApiDebugPanel('api-debug');
-    }
+    if (tabId === 'tab-advanced') loadPrivateTemplates();
+    if (tabId === 'tab-links') renderAdminLinks();
 }
 
 /**
- * 3. 초기화 로직 (DOMContentLoaded)
+ * [4] 초기화 (DOMContentLoaded)
  */
 document.addEventListener('DOMContentLoaded', () => {
-    // 플랫폼 프리셋 초기화 (platforms.js 로드 대기)
-    if (window.PlatformHelpers && window.PlatformHelpers.PLATFORM_PRESETS) {
-        selectedPlatformId = window.PlatformHelpers.PLATFORM_PRESETS[0].id;
-    }
-
-    // 환경 라벨 표시
     if (APP_CONFIG.envLabel && !APP_CONFIG.envLabel.startsWith('__')) {
         const badge = document.getElementById('env-badge');
         if (badge) {
@@ -110,35 +97,66 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // 관리자 페이지 데이터 로드
     if (document.body?.dataset?.pageRole === 'page-admin') {
-        if (currentPageId) {
-            loadPageData(currentPageId, { includeAdmin: true });
+        if (currentPageId) loadPageData(currentPageId, { includeAdmin: true });
+        if (window.PlatformHelpers?.PLATFORM_PRESETS) {
+            selectedPlatformId = window.PlatformHelpers.PLATFORM_PRESETS[0].id;
         }
         renderPlatformSelector();
         renderThemeOptions();
+        renderContactPresets();
+        renderSlugEditor();
     }
 });
 
 /**
- * 4. 기능 함수들 (기존 로직 유지하되 선언 오류 수정)
+ * [5] 관리 기능 함수들 (필수 로직만 요약 통합)
  */
+
 function renderPlatformSelector() {
     const selector = document.getElementById('platform-selector');
     const presets = window.PlatformHelpers?.PLATFORM_PRESETS || [];
     if (!selector || !presets.length) return;
-
     selector.innerHTML = '';
     presets.forEach((preset) => {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = `platform-button${preset.id === selectedPlatformId ? ' active' : ''}`;
-        button.innerHTML = `<span>${preset.label}</span>`;
-        button.onclick = () => {
-            selectedPlatformId = preset.id;
-            renderPlatformSelector();
-        };
-        selector.appendChild(button);
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = `platform-button ${preset.id === selectedPlatformId ? 'active' : ''}`;
+        btn.innerHTML = `<span>${preset.label}</span>`;
+        btn.onclick = () => { selectedPlatformId = preset.id; renderPlatformSelector(); updatePlatformPrefix(); };
+        selector.appendChild(btn);
+    });
+}
+
+function updatePlatformPrefix() {
+    const prefixEl = document.getElementById('platform-prefix');
+    const presets = window.PlatformHelpers?.PLATFORM_PRESETS || [];
+    const preset = presets.find(p => p.id === selectedPlatformId) || presets[0];
+    if (prefixEl) prefixEl.innerText = preset?.baseUrl || '';
+}
+
+function addPlatformLink() {
+    const handle = document.getElementById('platformHandle')?.value;
+    const name = document.getElementById('platformLinkName')?.value;
+    const presets = window.PlatformHelpers?.PLATFORM_PRESETS || [];
+    const preset = presets.find(p => p.id === selectedPlatformId);
+    if (!handle || !name || !preset) return alert('아이디와 이름을 입력하세요.');
+    adminLinks.push({ title: name, url: preset.baseUrl + handle, platformId: preset.id, handle: handle, isPrivate: false });
+    renderAdminLinks();
+}
+
+function renderAdminLinks() {
+    const list = document.getElementById('link-list');
+    if (!list) return;
+    list.innerHTML = '';
+    adminLinks.forEach((link, idx) => {
+        const li = document.createElement('li');
+        li.className = 'link-item';
+        li.innerHTML = `
+            <div class="link-info"><strong>${link.title || link.url}</strong></div>
+            <button class="ghost" onclick="adminLinks.splice(${idx}, 1); renderAdminLinks();">삭제</button>
+        `;
+        list.appendChild(li);
     });
 }
 
