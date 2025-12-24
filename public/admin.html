@@ -8,43 +8,15 @@
     <link rel="stylesheet" href="css/style.css">
     <script src="/config.js"></script>
     <style>
-        /* 관리자 전용 탭 스타일 */
-        .admin-tabs {
-            display: flex;
-            gap: 5px;
-            margin: 20px auto;
-            max-width: 1200px;
-            padding: 0 20px;
-            border-bottom: 2px solid #e2e8f0;
-            position: sticky;
-            top: 0;
-            background: #ffffff;
-            z-index: 100;
-        }
-        .tab-btn {
-            padding: 14px 20px;
-            border: none;
-            background: none;
-            cursor: pointer;
-            font-weight: 600;
-            color: #64748b;
-            border-bottom: 3px solid transparent;
-            transition: all 0.2s;
-        }
+        .admin-tabs { display: flex; gap: 5px; margin: 20px auto; max-width: 1200px; padding: 0 20px; border-bottom: 2px solid #e2e8f0; position: sticky; top: 0; background: #fff; z-index: 100; }
+        .tab-btn { padding: 14px 20px; border: none; background: none; cursor: pointer; font-weight: 600; color: #64748b; border-bottom: 3px solid transparent; transition: all 0.2s; }
         .tab-btn:hover { color: #16a34a; }
-        .tab-btn.active {
-            color: #16a34a;
-            border-bottom: 3px solid #16a34a;
-        }
+        .tab-btn.active { color: #16a34a; border-bottom: 3px solid #16a34a; }
         .tab-content { display: none; animation: fadeIn 0.3s ease; }
         .tab-content.active { display: block; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; } }
-
-        /* 미리보기 플로팅 스타일 (선택사항) */
-        .preview-sticky {
-            position: sticky;
-            top: 80px;
-        }
+        .grid-container { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        @media (max-width: 768px) { .grid-container { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body data-page-role="page-admin" class="page-admin">
@@ -55,7 +27,7 @@
             <div class="page-context">
                 <span class="badge">ID: <strong id="current-page-id">-</strong></span>
                 <span class="badge" id="current-slug-badge">슬러그: -</span>
-                <a id="public-link" class="ghost-link" href="#" target="_blank" rel="noopener">🔗 공개 페이지 보기</a>
+                <a id="public-link" class="ghost-link" href="#" target="_blank">🔗 공개 페이지 보기</a>
                 <span id="env-badge" class="env-badge" style="display: none;"></span>
             </div>
         </div>
@@ -65,7 +37,7 @@
         </div>
     </header>
 
-    <div id="save-status" class="alert" role="status" aria-live="polite" style="display: none;"></div>
+    <div id="save-status" class="alert" style="display: none;"></div>
 
     <nav class="admin-tabs">
         <button class="tab-btn active" onclick="switchTab('tab-profile')">프로필 & 테마</button>
@@ -76,205 +48,65 @@
 
     <main class="layout">
         <section id="tab-profile" class="tab-content active">
-            <section class="card onboarding-card" id="onboarding-card" style="display: none; margin-bottom: 20px;">
-                <div class="card-header">
-                    <div>
-                        <h3>환영합니다! 기본 템플릿으로 시작하세요</h3>
-                        <p class="help-text">버튼 하나로 추천 링크와 컨택트 구성을 불러올 수 있습니다.</p>
-                    </div>
-                    <button class="primary" onclick="applyDefaultTemplate()">템플릿 적용</button>
-                </div>
-            </section>
-
-            <div class="grid-container" style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+            <div class="grid-container">
                 <section class="card profile-edit">
-                    <div class="card-header">
-                        <h2>프로필 정보</h2>
-                    </div>
+                    <div class="card-header"><h2>프로필 정보</h2></div>
                     <div class="form-stack">
-                        <label>페이지 이름</label>
-                        <input id="name" placeholder="표시될 이름">
-                        <label>페이지 설명</label>
-                        <textarea id="desc" rows="3" placeholder="소개글을 입력하세요"></textarea>
-                        <label>프로필 사진 URL</label>
-                        <input id="photo" placeholder="https://...">
+                        <label>페이지 이름</label><input id="name" placeholder="표시될 이름">
+                        <label>페이지 설명</label><textarea id="desc" rows="3" placeholder="소개글"></textarea>
+                        <label>프로필 사진 URL</label><input id="photo" placeholder="https://...">
                     </div>
                 </section>
-
                 <section class="card theme-card">
-                    <div class="card-header">
-                        <h2>디자인 테마</h2>
-                    </div>
+                    <div class="card-header"><h2>디자인 테마</h2></div>
                     <div id="theme-options" class="theme-grid"></div>
                 </section>
             </div>
-
-            <section class="card usage-card" style="margin-top: 20px;">
-                <div class="card-header">
-                    <h3>플랜 및 사용량</h3>
-                    <button class="ghost" onclick="requestUpgrade()">업그레이드 문의</button>
-                </div>
-                <div class="usage-meter">
-                    <div class="meter-labels">
-                        <span id="plan-label" class="badge">-</span>
-                        <span id="usage-count">0 / 0</span>
-                    </div>
-                    <div class="meter-bar"><div id="usage-bar" class="meter-bar-inner"></div></div>
-                    <p id="usage-help" class="help-text"></p>
-                </div>
-            </section>
         </section>
 
         <section id="tab-links" class="tab-content">
             <section class="card link-management">
-                <div class="card-header">
-                    <h2>링크 목록 관리</h2>
-                    <p class="help-text">드래그하거나 ▲▼ 버튼으로 순서를 바꿀 수 있습니다.</p>
-                </div>
-
-                <div class="platform-link-box" style="background: #f8fafc; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-                    <label>플랫폼 빠른 추가</label>
+                <div class="card-header"><h2>링크 목록</h2></div>
+                <div class="platform-link-box">
                     <div id="platform-selector" class="platform-selector"></div>
                     <div class="platform-inputs">
-                        <input id="platformHandle" placeholder="아이디/핸들">
-                        <input id="platformLinkName" placeholder="표시 이름">
-                        <button class="secondary" onclick="addPlatformLink()">추가</button>
+                        <input id="platformHandle" placeholder="아이디"><input id="platformLinkName" placeholder="이름">
+                        <button onclick="addPlatformLink()">플랫폼 추가</button>
                     </div>
                 </div>
-
-                <div class="custom-link-box" style="margin-bottom: 20px;">
-                    <label>직접 입력</label>
-                    <div class="inline-inputs">
-                        <input id="customLinkName" placeholder="이름">
-                        <input id="customLinkUrl" placeholder="URL (http...)">
-                        <button class="ghost" onclick="addCustomLink()">커스텀 링크 추가</button>
-                    </div>
-                </div>
-
                 <ul id="link-list" class="link-list"></ul>
-                <div id="private-links-summary" class="private-links-summary"></div>
             </section>
         </section>
 
         <section id="tab-contact" class="tab-content">
-            <div class="grid-container" style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+            <div class="grid-container">
                 <section class="card contact-card">
-                    <div class="card-header">
-                        <h2>문의 폼 설정</h2>
-                        <div id="contact-presets" class="preset-row"></div>
-                    </div>
-                    
-                    <div class="form-stack" style="margin-bottom: 15px; padding: 10px; background: #f1f5f9; border-radius: 8px;">
-                        <label>새 필드 추가</label>
-                        <div class="inline-inputs">
-                            <input id="contactLabel" placeholder="라벨">
-                            <select id="contactType">
-                                <option value="text">텍스트</option>
-                                <option value="textarea">긴 답변</option>
-                                <option value="select">선택지</option>
-                                <option value="checkbox">체크박스</option>
-                            </select>
-                            <button class="primary" onclick="addContactField()">필드 추가</button>
-                        </div>
-                    </div>
-
+                    <div class="card-header"><h2>문의 폼 설정</h2></div>
                     <div class="contact-settings form-stack">
-                        <label class="inline-toggle">
-                            <input id="contactEnabled" type="checkbox"> <b>문의 섹션 활성화</b>
-                        </label>
-                        <label>폼 제목</label>
-                        <input id="contactFormTitle" type="text" placeholder="문의하기">
-                        <label>웹훅 알림 URL (Discord/Slack 등)</label>
-                        <input id="contactWebhook" type="url" placeholder="https://...">
+                        <label class="inline-toggle"><input id="contactEnabled" type="checkbox"> <b>문의 섹션 활성화</b></label>
+                        <input id="contactFormTitle" placeholder="폼 제목">
+                        <input id="contactWebhook" placeholder="웹훅 URL">
                     </div>
-                    
-                    <div id="contact-schema-list" class="contact-schema-list" style="margin-top: 15px;"></div>
+                    <div id="contact-schema-list"></div>
                 </section>
-
                 <section class="card" id="contact-inbox-card">
-                    <div class="card-header">
-                        <h2>수신된 문의 내역</h2>
-                        <div class="card-actions">
-                            <button class="ghost" onclick="downloadContactCsv()">CSV</button>
-                            <button class="ghost" onclick="fetchContactSubmissions()">새로고침</button>
-                        </div>
-                    </div>
-                    <div id="contact-submission-status"></div>
+                    <div class="card-header"><h2>문의 내역</h2></div>
                     <ul id="contact-submission-list" class="contact-submission-list"></ul>
                 </section>
             </div>
         </section>
 
         <section id="tab-advanced" class="tab-content">
-            <div class="grid-container" style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-                <section class="card slug-card">
-                    <div class="card-header">
-                        <h2>주소(슬러그) 관리</h2>
-                    </div>
-                    <div class="form-stack">
-                        <label>대표 주소</label>
-                        <input id="primary-slug-input" placeholder="my-page">
-                        <label>추가 별칭</label>
-                        <div class="inline-inputs">
-                            <input id="slug-alias-input" placeholder="alias-name">
-                            <button class="secondary" onclick="addSlugAlias()">별칭 추가</button>
-                        </div>
-                        <div id="slug-chip-list" class="pill-list" style="margin-top: 10px;"></div>
-                    </div>
-                </section>
-
-                <section class="card private-template-card">
-                    <div class="card-header">
-                        <h2>프라이빗 링크 템플릿</h2>
-                    </div>
-                    <div class="form-stack">
-                        <input id="template-name" placeholder="템플릿 이름">
-                        <div class="inline-inputs">
-                            <input id="template-maxuses" type="number" placeholder="횟수">
-                            <button class="primary" onclick="createPrivateTemplate()">템플릿 생성</button>
-                        </div>
-                        <ul id="private-template-list" class="link-list" style="margin-top: 15px;"></ul>
-                    </div>
-                </section>
-            </div>
-            
-            <section class="card api-card" id="api-debug" style="margin-top: 20px;"></section>
-        </section>
-
-        <section class="card preview-card" style="margin-top: 30px; border: 2px solid #16a34a;">
-            <div class="card-header">
-                <h2>실시간 미리보기</h2>
-                <p class="help-text">저장 전 디자인을 확인하세요.</p>
-            </div>
-            <div class="preview theme-scope">
-                <section class="user-card preview-user-card">
-                    <div class="profile user-profile">
-                        <img class="profile-photo" alt="사진">
-                        <p class="profile-description"></p>
-                    </div>
-                    <div class="links user-links">
-                        <ul id="links-list"></ul>
-                    </div>
-                </section>
-            </div>
+            <section class="card slug-card">
+                <h2>슬러그 관리</h2>
+                <input id="primary-slug-input" placeholder="대표 슬러그">
+                <div id="slug-chip-list" class="pill-list"></div>
+            </section>
+            <section class="card api-card" id="api-debug"></section>
         </section>
     </main>
 
     <script src="js/platforms.js"></script>
     <script src="js/script.js"></script>
-    <script>
-        // 탭 전환 함수
-        function switchTab(tabId) {
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-            
-            document.getElementById(tabId).classList.add('active');
-            event.currentTarget.classList.add('active');
-
-            // 특정 탭 진입 시 데이터 새로고침
-            if (tabId === 'tab-contact') fetchContactSubmissions();
-            if (tabId === 'tab-advanced') loadPrivateTemplates();
-        }
-    </script>
 </body>
 </html>
