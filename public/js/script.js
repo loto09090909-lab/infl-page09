@@ -1,54 +1,36 @@
 window.APP_CONFIG = window.APP_CONFIG || {};
 const APP_CONFIG = window.APP_CONFIG;
 
-const urlParams = new URLSearchParams(window.location.search);
-const queryApiBase = urlParams.get("api_base") || urlParams.get("apiBase");
-
-const storedManualBase =
-    (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('sessionManualApiBase')) ||
-    (typeof localStorage !== 'undefined' && localStorage.getItem('manualApiBase')) ||
-    null;
-const isPagesDevBase = (value) => typeof value === 'string' && value.includes('.pages.dev');
-let MANUAL_API_BASE = storedManualBase && !isPagesDevBase(storedManualBase) ? storedManualBase : null;
-
-// API 베이스를 결정하는 핵심 함수 (환경 변수 우선)
+// API 베이스 결정
 async function getApiBase() {
-    // 1. 빌드 타임에 주입된 apiBase가 유효하면 최우선 사용
     if (APP_CONFIG.apiBase && !APP_CONFIG.apiBase.startsWith('__')) {
         return APP_CONFIG.apiBase.replace(/\/+$/, '');
     }
-
-    // 2. 쿼리 파라미터 오버라이드 (디버깅용)
     const urlParams = new URLSearchParams(window.location.search);
     const queryApiBase = urlParams.get("api_base") || urlParams.get("apiBase");
-    if (APP_CONFIG.allowQueryApiBase !== false && queryApiBase) {
-        return queryApiBase.trim().replace(/\/+$/, '');
-    }
+    if (queryApiBase) return queryApiBase.trim().replace(/\/+$/, '');
 
-    // 3. 기존 수동 설정 또는 브라우저 저장소 확인
-    const storedManualBase =
-        (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('sessionManualApiBase')) ||
-        (typeof localStorage !== 'undefined' && localStorage.getItem('manualApiBase')) ||
-        null;
-    
+    const storedManualBase = (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('sessionManualApiBase')) || null;
     if (storedManualBase) return storedManualBase.replace(/\/+$/, '');
 
-    // 4. Fallback: 현재 오리진 사용
     return window.location.origin;
 }
 
-// 환경 라벨 배지 표시 로직
-function applyRuntimeOverrides() {
-    if (APP_CONFIG.envLabel && !APP_CONFIG.envLabel.startsWith('__')) {
-        const badge = document.getElementById('env-badge');
-        if (badge) {
-            badge.textContent = APP_CONFIG.envLabel;
-            badge.style.display = 'block';
-        }
+// 공통 fetch 함수
+async function apiFetch(path, options = {}) {
+    const base = await getApiBase();
+    try {
+        const res = await fetch(`${base}${path}`, options);
+        return res;
+    } catch (err) {
+        console.error("Fetch 에러:", err);
+        throw err;
     }
 }
 
-// 탭 전환 로직 (HTML에서 호출)
+/**
+ * 탭 전환 핵심 함수
+ */
 function switchTab(tabId) {
     // 1. 모든 탭 콘텐츠 숨김
     const contents = document.querySelectorAll('.tab-content');
@@ -62,21 +44,30 @@ function switchTab(tabId) {
     const targetContent = document.getElementById(tabId);
     if (targetContent) {
         targetContent.classList.add('active');
+    } else {
+        console.warn(`Tab content not found: ${tabId}`);
     }
 
-    // 4. 클릭된 버튼 활성화 (이벤트 객체 활용)
-    if (event && event.currentTarget) {
-        event.currentTarget.classList.add('active');
+    // 4. 클릭된 버튼 활성화 (이벤트 객체가 있을 때만)
+    if (window.event && window.event.currentTarget && window.event.currentTarget.classList) {
+        window.event.currentTarget.classList.add('active');
     }
 
-    // 5. 탭별 데이터 로드
-    if (tabId === 'tab-contact') fetchContactSubmissions();
-    if (tabId === 'tab-advanced') loadPrivateTemplates();
+    // 5. 탭별 데이터 리로드
+    if (tabId === 'tab-contact') {
+        if (typeof fetchContactSubmissions === 'function') fetchContactSubmissions();
+    }
+    if (tabId === 'tab-advanced') {
+        if (typeof loadPrivateTemplates === 'function') loadPrivateTemplates();
+    }
+    if (tabId === 'tab-links') {
+        if (typeof renderAdminLinks === 'function') renderAdminLinks();
+    }
 }
 
-// 기존 에러 발생 지점 (64번 라인 부근) 수정
+// 페이지 초기화 로직 통합
 document.addEventListener('DOMContentLoaded', () => {
-    // 환경 배지 등 기본 로직
+    // 1. 환경 배지 표시
     if (APP_CONFIG.envLabel && !APP_CONFIG.envLabel.startsWith('__')) {
         const badge = document.getElementById('env-badge');
         if (badge) {
@@ -85,11 +76,28 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // 탭 기능 초기화 (첫 번째 탭 활성화)
-    const firstTab = document.querySelector('.tab-btn');
-    if (firstTab) {
-        // 첫 탭 강제 클릭 이벤트 대신 클래스 부여
-        // switchTab('tab-profile'); // 초기 탭 ID에 맞게 설정
+    // 2. API 디버그 패널 및 테마 옵션 (기존 함수들 실행)
+    if (typeof renderApiDebugPanel === 'function') renderApiDebugPanel('api-debug');
+    if (typeof renderThemeOptions === 'function') renderThemeOptions();
+
+    // 3. 탭 버튼 이벤트 리스너 할당 (에러 방지용)
+    const tabButtons = document.querySelectorAll('.tab-btn');
+    tabButtons.forEach(btn => {
+        // 이미 HTML에 onclick이 있을 수 있으므로 보조적으로 작동
+        btn.addEventListener('click', (e) => {
+            // dataset.tab이 정의되어 있다면 해당 탭으로 전환
+            const target = btn.getAttribute('onclick')?.match(/'([^']+)'/)?.[1];
+            if (target) {
+                // switchTab 내부에서 class 조작을 수행함
+            }
+        });
+    });
+
+    // 4. 페이지 관리자 관련 초기화
+    if (document.body?.dataset?.pageRole === 'page-admin') {
+        if (typeof renderPlatformSelector === 'function') renderPlatformSelector();
+        if (typeof renderContactPresets === 'function') renderContactPresets();
+        if (typeof renderSlugEditor === 'function') renderSlugEditor();
     }
 });
 
