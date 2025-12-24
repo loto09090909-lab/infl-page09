@@ -273,6 +273,7 @@ async function persistCreatePage(env: any, data: NormalizedCreatePage) {
 
   await env.PAGE_KV.put(`page:${data.pageId}`, JSON.stringify(pageData));
 
+  // 2. 유저 정보 준비 (users 테이블)
   const adminUser = await findOrCreateUser(env, {
     email: data.adminEmail,
     password: data.adminPassword,
@@ -280,10 +281,7 @@ async function persistCreatePage(env: any, data: NormalizedCreatePage) {
     oauthId: data.adminOauthId,
   });
 
-  if (data.adminPassword) {
-    await updateUserPassword(env, adminUser.id, data.adminPassword);
-  }
-
+  // [중요!! 순서 변경] 3. 부모 테이블인 page_meta를 먼저 INSERT 합니다.
   await env.DB.prepare(
     "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links, plan_id) VALUES (?, ?, ?, ?, ?, ?)"
   )
@@ -296,12 +294,13 @@ async function persistCreatePage(env: any, data: NormalizedCreatePage) {
       typeof data.plan === "string" ? data.plan : "free"
     )
     .run();
-  
-  // 2. 그 다음 자식 테이블인 page_admins 생성
+
+  // 4. 부모가 생성된 후 자식 테이블인 page_admins를 INSERT 합니다.
   await env.DB.prepare("INSERT OR REPLACE INTO page_admins (page_id, user_id) VALUES (?, ?)")
     .bind(data.pageId, adminUser.id)
     .run();
 
+  // 5. 슬러그 맵 및 기타 로직 마무리
   await replaceSlugMap(env, data.pageId, data.slugs);
 }
 
