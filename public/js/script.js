@@ -47,7 +47,27 @@ function applyRuntimeOverrides() {
         }
     }
 }
+document.addEventListener('DOMContentLoaded', () => {
+    const tabs = document.querySelectorAll('.tab-btn');
+    const contents = document.querySelectorAll('.tab-content');
 
+    tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+            const target = tab.dataset.tab;
+
+            // 모든 버튼 및 콘텐츠 초기화
+            tabs.forEach(t => t.classList.remove('active'));
+            contents.forEach(c => c.classList.remove('active'));
+
+            // 선택된 탭 활성화
+            tab.classList.add('active');
+            document.getElementById(target).classList.add('active');
+
+            // 필요 시 탭 전환 후 특정 데이터 리로드 (예: 링크 목록 렌더링)
+            if (target === 'tab-links') renderAdminLinks();
+        });
+    });
+});
 // 초기화 로직
 document.addEventListener('DOMContentLoaded', () => {
     applyRuntimeOverrides();
