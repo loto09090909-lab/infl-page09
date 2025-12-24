@@ -1,5 +1,5 @@
 /**
- * 0. 보안 로직: 즉시 실행 (가장 먼저 수행)
+ * 0. 보안 로직: 즉시 실행 (파일 최상단 유지)
  */
 (function checkAuth() {
     const isPageAdmin = document.body?.dataset?.pageRole === 'page-admin';
@@ -13,30 +13,60 @@
     }
 })();
 
+/**
+ * 1. 상태 및 설정 변수 선언 (가장 먼저 선언되어야 함)
+ */
 window.APP_CONFIG = window.APP_CONFIG || {};
+const APP_CONFIG = window.APP_CONFIG;
+const urlParams = new URLSearchParams(window.location.search);
+const queryApiBase = urlParams.get("api_base") || urlParams.get("apiBase");
+
+const storedManualBase =
+    (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('sessionManualApiBase')) ||
+    (typeof localStorage !== 'undefined' && localStorage.getItem('manualApiBase')) ||
+    null;
+
+const isPagesDevBase = (value) => typeof value === 'string' && value.includes('.pages.dev');
+let MANUAL_API_BASE = storedManualBase && !isPagesDevBase(storedManualBase) ? storedManualBase : null;
+
+let adminLinks = [];
+let selectedPlatformId = ''; 
+let adminSlugs = [];
+let adminContactSchema = [];
+let contactSettings = { enabled: false };
+let pagePlan = 'free';
+let pageTheme = 'classic';
+let privateTemplates = [];
+let currentPageId = new URLSearchParams(window.location.search).get('pageId') || '';
 
 /**
- * 1. 기초 유틸리티 및 API 설정
+ * 2. 핵심 유틸리티 함수
  */
 async function getApiBase() {
-    if (window.APP_CONFIG.apiBase && !window.APP_CONFIG.apiBase.startsWith('__')) {
-        return window.APP_CONFIG.apiBase.replace(/\/+$/, '');
+    if (APP_CONFIG.apiBase && !APP_CONFIG.apiBase.startsWith('__')) {
+        return APP_CONFIG.apiBase.replace(/\/+$/, '');
     }
+    if (MANUAL_API_BASE) return MANUAL_API_BASE;
     return window.location.origin;
 }
 
+// 통합 apiFetch (인증 체크 및 리다이렉트 포함)
 async function apiFetch(path, options = {}) {
     const base = await getApiBase();
     const token = sessionStorage.getItem('page_admin_token');
     
-    // 인증 헤더 자동 추가
+    options.headers = {
+        ...options.headers,
+        'Accept': 'application/json'
+    };
+
     if (token) {
-        options.headers = { ...options.headers, 'Authorization': `Bearer ${token}` };
+        options.headers['Authorization'] = `Bearer ${token}`;
     }
-    
+
     const res = await fetch(`${base}${path}`, options);
-    
-    // 토큰 만료 시 로그인으로 리다이렉트
+
+    // 401 발생 시 즉시 로그인으로 리다이렉트
     if (res.status === 401 && document.body?.dataset?.pageRole === 'page-admin') {
         sessionStorage.removeItem('page_admin_token');
         window.location.replace('/page-admin-login.html');
@@ -44,56 +74,73 @@ async function apiFetch(path, options = {}) {
     return res;
 }
 
-/**
- * 2. 탭 전환 로직
- */
 function switchTab(tabId) {
-    // 모든 콘텐츠 및 버튼 초기화
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
 
-    // 대상 활성화
     const target = document.getElementById(tabId);
     if (target) target.classList.add('active');
     
-    // 클릭된 버튼 활성화
     if (window.event && window.event.currentTarget) {
         window.event.currentTarget.classList.add('active');
     }
 
-    // 탭별 데이터 로드 처리
     if (tabId === 'tab-contact') fetchContactSubmissions();
     if (tabId === 'tab-advanced') {
-        if (typeof loadPrivateTemplates === 'function') loadPrivateTemplates();
+        loadPrivateTemplates();
         renderApiDebugPanel('api-debug');
     }
 }
 
 /**
- * 3. 페이지 초기화
+ * 3. 초기화 로직 (DOMContentLoaded)
  */
 document.addEventListener('DOMContentLoaded', () => {
-    // 환경 라벨 배지
-    if (window.APP_CONFIG.envLabel && !window.APP_CONFIG.envLabel.startsWith('__')) {
+    // 플랫폼 프리셋 초기화 (platforms.js 로드 대기)
+    if (window.PlatformHelpers && window.PlatformHelpers.PLATFORM_PRESETS) {
+        selectedPlatformId = window.PlatformHelpers.PLATFORM_PRESETS[0].id;
+    }
+
+    // 환경 라벨 표시
+    if (APP_CONFIG.envLabel && !APP_CONFIG.envLabel.startsWith('__')) {
         const badge = document.getElementById('env-badge');
         if (badge) {
-            badge.textContent = window.APP_CONFIG.envLabel;
+            badge.textContent = APP_CONFIG.envLabel;
             badge.style.display = 'block';
         }
     }
 
-    // 페이지 관리자 초기 데이터 로드
+    // 관리자 페이지 데이터 로드
     if (document.body?.dataset?.pageRole === 'page-admin') {
-        const urlParams = new URLSearchParams(window.location.search);
-        const pid = urlParams.get('pageId');
-        if (pid) {
-            loadPageData(pid, { includeAdmin: true });
+        if (currentPageId) {
+            loadPageData(currentPageId, { includeAdmin: true });
         }
         renderPlatformSelector();
+        renderThemeOptions();
     }
 });
 
-// --- 이후 기존의 renderAdminLinks, savePage, addPlatformLink 등 모든 로직 유지 ---
+/**
+ * 4. 기능 함수들 (기존 로직 유지하되 선언 오류 수정)
+ */
+function renderPlatformSelector() {
+    const selector = document.getElementById('platform-selector');
+    const presets = window.PlatformHelpers?.PLATFORM_PRESETS || [];
+    if (!selector || !presets.length) return;
+
+    selector.innerHTML = '';
+    presets.forEach((preset) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `platform-button${preset.id === selectedPlatformId ? ' active' : ''}`;
+        button.innerHTML = `<span>${preset.label}</span>`;
+        button.onclick = () => {
+            selectedPlatformId = preset.id;
+            renderPlatformSelector();
+        };
+        selector.appendChild(button);
+    });
+}
 
 // 기존 apiFetch 함수를 getApiBase를 사용하도록 수정
 async function apiFetch(path, options = {}) {
