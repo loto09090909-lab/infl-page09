@@ -657,16 +657,6 @@ let publicContactSchema = [];
 let publicContactSettings = { enabled: false };
 let contactEnabled = false;
 
-
-
-const MAX_CONTACT_FIELDS = 50;
-
-const PLAN_LIMITS = {
-    free: 8,
-    basic: 25,
-    premium: 100,
-};
-
 const THEME_PRESETS = [
     {
         id: 'classic',
