@@ -47,6 +47,52 @@ function applyRuntimeOverrides() {
         }
     }
 }
+
+// 탭 전환 로직 (HTML에서 호출)
+function switchTab(tabId) {
+    // 1. 모든 탭 콘텐츠 숨김
+    const contents = document.querySelectorAll('.tab-content');
+    contents.forEach(content => content.classList.remove('active'));
+
+    // 2. 모든 탭 버튼 비활성화
+    const buttons = document.querySelectorAll('.tab-btn');
+    buttons.forEach(btn => btn.classList.remove('active'));
+
+    // 3. 대상 탭 활성화
+    const targetContent = document.getElementById(tabId);
+    if (targetContent) {
+        targetContent.classList.add('active');
+    }
+
+    // 4. 클릭된 버튼 활성화 (이벤트 객체 활용)
+    if (event && event.currentTarget) {
+        event.currentTarget.classList.add('active');
+    }
+
+    // 5. 탭별 데이터 로드
+    if (tabId === 'tab-contact') fetchContactSubmissions();
+    if (tabId === 'tab-advanced') loadPrivateTemplates();
+}
+
+// 기존 에러 발생 지점 (64번 라인 부근) 수정
+document.addEventListener('DOMContentLoaded', () => {
+    // 환경 배지 등 기본 로직
+    if (APP_CONFIG.envLabel && !APP_CONFIG.envLabel.startsWith('__')) {
+        const badge = document.getElementById('env-badge');
+        if (badge) {
+            badge.textContent = APP_CONFIG.envLabel;
+            badge.style.display = 'block';
+        }
+    }
+
+    // 탭 기능 초기화 (첫 번째 탭 활성화)
+    const firstTab = document.querySelector('.tab-btn');
+    if (firstTab) {
+        // 첫 탭 강제 클릭 이벤트 대신 클래스 부여
+        // switchTab('tab-profile'); // 초기 탭 ID에 맞게 설정
+    }
+});
+
 document.addEventListener('DOMContentLoaded', () => {
     const tabs = document.querySelectorAll('.tab-btn');
     const contents = document.querySelectorAll('.tab-content');
