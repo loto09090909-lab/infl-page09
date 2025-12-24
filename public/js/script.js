@@ -1,131 +1,99 @@
-window.APP_CONFIG = window.APP_CONFIG || {};
-const APP_CONFIG = window.APP_CONFIG;
-
-// API 베이스 결정
-async function getApiBase() {
-    if (APP_CONFIG.apiBase && !APP_CONFIG.apiBase.startsWith('__')) {
-        return APP_CONFIG.apiBase.replace(/\/+$/, '');
+/**
+ * 0. 보안 로직: 즉시 실행 (가장 먼저 수행)
+ */
+(function checkAuth() {
+    const isPageAdmin = document.body?.dataset?.pageRole === 'page-admin';
+    if (isPageAdmin) {
+        const token = sessionStorage.getItem('page_admin_token');
+        if (!token) {
+            const pid = new URLSearchParams(window.location.search).get('pageId') || "";
+            window.location.replace(`/page-admin-login.html${pid ? '?pageId=' + pid : ''}`);
+            return;
+        }
     }
-    const urlParams = new URLSearchParams(window.location.search);
-    const queryApiBase = urlParams.get("api_base") || urlParams.get("apiBase");
-    if (queryApiBase) return queryApiBase.trim().replace(/\/+$/, '');
+})();
 
-    const storedManualBase = (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('sessionManualApiBase')) || null;
-    if (storedManualBase) return storedManualBase.replace(/\/+$/, '');
+window.APP_CONFIG = window.APP_CONFIG || {};
 
+/**
+ * 1. 기초 유틸리티 및 API 설정
+ */
+async function getApiBase() {
+    if (window.APP_CONFIG.apiBase && !window.APP_CONFIG.apiBase.startsWith('__')) {
+        return window.APP_CONFIG.apiBase.replace(/\/+$/, '');
+    }
     return window.location.origin;
 }
 
-// 공통 fetch 함수
 async function apiFetch(path, options = {}) {
     const base = await getApiBase();
-    try {
-        const res = await fetch(`${base}${path}`, options);
-        return res;
-    } catch (err) {
-        console.error("Fetch 에러:", err);
-        throw err;
+    const token = sessionStorage.getItem('page_admin_token');
+    
+    // 인증 헤더 자동 추가
+    if (token) {
+        options.headers = { ...options.headers, 'Authorization': `Bearer ${token}` };
+    }
+    
+    const res = await fetch(`${base}${path}`, options);
+    
+    // 토큰 만료 시 로그인으로 리다이렉트
+    if (res.status === 401 && document.body?.dataset?.pageRole === 'page-admin') {
+        sessionStorage.removeItem('page_admin_token');
+        window.location.replace('/page-admin-login.html');
+    }
+    return res;
+}
+
+/**
+ * 2. 탭 전환 로직
+ */
+function switchTab(tabId) {
+    // 모든 콘텐츠 및 버튼 초기화
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+
+    // 대상 활성화
+    const target = document.getElementById(tabId);
+    if (target) target.classList.add('active');
+    
+    // 클릭된 버튼 활성화
+    if (window.event && window.event.currentTarget) {
+        window.event.currentTarget.classList.add('active');
+    }
+
+    // 탭별 데이터 로드 처리
+    if (tabId === 'tab-contact') fetchContactSubmissions();
+    if (tabId === 'tab-advanced') {
+        if (typeof loadPrivateTemplates === 'function') loadPrivateTemplates();
+        renderApiDebugPanel('api-debug');
     }
 }
 
 /**
- * 탭 전환 핵심 함수
+ * 3. 페이지 초기화
  */
-function switchTab(tabId) {
-    // 1. 모든 탭 콘텐츠 숨김
-    const contents = document.querySelectorAll('.tab-content');
-    contents.forEach(content => content.classList.remove('active'));
-
-    // 2. 모든 탭 버튼 비활성화
-    const buttons = document.querySelectorAll('.tab-btn');
-    buttons.forEach(btn => btn.classList.remove('active'));
-
-    // 3. 대상 탭 활성화
-    const targetContent = document.getElementById(tabId);
-    if (targetContent) {
-        targetContent.classList.add('active');
-    } else {
-        console.warn(`Tab content not found: ${tabId}`);
-    }
-
-    // 4. 클릭된 버튼 활성화 (이벤트 객체가 있을 때만)
-    if (window.event && window.event.currentTarget && window.event.currentTarget.classList) {
-        window.event.currentTarget.classList.add('active');
-    }
-
-    // 5. 탭별 데이터 리로드
-    if (tabId === 'tab-contact') {
-        if (typeof fetchContactSubmissions === 'function') fetchContactSubmissions();
-    }
-    if (tabId === 'tab-advanced') {
-        if (typeof loadPrivateTemplates === 'function') loadPrivateTemplates();
-    }
-    if (tabId === 'tab-links') {
-        if (typeof renderAdminLinks === 'function') renderAdminLinks();
-    }
-}
-
-// 페이지 초기화 로직 통합
 document.addEventListener('DOMContentLoaded', () => {
-    // 1. 환경 배지 표시
-    if (APP_CONFIG.envLabel && !APP_CONFIG.envLabel.startsWith('__')) {
+    // 환경 라벨 배지
+    if (window.APP_CONFIG.envLabel && !window.APP_CONFIG.envLabel.startsWith('__')) {
         const badge = document.getElementById('env-badge');
         if (badge) {
-            badge.textContent = APP_CONFIG.envLabel;
+            badge.textContent = window.APP_CONFIG.envLabel;
             badge.style.display = 'block';
         }
     }
 
-    // 2. API 디버그 패널 및 테마 옵션 (기존 함수들 실행)
-    if (typeof renderApiDebugPanel === 'function') renderApiDebugPanel('api-debug');
-    if (typeof renderThemeOptions === 'function') renderThemeOptions();
-
-    // 3. 탭 버튼 이벤트 리스너 할당 (에러 방지용)
-    const tabButtons = document.querySelectorAll('.tab-btn');
-    tabButtons.forEach(btn => {
-        // 이미 HTML에 onclick이 있을 수 있으므로 보조적으로 작동
-        btn.addEventListener('click', (e) => {
-            // dataset.tab이 정의되어 있다면 해당 탭으로 전환
-            const target = btn.getAttribute('onclick')?.match(/'([^']+)'/)?.[1];
-            if (target) {
-                // switchTab 내부에서 class 조작을 수행함
-            }
-        });
-    });
-
-    // 4. 페이지 관리자 관련 초기화
+    // 페이지 관리자 초기 데이터 로드
     if (document.body?.dataset?.pageRole === 'page-admin') {
-        if (typeof renderPlatformSelector === 'function') renderPlatformSelector();
-        if (typeof renderContactPresets === 'function') renderContactPresets();
-        if (typeof renderSlugEditor === 'function') renderSlugEditor();
+        const urlParams = new URLSearchParams(window.location.search);
+        const pid = urlParams.get('pageId');
+        if (pid) {
+            loadPageData(pid, { includeAdmin: true });
+        }
+        renderPlatformSelector();
     }
 });
 
-document.addEventListener('DOMContentLoaded', () => {
-    const tabs = document.querySelectorAll('.tab-btn');
-    const contents = document.querySelectorAll('.tab-content');
-
-    tabs.forEach(tab => {
-        tab.addEventListener('click', () => {
-            const target = tab.dataset.tab;
-
-            // 모든 버튼 및 콘텐츠 초기화
-            tabs.forEach(t => t.classList.remove('active'));
-            contents.forEach(c => c.classList.remove('active'));
-
-            // 선택된 탭 활성화
-            tab.classList.add('active');
-            document.getElementById(target).classList.add('active');
-
-            // 필요 시 탭 전환 후 특정 데이터 리로드 (예: 링크 목록 렌더링)
-            if (target === 'tab-links') renderAdminLinks();
-        });
-    });
-});
-// 초기화 로직
-document.addEventListener('DOMContentLoaded', () => {
-    applyRuntimeOverrides();
-});
+// --- 이후 기존의 renderAdminLinks, savePage, addPlatformLink 등 모든 로직 유지 ---
 
 // 기존 apiFetch 함수를 getApiBase를 사용하도록 수정
 async function apiFetch(path, options = {}) {
