@@ -652,9 +652,7 @@ function createLinkIcon(preset) {
     return icon;
 }
 const hasUserView = document.getElementById("links-list") !== null;
-let userViewReady = hasUserView;
 
-let selectedPlatformId = PLATFORM_PRESETS[0]?.id || '';
 let publicContactSchema = [];
 let publicContactSettings = { enabled: false };
 let contactEnabled = false;
