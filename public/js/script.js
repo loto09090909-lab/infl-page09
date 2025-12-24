@@ -1,5 +1,5 @@
 /**
- * [0] 즉시 실행 보안 로직 (최우선 실행)
+ * [0] 즉시 실행 보안 로직
  */
 (function checkAuth() {
     const isPageAdmin = document.body?.dataset?.pageRole === 'page-admin';
@@ -13,7 +13,7 @@
 })();
 
 /**
- * [1] 전역 설정 및 상태 변수
+ * [1] 전역 설정 및 상태 변수 (딱 한 번만 선언)
  */
 window.APP_CONFIG = window.APP_CONFIG || {};
 const APP_CONFIG = window.APP_CONFIG;
@@ -26,8 +26,8 @@ const isPagesDevBase = (value) => typeof value === 'string' && value.includes('.
 
 let MANUAL_API_BASE = (storedManualBase && !isPagesDevBase(storedManualBase)) ? storedManualBase : null;
 
-// 상태 변수들 (중복 선언 제거됨)
-let adminLinks = []; 
+// 상태 데이터 변수들
+let adminLinks = [];
 let adminSlugs = [];
 let adminContactSchema = [];
 let contactSettings = { enabled: false };
@@ -37,7 +37,7 @@ let contactSubmissions = [];
 let pageTheme = 'classic';
 let privateTemplates = [];
 let currentPageId = urlParams.get('pageId') || '';
-let selectedPlatformId = ''; 
+let selectedPlatformId = '';
 let dragState = null;
 let userViewReady = document.getElementById("links-list") !== null;
 
@@ -45,7 +45,25 @@ const MAX_CONTACT_FIELDS = 50;
 const PLAN_LIMITS = { free: 8, basic: 25, premium: 100 };
 
 /**
- * [2] API 통신 및 데이터 로드
+ * [2] 헬퍼 상수 (PLATFORM_PRESETS 등)
+ */
+const platformHelpers = window.PlatformHelpers || {};
+const PLATFORM_PRESETS = platformHelpers.PLATFORM_PRESETS || [];
+
+const THEME_PRESETS = [
+    { id: 'classic', label: '클래식', swatch: ['#f7f7fb', '#ffffff', '#16a34a', '#0f172a'] },
+    { id: 'midnight', label: '미드나잇', swatch: ['#0b1220', '#0f172a', '#22d3ee', '#e5e7eb'] },
+    { id: 'sunset', label: '선셋', swatch: ['#fff7ed', '#fef3c7', '#f97316', '#7c2d12'] },
+    { id: 'mint', label: '민트', swatch: ['#ecfeff', '#f0fdfa', '#14b8a6', '#042f2e'] }
+];
+
+const CONTACT_PRESETS = [
+    { id: 'basic', label: '기본 문의', fields: [{ label: '이메일', type: 'email', placeholder: 'you@example.com' }] },
+    { id: 'business', label: '비즈니스', fields: [{ label: '회사명', type: 'text' }, { label: '연락처', type: 'tel' }] }
+];
+
+/**
+ * [3] API 통신 함수 (통합 버전)
  */
 async function getApiBase() {
     if (APP_CONFIG.apiBase && !APP_CONFIG.apiBase.startsWith('__')) {
@@ -70,7 +88,7 @@ async function apiFetch(path, options = {}) {
 }
 
 /**
- * [3] 탭 전환 및 UI 로직
+ * [4] UI 및 탭 기능
  */
 function switchTab(tabId) {
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
@@ -79,38 +97,36 @@ function switchTab(tabId) {
     if (target) target.classList.add('active');
     if (window.event && window.event.currentTarget) window.event.currentTarget.classList.add('active');
 
-    // 탭별 데이터 로드
+    // 탭별 로드
     if (tabId === 'tab-contact') fetchContactSubmissions();
     if (tabId === 'tab-advanced') loadPrivateTemplates();
     if (tabId === 'tab-links') renderAdminLinks();
 }
 
 /**
- * [4] 초기화 (DOMContentLoaded)
+ * [5] 초기화 로직
  */
 document.addEventListener('DOMContentLoaded', () => {
+    // 환경 배지
     if (APP_CONFIG.envLabel && !APP_CONFIG.envLabel.startsWith('__')) {
         const badge = document.getElementById('env-badge');
-        if (badge) {
-            badge.textContent = APP_CONFIG.envLabel;
-            badge.style.display = 'block';
-        }
+        if (badge) { badge.textContent = APP_CONFIG.envLabel; badge.style.display = 'block'; }
     }
 
+    // 관리자 페이지 데이터 로드
     if (document.body?.dataset?.pageRole === 'page-admin') {
         if (currentPageId) loadPageData(currentPageId, { includeAdmin: true });
-        if (window.PlatformHelpers?.PLATFORM_PRESETS) {
-            selectedPlatformId = window.PlatformHelpers.PLATFORM_PRESETS[0].id;
-        }
+        if (PLATFORM_PRESETS.length) selectedPlatformId = PLATFORM_PRESETS[0].id;
         renderPlatformSelector();
         renderThemeOptions();
         renderContactPresets();
         renderSlugEditor();
+        updatePlatformPrefix();
     }
 });
 
 /**
- * [5] 관리 기능 함수들 (필수 로직만 요약 통합)
+ * [6] 관리 기능 함수들 (필수 로직만 요약 통합)
  */
 
 function renderPlatformSelector() {
@@ -639,21 +655,13 @@ function createLinkIcon(preset) {
 }
 const hasUserView = document.getElementById("links-list") !== null;
 let userViewReady = hasUserView;
-let adminLinks = [];
+
 let selectedPlatformId = PLATFORM_PRESETS[0]?.id || '';
-let dragState = null;
-let adminSlugs = [];
-let adminContactSchema = [];
 let publicContactSchema = [];
-let contactSettings = { enabled: false };
 let publicContactSettings = { enabled: false };
 let contactEnabled = false;
-let currentPageId = '';
-let pagePlan = 'free';
-let pagePlanStatus = null;
-let contactSubmissions = [];
-let pageTheme = 'classic';
-let privateTemplates = [];
+
+
 
 const MAX_CONTACT_FIELDS = 50;
 
