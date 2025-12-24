@@ -50,17 +50,6 @@ const PLAN_LIMITS = { free: 8, basic: 25, premium: 100 };
 const platformHelpers = window.PlatformHelpers || {};
 const PLATFORM_PRESETS = platformHelpers.PLATFORM_PRESETS || [];
 
-const THEME_PRESETS = [
-    { id: 'classic', label: '클래식', swatch: ['#f7f7fb', '#ffffff', '#16a34a', '#0f172a'] },
-    { id: 'midnight', label: '미드나잇', swatch: ['#0b1220', '#0f172a', '#22d3ee', '#e5e7eb'] },
-    { id: 'sunset', label: '선셋', swatch: ['#fff7ed', '#fef3c7', '#f97316', '#7c2d12'] },
-    { id: 'mint', label: '민트', swatch: ['#ecfeff', '#f0fdfa', '#14b8a6', '#042f2e'] }
-];
-
-const CONTACT_PRESETS = [
-    { id: 'basic', label: '기본 문의', fields: [{ label: '이메일', type: 'email', placeholder: 'you@example.com' }] },
-    { id: 'business', label: '비즈니스', fields: [{ label: '회사명', type: 'text' }, { label: '연락처', type: 'tel' }] }
-];
 
 /**
  * [3] API 통신 함수 (통합 버전)
