@@ -5,7 +5,41 @@ body {
     background-color: #f7f7fb;
     color: #111827;
 }
+/* 탭 버튼 스타일 */
+.admin-tabs {
+    display: flex;
+    gap: 10px;
+    border-bottom: 2px solid #eee;
+    margin-bottom: 20px;
+    position: sticky; /* 상단 고정 */
+    top: 0;
+    background: white;
+    z-index: 100;
+    padding-top: 10px;
+}
 
+.tab-btn {
+    padding: 10px 20px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-weight: bold;
+    color: #666;
+}
+
+.tab-btn.active {
+    color: #16a34a; /* 강조 색상 */
+    border-bottom: 3px solid #16a34a;
+}
+
+/* 콘텐츠 표시/숨김 */
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
 .theme-scope {
     --theme-page-bg: #f7f7fb;
     --theme-card-bg: linear-gradient(145deg, #ffffff, #f9fafb);
