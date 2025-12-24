@@ -1,3 +1,38 @@
+window.APP_CONFIG = window.APP_CONFIG || {};
+const SA_CONFIG = window.APP_CONFIG;
+
+// 슈퍼 관리자용 API 베이스 획득 (환경 변수 우선)
+async function getAdminApiBase() {
+    // 1. 주입된 설정이 있으면 즉시 반환
+    if (SA_CONFIG.apiBase && !SA_CONFIG.apiBase.startsWith('__')) {
+        return SA_CONFIG.apiBase.replace(/\/+$/, '');
+    }
+    
+    // 2. Fallback: 알려진 기본 워커 또는 현재 오리진
+    return SA_CONFIG.knownWorkerBase || window.location.origin;
+}
+
+// 슈퍼 관리자 전용 호출 함수
+async function saFetch(path, options = {}) {
+    const base = await getAdminApiBase();
+    const token = sessionStorage.getItem('super_admin_token');
+    
+    const headers = {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        ...options.headers
+    };
+
+    const res = await fetch(`${base}${path}`, { ...options, headers });
+    
+    if (res.status === 401) {
+        alert('슈퍼 관리자 세션이 만료되었습니다. 다시 로그인해주세요.');
+        window.location.href = '/login.html';
+        return;
+    }
+    return res;
+}
+
 function slugify(value) {
     const normalized = value.normalize('NFKD').toLowerCase();
 
