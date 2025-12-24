@@ -284,10 +284,6 @@ async function persistCreatePage(env: any, data: NormalizedCreatePage) {
     await updateUserPassword(env, adminUser.id, data.adminPassword);
   }
 
-  await env.DB.prepare("INSERT OR REPLACE INTO page_admins (page_id, user_id) VALUES (?, ?)")
-    .bind(data.pageId, adminUser.id)
-    .run();
-
   await env.DB.prepare(
     "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links, plan_id) VALUES (?, ?, ?, ?, ?, ?)"
   )
@@ -299,6 +295,11 @@ async function persistCreatePage(env: any, data: NormalizedCreatePage) {
       JSON.stringify((data as any).links ?? []),
       typeof data.plan === "string" ? data.plan : "free"
     )
+    .run();
+  
+  // 2. 그 다음 자식 테이블인 page_admins 생성
+  await env.DB.prepare("INSERT OR REPLACE INTO page_admins (page_id, user_id) VALUES (?, ?)")
+    .bind(data.pageId, adminUser.id)
     .run();
 
   await replaceSlugMap(env, data.pageId, data.slugs);
