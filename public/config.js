@@ -1,27 +1,23 @@
-// 전역 앱 설정을 정의합니다. 배포 환경에 맞게 apiBases와 envLabel을 수정하세요.
 const DEFAULT_APP_CONFIG = {
-  // 우선순위가 높은 API 베이스 URL 목록 (프로토콜 포함)
-  apiBases: [],
-  // 단일 기본 API 베이스(배열보다 우선, 값이 있으면 첫 번째 후보가 됩니다)
-  apiBase: undefined,
-  // 배포/스테이지 구분을 나타내는 짧은 라벨
-  envLabel: "local",
-  // 헬스체크 경로 (기본값: /api/health)
+  // Cloudflare Pages 환경 변수(API_BASE)에서 주입될 값
+  apiBase: "__API_BASE_PLACEHOLDER__",
+  
+  // 배포 환경 라벨 (예: production, preview, local)
+  envLabel: "__ENV_LABEL_PLACEHOLDER__",
+
+  // 헬스체크 및 기타 기본 설정
   healthPath: "/api/health",
-  // 특정 호스트를 항상 우선 사용하려면 preferredApiBase를 지정하세요
-  preferredApiBase: "https://infl-worker.loto09090909.workers.dev",
-  // 쿼리파라미터(api_base)로 베이스 오버라이드를 허용하지 않으려면 false로 설정
-  allowQueryApiBase: false,
-  // pages.dev -> workers.dev 유추, meta/api-base, 현재 origin, 알려진 워커를 끄고 싶다면 false로 설정
+  allowQueryApiBase: true, // 테스트 시 api_base=? 쿼리로 변경 가능하도록 유지
+
+  // 아래 탐색 기능들은 환경 변수가 주입된 경우 우선순위에서 밀리거나 꺼지게 됩니다.
   usePagesDerivedBase: false,
   useMetaApiBase: true,
   useGlobalApiBase: true,
-  useKnownWorkerBase: true,
+  useKnownWorkerBase: false, // 하드코딩된 주소 사용 안 함
   useCurrentOriginBase: true,
-  // 기본 알려진 워커 베이스를 바꾸고 싶을 때 지정
-  knownWorkerBase: "https://infl-worker.loto09090909.workers.dev",
-  // Turnstile 사이트 키 (없으면 자동으로 비활성화)
-  turnstileSiteKey: undefined,
+  
+  // 필요 시 수동 지정용 (일반적으로 빈 값 유지)
+  apiBases: [],
 };
 
 window.APP_CONFIG = {
