@@ -1,5 +1,4 @@
 window.APP_CONFIG = window.APP_CONFIG || {};
-
 const APP_CONFIG = window.APP_CONFIG;
 
 const urlParams = new URLSearchParams(window.location.search);
@@ -11,6 +10,54 @@ const storedManualBase =
     null;
 const isPagesDevBase = (value) => typeof value === 'string' && value.includes('.pages.dev');
 let MANUAL_API_BASE = storedManualBase && !isPagesDevBase(storedManualBase) ? storedManualBase : null;
+
+// API 베이스를 결정하는 핵심 함수 (환경 변수 우선)
+async function getApiBase() {
+    // 1. 빌드 타임에 주입된 apiBase가 유효하면 최우선 사용
+    if (APP_CONFIG.apiBase && !APP_CONFIG.apiBase.startsWith('__')) {
+        return APP_CONFIG.apiBase.replace(/\/+$/, '');
+    }
+
+    // 2. 쿼리 파라미터 오버라이드 (디버깅용)
+    const urlParams = new URLSearchParams(window.location.search);
+    const queryApiBase = urlParams.get("api_base") || urlParams.get("apiBase");
+    if (APP_CONFIG.allowQueryApiBase !== false && queryApiBase) {
+        return queryApiBase.trim().replace(/\/+$/, '');
+    }
+
+    // 3. 기존 수동 설정 또는 브라우저 저장소 확인
+    const storedManualBase =
+        (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('sessionManualApiBase')) ||
+        (typeof localStorage !== 'undefined' && localStorage.getItem('manualApiBase')) ||
+        null;
+    
+    if (storedManualBase) return storedManualBase.replace(/\/+$/, '');
+
+    // 4. Fallback: 현재 오리진 사용
+    return window.location.origin;
+}
+
+// 환경 라벨 배지 표시 로직
+function applyRuntimeOverrides() {
+    if (APP_CONFIG.envLabel && !APP_CONFIG.envLabel.startsWith('__')) {
+        const badge = document.getElementById('env-badge');
+        if (badge) {
+            badge.textContent = APP_CONFIG.envLabel;
+            badge.style.display = 'block';
+        }
+    }
+}
+
+// 초기화 로직
+document.addEventListener('DOMContentLoaded', () => {
+    applyRuntimeOverrides();
+});
+
+// 기존 apiFetch 함수를 getApiBase를 사용하도록 수정
+async function apiFetch(path, options = {}) {
+    const base = await getApiBase();
+    return fetch(`${base}${path}`, options);
+}
 
 function applyRuntimeOverrides() {
     if (APP_CONFIG.envLabel) {
@@ -247,56 +294,6 @@ async function primeApiBaseSelection() {
     }
     updateEnvBadge(getApiBaseCandidates()[0] || null);
     return null;
-}
-
-async function apiFetch(
-    path,
-    options = {},
-    fallbackStatuses = [301, 302, 307, 308, 404, 405]
-) {
-    let lastError;
-
-    for (const base of getApiBaseCandidates()) {
-        const healthy = await checkApiHealth(base).catch(() => null);
-        if (healthy === false && base !== MANUAL_API_BASE) {
-            lastError = lastError || new Error(`Health check failed for ${base}`);
-            continue;
-        }
-
-        try {
-            const controller = new AbortController();
-            const res = await withTimeout(
-                fetch(`${base}${path}`, { ...options, signal: controller.signal }),
-                options.timeoutMs || 8000,
-                controller
-            );
-
-            if (res.status === 401 || res.status === 403) {
-                if (document.getElementById('page-login-status')) {
-                    setPageLoginStatus('세션이 만료되었습니다. 다시 로그인해주세요.', 'error');
-                }
-            }
-
-            if (res.ok) {
-                LAST_API_BASE_USED = base;
-                updateEnvBadge(base);
-                return res;
-            }
-
-            if (!fallbackStatuses.includes(res.status)) {
-                LAST_API_BASE_USED = base;
-                updateEnvBadge(base);
-                return res;
-            }
-
-            lastError = res;
-        } catch (err) {
-            lastError = err;
-        }
-    }
-
-    if (lastError instanceof Response) return lastError;
-    throw lastError || new Error('모든 API 베이스에 연결하지 못했습니다');
 }
 
 const platformHelpers = window.PlatformHelpers || {};
