@@ -3,39 +3,110 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{PAGE_NAME}} 관리자</title>
+    <meta name="api-base" content="https://infl-worker.loto09090909.workers.dev">
+    <title>페이지 관리자 센터</title>
     <link rel="stylesheet" href="css/style.css">
+    <script src="/config.js"></script>
+    <style>
+        .admin-tabs { display: flex; gap: 5px; margin: 20px auto; max-width: 1200px; padding: 0 20px; border-bottom: 2px solid #e2e8f0; position: sticky; top: 0; background: #fff; z-index: 100; }
+        .tab-btn { padding: 14px 20px; border: none; background: none; cursor: pointer; font-weight: 600; color: #64748b; border-bottom: 3px solid transparent; transition: all 0.2s; }
+        .tab-btn:hover { color: #16a34a; }
+        .tab-btn.active { color: #16a34a; border-bottom: 3px solid #16a34a; }
+        .tab-content { display: none; animation: fadeIn 0.3s ease; }
+        .tab-content.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; } }
+        .grid-container { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        @media (max-width: 768px) { .grid-container { grid-template-columns: 1fr; } }
+    </style>
 </head>
-<body data-page-role="page-admin">
-    <header>
-        <h1>{{PAGE_NAME}} 관리자 페이지</h1>
+<body data-page-role="page-admin" class="page-admin">
+    <header class="page-hero">
+        <div>
+            <p class="eyebrow">페이지 관리자</p>
+            <h1 id="admin-page-title">내 페이지 관리</h1>
+            <div class="page-context">
+                <span class="badge">ID: <strong id="current-page-id">-</strong></span>
+                <span class="badge" id="current-slug-badge">슬러그: -</span>
+                <a id="public-link" class="ghost-link" href="#" target="_blank">🔗 공개 페이지 보기</a>
+                <span id="env-badge" class="env-badge" style="display: none;"></span>
+            </div>
+        </div>
+        <div class="hero-cta">
+            <button class="primary" onclick="savePage()">전체 저장</button>
+            <button class="secondary" onclick="logout()">로그아웃</button>
+        </div>
     </header>
 
-    <section class="profile-edit">
-        <h3>페이지 정보 수정</h3>
-        <input id="name" placeholder="페이지 이름" value="{{PAGE_NAME}}">
-        <input id="desc" placeholder="페이지 설명" value="{{PAGE_DESCRIPTION}}">
-        <input id="photo" placeholder="프로필 사진 URL" value="{{PAGE_PHOTO_URL}}">
-        <button onclick="savePage()">저장</button>
-        <button onclick="logout()">로그아웃</button>
-    </section>
+    <div id="save-status" class="alert" style="display: none;"></div>
 
-    <section class="link-management">
-        <h3>링크 관리</h3>
-        <ul id="link-list">
-            <!-- Links will be dynamically inserted here -->
-        </ul>
-        <input id="newLinkName" placeholder="새 링크 이름">
-        <input id="newLinkUrl" placeholder="새 링크 URL">
-        <button onclick="addLink()">링크 추가</button>
-    </section>
+    <nav class="admin-tabs">
+        <button class="tab-btn active" onclick="switchTab('tab-profile')">프로필 & 테마</button>
+        <button class="tab-btn" onclick="switchTab('tab-links')">링크 관리</button>
+        <button class="tab-btn" onclick="switchTab('tab-contact')">컨택트 & 문의내역</button>
+        <button class="tab-btn" onclick="switchTab('tab-advanced')">고급 설정</button>
+    </nav>
 
-    <section class="ads-management">
-        <h3>광고 설정</h3>
-        <input type="checkbox" id="ads"> 광고 표시
-        <button onclick="saveAdsSettings()">저장</button>
-    </section>
+    <main class="layout">
+        <section id="tab-profile" class="tab-content active">
+            <div class="grid-container">
+                <section class="card profile-edit">
+                    <div class="card-header"><h2>프로필 정보</h2></div>
+                    <div class="form-stack">
+                        <label>페이지 이름</label><input id="name" placeholder="표시될 이름">
+                        <label>페이지 설명</label><textarea id="desc" rows="3" placeholder="소개글"></textarea>
+                        <label>프로필 사진 URL</label><input id="photo" placeholder="https://...">
+                    </div>
+                </section>
+                <section class="card theme-card">
+                    <div class="card-header"><h2>디자인 테마</h2></div>
+                    <div id="theme-options" class="theme-grid"></div>
+                </section>
+            </div>
+        </section>
 
+        <section id="tab-links" class="tab-content">
+            <section class="card link-management">
+                <div class="card-header"><h2>링크 목록</h2></div>
+                <div class="platform-link-box">
+                    <div id="platform-selector" class="platform-selector"></div>
+                    <div class="platform-inputs">
+                        <input id="platformHandle" placeholder="아이디"><input id="platformLinkName" placeholder="이름">
+                        <button onclick="addPlatformLink()">플랫폼 추가</button>
+                    </div>
+                </div>
+                <ul id="link-list" class="link-list"></ul>
+            </section>
+        </section>
+
+        <section id="tab-contact" class="tab-content">
+            <div class="grid-container">
+                <section class="card contact-card">
+                    <div class="card-header"><h2>문의 폼 설정</h2></div>
+                    <div class="contact-settings form-stack">
+                        <label class="inline-toggle"><input id="contactEnabled" type="checkbox"> <b>문의 섹션 활성화</b></label>
+                        <input id="contactFormTitle" placeholder="폼 제목">
+                        <input id="contactWebhook" placeholder="웹훅 URL">
+                    </div>
+                    <div id="contact-schema-list"></div>
+                </section>
+                <section class="card" id="contact-inbox-card">
+                    <div class="card-header"><h2>문의 내역</h2></div>
+                    <ul id="contact-submission-list" class="contact-submission-list"></ul>
+                </section>
+            </div>
+        </section>
+
+        <section id="tab-advanced" class="tab-content">
+            <section class="card slug-card">
+                <h2>슬러그 관리</h2>
+                <input id="primary-slug-input" placeholder="대표 슬러그">
+                <div id="slug-chip-list" class="pill-list"></div>
+            </section>
+            <section class="card api-card" id="api-debug"></section>
+        </section>
+    </main>
+
+    <script src="js/platforms.js"></script>
     <script src="js/script.js"></script>
 </body>
 </html>

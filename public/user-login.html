@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="api-base" content="https://infl-worker.loto09090909.workers.dev">
+    <title>사용자 로그인</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="/config.js"></script>
+</head>
+<body>
+    <header>
+        <h1>사용자 로그인</h1>
+        <span id="env-badge" class="env-badge" aria-live="polite" style="display: none;"></span>
+    </header>
+
+    <section class="card api-card" id="api-debug"></section>
+
+    <section class="status-banner" id="user-login-status" style="display: none;"></section>
+
+    <section class="login-form" id="user-login-form">
+        <input id="user-login-email" type="email" placeholder="이메일">
+        <input id="user-login-password" type="password" placeholder="비밀번호">
+        <div class="login-actions">
+            <button class="primary" onclick="userLogin()">로그인</button>
+            <a class="ghost-link" href="/signup">회원가입</a>
+        </div>
+        <div class="oauth-actions">
+            <button class="secondary" type="button" onclick="startOAuth('google')">Google로 로그인</button>
+            <button class="secondary" type="button" onclick="startOAuth('naver')">Naver로 로그인</button>
+        </div>
+        <p class="help-text">로그인하면 내 대시보드로 이동합니다.</p>
+    </section>
+
+    <footer>
+        <p>&copy; 2025 인플루언서 페이지 관리 시스템</p>
+    </footer>
+
+    <script src="js/platforms.js"></script>
+    <script src="js/script.js"></script>
+</body>
+</html>

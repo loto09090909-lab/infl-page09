@@ -1,16 +1,87 @@
-import { createSessionToken } from "./auth";
-import { errorResponse, jsonResponse, parseJsonBody } from "./utils";
+import {
+  createSessionToken,
+  getBearerToken,
+  hasSessionSecret,
+  revokeSessionToken,
+  getSessionSubject,
+  verifySessionToken,
+  resolveSessionTtl,
+} from "./auth";
+import { resolvePageId } from "./slug";
+import {
+  findConflictingSlug,
+  getSlugsForPage,
+  hasSlugMap,
+  normalizeSlugs,
+  replaceSlugMap,
+} from "./slug-map";
+import {
+  errorResponse,
+  errorResponseWithCode,
+  jsonResponse,
+  parseJsonBody,
+  parseJsonBodyWithLimit,
+  validateEmail,
+  validatePlanId,
+  validatePageId,
+} from "./utils";
+import {
+  validateAccessControl as validateAccessControlShared,
+  validateContactSchema as validateContactSchemaShared,
+  validateContactSettings as validateContactSettingsShared,
+  validateLinks as validateLinksShared,
+  validateProfile as validateProfileShared,
+  validateTheme as validateThemeShared,
+} from "./validators";
+import {
+  enforceContactFieldLimit,
+  enforcePlanLimit,
+  enforcePrivateLinkLimit,
+  hasPrivateLinks,
+  PlanLimitError,
+} from "./plan-limits";
+import {
+  findOrCreateUser,
+  hashPassword,
+  updateUserPassword,
+  verifyPasswordWithUpgrade,
+} from "./users";
+import {
+  buildLoginIdentifier,
+  clearLoginAttempts,
+  getLoginThrottle,
+  recordFailedLogin,
+} from "./login-throttle";
+import { recordAuditEvent } from "./audit";
 
 type CreatePageBody = {
   pageId: string;
   profile?: unknown;
-  adminPassword: string;
+  contactSchema?: unknown;
+  contactSettings?: unknown;
+  accessControl?: unknown;
+  adminEmail: string;
+  adminPassword?: string;
+  adminOauthProvider?: string;
+  adminOauthId?: string;
   plan?: unknown;
+  links?: unknown;
+  privateLinks?: unknown;
+  slugs?: unknown;
+  theme?: unknown;
 };
 
 type UpdatePageBody = {
   profile?: unknown;
   plan?: unknown;
+  links?: unknown;
+  privateLinks?: unknown;
+  contactSchema?: unknown;
+  contactSettings?: unknown;
+  accessControl?: unknown;
+  adminPassword?: string;
+  slugs?: unknown;
+  theme?: unknown;
 };
 
 type LoginBody = {
@@ -18,11 +89,230 @@ type LoginBody = {
   password?: string;
 };
 
+type NormalizedCreatePage = {
+  pageId: string;
+  profile: Record<string, unknown>;
+  contactSchema: unknown[];
+  contactSettings: Record<string, unknown>;
+  accessControl: Record<string, unknown>;
+  adminEmail: string;
+  adminPassword?: string;
+  adminOauthProvider?: string;
+  adminOauthId?: string;
+  plan: unknown;
+  links: unknown[];
+  privateLinks: unknown[];
+  slugs: string[];
+  theme?: string;
+};
+
+type BulkCreateBody = {
+  pages?: CreatePageBody[];
+};
+
+class CreatePageError extends Error {
+  status: number;
+
+  constructor(message: string, status = 400) {
+    super(message);
+    this.status = status;
+  }
+}
+
+const MAX_BODY_BYTES = 256 * 1024;
+
+function validateProfile(profile: unknown) {
+  return validateProfileShared(profile);
+}
+
+function validateContactSchema(raw: unknown) {
+  return validateContactSchemaShared(raw);
+}
+
+function validateContactSettings(raw: unknown) {
+  return validateContactSettingsShared(raw);
+}
+
+function validateAccessControl(raw: unknown) {
+  return validateAccessControlShared(raw);
+}
+
+function validateLinks(rawLinks: unknown, defaultPrivate = false) {
+  return validateLinksShared(rawLinks, defaultPrivate);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function validateTheme(raw: unknown) {
+  return validateThemeShared(raw);
+}
+
+function normalizeCreatePageBody(
+  body: CreatePageBody | null
+): NormalizedCreatePage {
+  if (!body) {
+    throw new CreatePageError("pageId와 관리자 이메일은 필수입니다", 400);
+  }
+
+  const { pageId, error: pageIdError } = validatePageId(body.pageId);
+  if (pageIdError) {
+    throw new CreatePageError(pageIdError, 400);
+  }
+
+  const { email: adminEmail, error: emailError } = validateEmail(body.adminEmail);
+  if (emailError) {
+    throw new CreatePageError(emailError, 400);
+  }
+
+  const isOAuth =
+    typeof body.adminOauthProvider === "string" && typeof body.adminOauthId === "string";
+
+  if (!isOAuth && (typeof body.adminPassword !== "string" || !body.adminPassword.trim())) {
+    throw new CreatePageError("관리자 비밀번호가 필요합니다", 400);
+  }
+
+  const { error: profileError, profile } = validateProfile(body.profile);
+  if (profileError) {
+    throw new CreatePageError(profileError, 400);
+  }
+
+  const { error: linkError, publicLinks, privateLinks } = validateLinks(body.links);
+  if (linkError) {
+    throw new CreatePageError(linkError, 400);
+  }
+
+  const providedPrivate = validateLinks((body as any).privateLinks ?? [], true);
+  if (providedPrivate?.error) {
+    throw new CreatePageError(providedPrivate.error, 400);
+  }
+
+  const { error: contactError, schema: contactSchema } = validateContactSchema(
+    body.contactSchema
+  );
+  if (contactError) {
+    throw new CreatePageError(contactError, 400);
+  }
+
+  const { error: contactSettingsError, settings: contactSettings } = validateContactSettings(
+    body.contactSettings
+  );
+  if (contactSettingsError) {
+    throw new CreatePageError(contactSettingsError, 400);
+  }
+
+  const { error: accessError, accessControl } = validateAccessControl(body.accessControl);
+  if (accessError) {
+    throw new CreatePageError(accessError, 400);
+  }
+
+  const { error: themeError, theme } = validateTheme(body.theme);
+  if (themeError) {
+    throw new CreatePageError(themeError, 400);
+  }
+
+  const { planId, error: planError } = validatePlanId(body.plan);
+  if (planError) {
+    throw new CreatePageError(planError, 400);
+  }
+
+  return {
+    pageId,
+    profile: profile ?? {},
+    contactSchema: contactSchema ?? [],
+    contactSettings: contactSettings ?? { enabled: false },
+    accessControl: accessControl ?? { enabled: false },
+    adminEmail,
+    adminPassword: body.adminPassword,
+    adminOauthProvider: body.adminOauthProvider,
+    adminOauthId: body.adminOauthId,
+    plan: planId ?? null,
+    links: publicLinks ?? [],
+    privateLinks: [
+      ...(privateLinks ?? []),
+      ...(providedPrivate?.privateLinks ?? []),
+    ],
+    slugs: normalizeSlugs(body.slugs, pageId),
+    theme: typeof theme === "string" ? theme : "classic",
+  };
+}
+
+async function persistCreatePage(env: any, data: NormalizedCreatePage) {
+  const planId = typeof data.plan === "string" ? data.plan : "free";
+  await enforcePlanLimit(env, planId, "create_page");
+  await enforceContactFieldLimit(env, planId, data.contactSchema?.length ?? 0);
+  if (data.slugs.length) {
+    await enforcePlanLimit(env, planId, "update_slug");
+  }
+  const allLinks = [...(data.links ?? []), ...(data.privateLinks ?? [])];
+  if (hasPrivateLinks(allLinks)) {
+    await enforcePlanLimit(env, planId, "create_private_link");
+    await enforcePrivateLinkLimit(env, planId, data.privateLinks?.length ?? 0);
+  }
+
+  const conflictingSlug = await findConflictingSlug(env, data.slugs, data.pageId);
+  if (conflictingSlug) {
+    throw new CreatePageError(
+      `이미 다른 페이지에 사용 중인 슬러그입니다: ${conflictingSlug}`,
+      409
+    );
+  }
+
+  const pageData = {
+    profile: data.profile ?? {},
+    links: Array.isArray(data.links) ? data.links : [],
+    privateLinks: Array.isArray(data.privateLinks) ? data.privateLinks : [],
+    contactSchema: Array.isArray(data.contactSchema) ? data.contactSchema : [],
+    contactSettings: data.contactSettings ?? { enabled: false },
+    accessControl: data.accessControl ?? { enabled: false },
+    slugs: data.slugs ?? [],
+    plan: data.plan ?? null,
+    theme: typeof data.theme === "string" ? data.theme : "classic",
+  };
+
+  await env.PAGE_KV.put(`page:${data.pageId}`, JSON.stringify(pageData));
+
+  // 2. 유저 정보 준비 (users 테이블)
+  const adminUser = await findOrCreateUser(env, {
+    email: data.adminEmail,
+    password: data.adminPassword,
+    oauthProvider: data.adminOauthProvider,
+    oauthId: data.adminOauthId,
+  });
+
+  // [중요!! 순서 변경] 3. 부모 테이블인 page_meta를 먼저 INSERT 합니다.
+  await env.DB.prepare(
+    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links, plan_id) VALUES (?, ?, ?, ?, ?, ?)"
+  )
+    .bind(
+      data.pageId,
+      (data.profile as any)?.name ?? null,
+      (data.profile as any)?.photoUrl ?? null,
+      (data.profile as any)?.description ?? null,
+      JSON.stringify((data as any).links ?? []),
+      typeof data.plan === "string" ? data.plan : "free"
+    )
+    .run();
+
+  // 4. 부모가 생성된 후 자식 테이블인 page_admins를 INSERT 합니다.
+  await env.DB.prepare("INSERT OR REPLACE INTO page_admins (page_id, user_id) VALUES (?, ?)")
+    .bind(data.pageId, adminUser.id)
+    .run();
+
+  // 5. 슬러그 맵 및 기타 로직 마무리
+  await replaceSlugMap(env, data.pageId, data.slugs);
+}
+
 export async function superAdminLogin(
   req: Request,
   env: any,
   headers: HeadersInit
 ): Promise<Response> {
+  if (!hasSessionSecret(env)) {
+    return errorResponse("TOKEN_SECRET 또는 SESSION_SECRET이 필요합니다.", 500, headers);
+  }
+
   const body = await parseJsonBody<LoginBody>(req);
   if (!body || typeof body.password !== "string") {
     return errorResponse("아이디와 비밀번호를 모두 입력하세요", 400, headers);
@@ -33,18 +323,143 @@ export async function superAdminLogin(
       ? body.username.trim()
       : "admin"; // 기본 슈퍼 관리자 호환
 
+  const loginIdentifier = buildLoginIdentifier(req, username);
+  const throttleState = await getLoginThrottle(env, "super", loginIdentifier);
+  if (throttleState.blocked) {
+    const waitSeconds = Math.max(1, Math.ceil((throttleState.resetAt - Date.now()) / 1000));
+    return errorResponse(
+      `로그인 시도가 너무 많습니다. ${waitSeconds}초 후 다시 시도하세요`,
+      429,
+      {
+        ...headers,
+        "Retry-After": String(waitSeconds),
+        "X-RateLimit-Reset": new Date(throttleState.resetAt).toISOString(),
+      }
+    );
+  }
+
   const row = await env.DB.prepare(
-    "SELECT username, password_hash FROM super_admin WHERE username = ? LIMIT 1"
+    "SELECT username, password_hash FROM super_admins WHERE username = ? LIMIT 1"
   )
     .bind(username)
     .first<{ username: string; password_hash: string }>();
 
-  if (!row || row.password_hash !== body.password) {
-    return errorResponse("인증에 실패했습니다", 401, headers);
+  const passwordCheck = await verifyPasswordWithUpgrade(
+    env,
+    body.password,
+    row?.password_hash ?? null
+  );
+
+  if (!row || !passwordCheck.valid) {
+    const nextState = await recordFailedLogin(env, "super", loginIdentifier);
+    const waitSeconds = Math.max(1, Math.ceil((nextState.resetAt - Date.now()) / 1000));
+    if (nextState.blocked) {
+      return errorResponse(
+        `로그인 시도가 너무 많습니다. ${waitSeconds}초 후 다시 시도하세요`,
+        429,
+        {
+          ...headers,
+          "Retry-After": String(waitSeconds),
+          "X-RateLimit-Remaining": "0",
+          "X-RateLimit-Reset": new Date(nextState.resetAt).toISOString(),
+        }
+      );
+    }
+    return errorResponse(
+      `인증에 실패했습니다. 남은 시도 횟수: ${nextState.remaining}`,
+      401,
+      {
+        ...headers,
+        "X-RateLimit-Remaining": String(nextState.remaining),
+        "X-RateLimit-Reset": new Date(nextState.resetAt).toISOString(),
+      }
+    );
   }
 
-  const session = await createSessionToken(env, "super", "super-admin");
+  if (passwordCheck.upgradedHash) {
+    await env.DB.prepare(
+      "UPDATE super_admins SET password_hash = ? WHERE username = ?"
+    )
+      .bind(passwordCheck.upgradedHash, username)
+      .run();
+  }
+
+  await clearLoginAttempts(env, "super", loginIdentifier);
+  const ttlSeconds = resolveSessionTtl(env, "super");
+  const session = await createSessionToken(env, "super", "super-admin", ttlSeconds);
   return jsonResponse(session, 200, headers);
+}
+
+export async function superAdminLogout(req: Request, env: any, headers: HeadersInit) {
+  const token = getBearerToken(req);
+  const valid = await verifySessionToken(env, "super", token);
+
+  if (!valid) {
+    return errorResponse("유효한 슈퍼 관리자 세션이 없습니다", 401, headers);
+  }
+
+  await revokeSessionToken(env, "super", token);
+  return jsonResponse({ success: true, message: "로그아웃되었습니다" }, 200, headers);
+}
+
+export async function bootstrapSuperAdmin(
+  req: Request,
+  env: any,
+  headers: HeadersInit
+): Promise<Response> {
+  if (!hasSessionSecret(env)) {
+    return errorResponse("TOKEN_SECRET 또는 SESSION_SECRET이 필요합니다.", 500, headers);
+  }
+
+  const body = await parseJsonBody<LoginBody>(req);
+  if (!body || typeof body.password !== "string") {
+    return errorResponse("아이디와 비밀번호를 모두 입력하세요", 400, headers);
+  }
+
+  const username =
+    typeof body.username === "string" && body.username.trim()
+      ? body.username.trim()
+      : "admin";
+
+  if (username.length < 3) {
+    return errorResponse("아이디는 3자 이상이어야 합니다", 400, headers);
+  }
+
+  if (body.password.trim().length < 8) {
+    return errorResponse("비밀번호는 8자 이상으로 설정하세요", 400, headers);
+  }
+
+  const countRow = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM super_admins"
+  ).first<{ count: number }>();
+  const adminCount = Number(countRow?.count ?? 0);
+
+  if (adminCount > 0) {
+    const token = getBearerToken(req);
+    const authorized = await verifySessionToken(env, "super", token);
+    if (!authorized) {
+      return errorResponse(
+        "이미 계정이 있어 추가/초기화하려면 슈퍼 관리자 토큰이 필요합니다",
+        401,
+        headers
+      );
+    }
+  }
+
+  const passwordHash = await hashPassword(body.password);
+  await env.DB.prepare(
+    "INSERT OR REPLACE INTO super_admins (username, password_hash) VALUES (?, ?)"
+  )
+    .bind(username, passwordHash)
+    .run();
+
+  const status = adminCount === 0 ? 201 : 200;
+  const mode = adminCount === 0 ? "bootstrapped" : "updated";
+  return jsonResponse(
+    { success: true, username, mode, passwordHash },
+    status,
+    headers
+  );
 }
 
 export async function createPage(
@@ -52,52 +467,273 @@ export async function createPage(
   env: any,
   headers: HeadersInit
 ): Promise<Response> {
-  const body = await parseJsonBody<CreatePageBody>(req);
-  if (!body || !body.pageId || !body.adminPassword) {
-    return errorResponse("pageId와 adminPassword는 필수입니다", 400, headers);
+  try {
+    const { data: body, error: bodyError } = await parseJsonBodyWithLimit<CreatePageBody>(
+      req,
+      MAX_BODY_BYTES
+    );
+    if (bodyError) {
+      return errorResponse(bodyError, 413, headers);
+    }
+    const normalized = normalizeCreatePageBody(body);
+    await persistCreatePage(env, normalized);
+    const token = getBearerToken(req);
+    const actorUserId = (await getSessionSubject(env, "super", token)) || "super-admin";
+    await recordAuditEvent(env, {
+      pageId: normalized.pageId,
+      actorUserId,
+      action: "page.created.super",
+      metadata: { plan: normalized.plan },
+    });
+    return jsonResponse({ success: true, message: "Page created" }, 201, headers);
+  } catch (error) {
+    if (error instanceof CreatePageError) {
+      return errorResponse(error.message, error.status, headers);
+    }
+    if (error instanceof PlanLimitError) {
+      return errorResponseWithCode(error.message, "PLAN_LIMIT_EXCEEDED", error.status, headers);
+    }
+    throw error;
   }
-
-  const pageData = { profile: body.profile ?? {}, plan: body.plan ?? null };
-  await env.PAGE_KV.put(`page:${body.pageId}`, JSON.stringify(pageData));
-  await env.PAGE_KV.put(`page_auth:${body.pageId}`, body.adminPassword);
-
-  await env.DB.prepare(
-    "INSERT OR REPLACE INTO page_auth (page_id, password_hash) VALUES (?, ?)"
-  )
-    .bind(body.pageId, body.adminPassword)
-    .run();
-
-  await env.DB.prepare(
-    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
-  )
-    .bind(
-      body.pageId,
-      (body.profile as any)?.name ?? null,
-      (body.profile as any)?.photoUrl ?? null,
-      (body.profile as any)?.description ?? null,
-      JSON.stringify((body as any).links ?? [])
-    )
-    .run();
-
-  return jsonResponse({ success: true, message: "Page created" }, 201, headers);
 }
 
-export async function listPages(env: any, headers: HeadersInit): Promise<Response> {
-  const dbRows = await env.DB.prepare(
-    "SELECT page_id, name, photo_url, description, links FROM page_meta"
-  ).all<{ page_id: string; name: string | null; photo_url: string | null; description: string | null; links: string | null }>();
+export async function bulkCreatePages(
+  req: Request,
+  env: any,
+  headers: HeadersInit
+): Promise<Response> {
+  const { data: body, error: bodyError } = await parseJsonBodyWithLimit<BulkCreateBody>(
+    req,
+    MAX_BODY_BYTES
+  );
+  if (bodyError) {
+    return errorResponse(bodyError, 413, headers);
+  }
+  if (!body || !Array.isArray(body.pages) || !body.pages.length) {
+    return errorResponse(
+      "업로드할 페이지 데이터가 없습니다. pages 배열을 확인하세요.",
+      400,
+      headers
+    );
+  }
 
-  const mapped = (dbRows?.results ?? []).map((row) => ({
-    pageId: row.page_id,
-    profile: {
-      name: row.name,
-      photoUrl: row.photo_url,
-      description: row.description,
+  const results: { pageId: string; success: boolean; message: string; status: number }[] = [];
+  const token = getBearerToken(req);
+  const actorUserId = (await getSessionSubject(env, "super", token)) || "super-admin";
+
+  for (const raw of body.pages) {
+    let normalized: NormalizedCreatePage;
+    try {
+      normalized = normalizeCreatePageBody(raw as any);
+      await persistCreatePage(env, normalized);
+      results.push({
+        pageId: normalized.pageId,
+        success: true,
+        message: "created",
+        status: 201,
+      });
+      await recordAuditEvent(env, {
+        pageId: normalized.pageId,
+        actorUserId,
+        action: "page.created.bulk",
+        metadata: { plan: normalized.plan },
+      });
+    } catch (error) {
+      const status =
+        error instanceof CreatePageError || error instanceof PlanLimitError
+          ? error.status
+          : 500;
+      const message =
+        error instanceof CreatePageError || error instanceof PlanLimitError
+          ? error.message
+          : "알 수 없는 오류";
+      const pageId = (raw as any)?.pageId || "(미지정)";
+      results.push({
+        pageId: String(pageId),
+        success: false,
+        message,
+        status,
+      });
+    }
+  }
+
+  const successCount = results.filter((item) => item.success).length;
+  const failedCount = results.length - successCount;
+  const status = failedCount && successCount ? 207 : failedCount ? 400 : 201;
+
+  return jsonResponse(
+    {
+      summary: {
+        total: results.length,
+        success: successCount,
+        failed: failedCount,
+      },
+      results,
     },
-    links: safeParseLinks(row.links),
-  }));
+    status,
+    headers
+  );
+}
 
-  return jsonResponse(mapped, 200, headers);
+export async function listPages(
+  req: Request,
+  env: any,
+  headers: HeadersInit
+): Promise<Response> {
+  const url = new URL(req.url);
+  const page = Math.max(1, Number(url.searchParams.get("page")) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number(url.searchParams.get("pageSize")) || 30));
+  const search = (url.searchParams.get("search") || "").trim();
+
+  const hasSearch = !!search;
+  const likeSearch = `%${search}%`;
+
+  const baseQuery =
+    "FROM page_meta pm " +
+    (hasSearch ? "LEFT JOIN slug_map sm ON pm.page_id = sm.page_id " : "") +
+    (hasSearch
+      ? "WHERE pm.page_id LIKE ? OR pm.name LIKE ? OR sm.display_name LIKE ?"
+      : "");
+
+  const countParams = hasSearch ? [likeSearch, likeSearch, likeSearch] : [];
+  let countStmt = env.DB.prepare(
+    `SELECT COUNT(DISTINCT pm.page_id) AS total ${baseQuery}`
+  );
+  if (countParams.length) {
+    countStmt = countStmt.bind(...countParams);
+  }
+  const countRow = await countStmt.first<{ total: number }>();
+
+  const total = Number(countRow?.total || 0);
+  const offset = (page - 1) * pageSize;
+
+  const dataParams = hasSearch
+    ? [likeSearch, likeSearch, likeSearch, pageSize, offset]
+    : [pageSize, offset];
+
+  let dataStmt = env.DB.prepare(
+    `SELECT DISTINCT pm.page_id, pm.name, pm.photo_url, pm.description, pm.links, pm.plan_id ${baseQuery} ORDER BY pm.page_id LIMIT ? OFFSET ?`
+  );
+  if (dataParams.length) {
+    dataStmt = dataStmt.bind(...dataParams);
+  }
+
+  const dbRows = await dataStmt.all<{
+    page_id: string;
+    name: string | null;
+    photo_url: string | null;
+    description: string | null;
+    links: string | null;
+    plan_id: string | null;
+  }>();
+
+  const mapped = await Promise.all(
+    (dbRows?.results ?? []).map(async (row) => {
+      const kvValue = await env.PAGE_KV.get(`page:${row.page_id}`);
+      let plan: string | null = (row as any).plan_id ?? null;
+      if (kvValue) {
+        try {
+          plan = JSON.parse(kvValue).plan ?? plan;
+        } catch (error) {
+          plan = plan ?? null;
+        }
+      }
+
+      return {
+        pageId: row.page_id,
+        profile: {
+          name: row.name,
+          photoUrl: row.photo_url,
+          description: row.description,
+        },
+        links: safeParseLinks(row.links),
+        plan,
+        slugs: await getSlugsForPage(env, row.page_id),
+      };
+    })
+  );
+
+  return jsonResponse(
+    {
+      items: mapped,
+      total,
+      page,
+      pageSize,
+    },
+    200,
+    headers
+  );
+}
+
+export async function getAdminPage(
+  env: any,
+  pageId: string,
+  headers: HeadersInit
+): Promise<Response> {
+  const canonicalPageId = await resolvePageId(env, pageId);
+  const row = await env.DB.prepare(
+    "SELECT page_id, name, photo_url, description, links, plan_id FROM page_meta WHERE page_id = ? LIMIT 1"
+  )
+    .bind(canonicalPageId)
+    .first<{
+      page_id: string;
+      name: string | null;
+      photo_url: string | null;
+      description: string | null;
+      links: string | null;
+      plan_id: string | null;
+    }>();
+
+  if (!row) {
+    return errorResponse("Page not found", 404, headers);
+  }
+
+  const kvValue = await env.PAGE_KV.get(`page:${row.page_id}`);
+  let plan: string | null = row?.plan_id ?? null;
+  let privateLinks: unknown[] = [];
+  let contactSchema: unknown[] = [];
+  let contactSettings: Record<string, unknown> | undefined;
+  let slugs = await getSlugsForPage(env, row.page_id);
+  let theme: string | null = null;
+  if (kvValue) {
+    try {
+      const parsed = JSON.parse(kvValue);
+      plan = parsed.plan ?? null;
+      privateLinks = Array.isArray(parsed.privateLinks) ? parsed.privateLinks : [];
+      contactSchema = Array.isArray(parsed.contactSchema)
+        ? parsed.contactSchema
+        : [];
+      contactSettings = parsed.contactSettings && typeof parsed.contactSettings === "object"
+        ? parsed.contactSettings
+        : undefined;
+      if (Array.isArray(parsed.slugs) && parsed.slugs.length) {
+        slugs = parsed.slugs;
+      }
+      theme = typeof parsed.theme === "string" ? parsed.theme : null;
+    } catch (error) {
+      plan = null;
+    }
+  }
+
+  return jsonResponse(
+    {
+      pageId: row.page_id,
+      profile: {
+        name: row.name,
+        photoUrl: row.photo_url,
+        description: row.description,
+      },
+      links: safeParseLinks(row.links),
+      plan: plan ?? row.plan_id ?? null,
+      slugs,
+      privateLinks,
+      contactSchema,
+      contactSettings,
+      theme: theme ?? "classic",
+    },
+    200,
+    headers
+  );
 }
 
 export async function deletePage(
@@ -105,21 +741,31 @@ export async function deletePage(
   pageId: string,
   headers: HeadersInit
 ): Promise<Response> {
-  const exists = await env.PAGE_KV.get(`page:${pageId}`);
+  const canonicalPageId = await resolvePageId(env, pageId);
+
+  const exists = await env.PAGE_KV.get(`page:${canonicalPageId}`);
   if (!exists) {
     return errorResponse("Page not found", 404, headers);
   }
 
-  await env.PAGE_KV.delete(`page:${pageId}`);
-  await env.PAGE_KV.delete(`page_auth:${pageId}`);
-
-  await env.DB.prepare("DELETE FROM page_auth WHERE page_id = ?")
-    .bind(pageId)
+  await env.PAGE_KV.delete(`page:${canonicalPageId}`);
+  await env.DB.prepare("DELETE FROM page_admins WHERE page_id = ?")
+    .bind(canonicalPageId)
     .run();
 
   await env.DB.prepare("DELETE FROM page_meta WHERE page_id = ?")
-    .bind(pageId)
+    .bind(canonicalPageId)
     .run();
+
+  await env.DB.prepare("DELETE FROM slug_map WHERE page_id = ?")
+    .bind(canonicalPageId)
+    .run();
+
+  await recordAuditEvent(env, {
+    pageId: canonicalPageId,
+    actorUserId: "super-admin",
+    action: "page.deleted.super",
+  });
 
   return jsonResponse({ success: true, message: "Page deleted" }, 200, headers);
 }
@@ -130,30 +776,201 @@ export async function updatePage(
   pageId: string,
   headers: HeadersInit
 ): Promise<Response> {
-  const existingPage = await env.PAGE_KV.get(`page:${pageId}`);
+  const canonicalPageId = await resolvePageId(env, pageId);
+
+  const existingPage = await env.PAGE_KV.get(`page:${canonicalPageId}`);
   if (!existingPage) {
     return errorResponse("Page not found", 404, headers);
   }
 
-  const body = await parseJsonBody<UpdatePageBody>(req);
+  const { data: body, error: bodyError } = await parseJsonBodyWithLimit<UpdatePageBody>(
+    req,
+    MAX_BODY_BYTES
+  );
+  if (bodyError) {
+    return errorResponse(bodyError, 413, headers);
+  }
   if (!body) {
     return errorResponse("잘못된 요청 본문입니다", 400, headers);
   }
 
-  const updatedPage = { profile: body.profile ?? {}, plan: body.plan ?? null };
-  await env.PAGE_KV.put(`page:${pageId}`, JSON.stringify(updatedPage));
+  const { planId: nextPlanId, error: planError } = validatePlanId(body.plan);
+  if (planError) {
+    return errorResponse(planError, 400, headers);
+  }
+
+  let existingPlan: unknown = null;
+  let existingData: any = {};
+  try {
+    existingData = JSON.parse(existingPage);
+    existingPlan = existingData?.plan ?? null;
+  } catch (error) {
+    existingPlan = null;
+    existingData = {};
+  }
+
+  let slugs: string[] | null = null;
+  if (body.slugs !== undefined) {
+    slugs = normalizeSlugs(body.slugs, canonicalPageId);
+    const conflict = await findConflictingSlug(env, slugs, canonicalPageId);
+    if (conflict) {
+      return errorResponse(
+        `이미 다른 페이지에 사용 중인 슬러그입니다: ${conflict}`,
+        409,
+        headers
+      );
+    }
+
+    try {
+      await enforcePlanLimit(env, nextPlanId ?? existingPlan, "update_slug");
+    } catch (error) {
+      if (error instanceof PlanLimitError) {
+        return errorResponseWithCode(error.message, "PLAN_LIMIT_EXCEEDED", error.status, headers);
+      }
+      throw error;
+    }
+  } else {
+    const hasExistingSlugMap = await hasSlugMap(env, canonicalPageId);
+    if (!hasExistingSlugMap) {
+      slugs = await getSlugsForPage(env, canonicalPageId);
+    }
+  }
+
+  const { error: profileError, profile } = validateProfile(body.profile);
+  if (profileError) {
+    return errorResponse(profileError, 400, headers);
+  }
+
+  const {
+    error: linkError,
+    publicLinks,
+    privateLinks,
+    provided: linksProvided,
+  } = validateLinks(body.links);
+  if (linkError) {
+    return errorResponse(linkError, 400, headers);
+  }
+
+  const providedPrivate = validateLinks((body as any).privateLinks ?? [], true);
+  if (providedPrivate?.error) {
+    return errorResponse(providedPrivate.error, 400, headers);
+  }
+
+  const { error: contactError, schema, provided: contactProvided } = validateContactSchema(
+    body.contactSchema
+  );
+  if (contactError) {
+    return errorResponse(contactError, 400, headers);
+  }
+
+  const { error: contactSettingsError, settings: contactSettings } = validateContactSettings(
+    body.contactSettings
+  );
+  if (contactSettingsError) {
+    return errorResponse(contactSettingsError, 400, headers);
+  }
+
+  const { error: accessError, accessControl } = validateAccessControl(body.accessControl);
+  if (accessError) {
+    return errorResponse(accessError, 400, headers);
+  }
+
+  const { error: themeError, theme } = validateTheme(body.theme);
+  if (themeError) {
+    return errorResponse(themeError, 400, headers);
+  }
+
+  const nextPublicLinks = linksProvided ? publicLinks ?? [] : existingData.links ?? [];
+  const nextPrivateLinks = providedPrivate.provided
+    ? providedPrivate.privateLinks ?? []
+    : linksProvided && privateLinks !== undefined
+    ? privateLinks ?? []
+    : existingData.privateLinks ?? [];
+
+  const updatedPage = {
+    profile: profile ?? existingData.profile ?? {},
+    links: nextPublicLinks,
+    privateLinks: nextPrivateLinks,
+    contactSchema:
+      contactProvided || schema !== undefined
+        ? schema ?? []
+        : existingData.contactSchema ?? [],
+    contactSettings: contactSettings ?? existingData.contactSettings ?? { enabled: false },
+    accessControl: accessControl ?? existingData.accessControl ?? { enabled: false },
+    plan: nextPlanId ?? existingPlan ?? null,
+    slugs: slugs ?? existingData.slugs ?? [],
+    theme:
+      typeof theme === "string"
+        ? theme
+        : typeof existingData.theme === "string"
+        ? existingData.theme
+        : "classic",
+  };
+
+  const effectivePlan = typeof updatedPage.plan === "string" ? updatedPage.plan : "free";
+  if (contactProvided || schema !== undefined) {
+    try {
+      await enforceContactFieldLimit(env, effectivePlan, updatedPage.contactSchema?.length ?? 0);
+    } catch (error) {
+      if (error instanceof PlanLimitError) {
+        return errorResponseWithCode(error.message, "PLAN_LIMIT_EXCEEDED", error.status, headers);
+      }
+      throw error;
+    }
+  }
+
+  if (hasPrivateLinks([...updatedPage.links, ...(updatedPage.privateLinks ?? [])])) {
+    try {
+      await enforcePlanLimit(env, effectivePlan, "create_private_link");
+      if (providedPrivate.provided || linksProvided) {
+        await enforcePrivateLinkLimit(env, effectivePlan, updatedPage.privateLinks?.length ?? 0);
+      }
+    } catch (error) {
+      if (error instanceof PlanLimitError) {
+        return errorResponseWithCode(error.message, "PLAN_LIMIT_EXCEEDED", error.status, headers);
+      }
+      throw error;
+    }
+  }
+
+  await env.PAGE_KV.put(`page:${canonicalPageId}`, JSON.stringify(updatedPage));
+
+  if (body.adminPassword) {
+    const adminRow = await env.DB.prepare(
+      "SELECT user_id FROM page_admins WHERE page_id = ? LIMIT 1"
+    )
+      .bind(canonicalPageId)
+      .first<{ user_id: string }>();
+
+    if (adminRow?.user_id) {
+      await updateUserPassword(env, adminRow.user_id, body.adminPassword);
+    }
+  }
 
   await env.DB.prepare(
-    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links) VALUES (?, ?, ?, ?, ?)"
+    "INSERT OR REPLACE INTO page_meta (page_id, name, photo_url, description, links, plan_id) VALUES (?, ?, ?, ?, ?, ?)"
   )
     .bind(
-      pageId,
+      canonicalPageId,
       (updatedPage.profile as any)?.name ?? null,
       (updatedPage.profile as any)?.photoUrl ?? null,
       (updatedPage.profile as any)?.description ?? null,
-      JSON.stringify((body as any).links ?? [])
+      JSON.stringify(updatedPage.links),
+      typeof updatedPage.plan === "string" ? updatedPage.plan : "free"
     )
     .run();
+
+  if (slugs) {
+    await replaceSlugMap(env, canonicalPageId, slugs);
+  }
+
+  const token = getBearerToken(req);
+  const actorUserId = (await getSessionSubject(env, "super", token)) || "super-admin";
+  await recordAuditEvent(env, {
+    pageId: canonicalPageId,
+    actorUserId,
+    action: "page.updated.super",
+  });
 
   return jsonResponse({ success: true, message: "Page updated" }, 200, headers);
 }

@@ -3,8 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="api-base" content="https://infl-worker.loto09090909.workers.dev">
     <title>인플루언서 페이지 관리 시스템</title>
     <link rel="stylesheet" href="css/style.css">
+    <script src="/config.js"></script>
 </head>
 <body>
     <header>
@@ -15,6 +17,7 @@
                 <li><a href="admin.html">관리자 페이지</a></li>
             </ul>
         </nav>
+        <span id="env-badge" class="env-badge" aria-live="polite" style="display: none;"></span>
     </header>
 
     <section class="intro">
@@ -25,6 +28,7 @@
         <p>&copy; 2025 인플루언서 페이지 관리 시스템</p>
     </footer>
 
+    <script src="js/platforms.js"></script>
     <script src="js/script.js"></script>
 </body>
 </html>

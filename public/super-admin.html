@@ -3,41 +3,270 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="api-base" content="https://infl-worker.loto09090909.workers.dev">
     <title>슈퍼 관리자 페이지</title>
     <link rel="stylesheet" href="css/style.css">
+    <script src="/config.js"></script>
+    <style>
+        /* 탭 전용 추가 스타일 */
+        .admin-tabs {
+            display: flex;
+            gap: 5px;
+            margin: 20px auto;
+            max-width: 1200px;
+            padding: 0 20px;
+            border-bottom: 2px solid #e2e8f0;
+            position: sticky;
+            top: 0;
+            background: #f8fafc;
+            z-index: 100;
+        }
+        .tab-btn {
+            padding: 12px 24px;
+            border: none;
+            background: none;
+            cursor: pointer;
+            font-weight: 600;
+            color: #64748b;
+            border-bottom: 3px solid transparent;
+            transition: all 0.2s;
+            font-size: 0.95rem;
+        }
+        .tab-btn:hover { color: #16a34a; }
+        .tab-btn.active {
+            color: #16a34a;
+            border-bottom: 3px solid #16a34a;
+        }
+        .tab-content { display: none; animation: fadeIn 0.3s ease; }
+        .tab-content.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+        
+        /* 기존 레이아웃 보정 */
+        .page-hero { padding-bottom: 10px; }
+        .page-list { margin-top: 0; }
+    </style>
 </head>
-<body>
-    <header>
-        <h1>슈퍼 관리자 페이지</h1>
-        <nav>
-            <ul>
-                <li><a href="index.html">메인 페이지</a></li>
-                <li><a href="admin.html">페이지 관리자</a></li>
-            </ul>
-        </nav>
+<body class="page-admin">
+    <header class="page-hero">
+        <div>
+            <p class="eyebrow">슈퍼 관리자 시스템</p>
+            <h1>통합 페이지 관리 도구</h1>
+            <div class="page-context">
+                <span id="env-badge" class="env-badge" aria-live="polite" style="display: none;"></span>
+            </div>
+        </div>
+        <div class="hero-cta">
+            <a class="ghost-link" href="index.html">메인으로</a>
+            <button class="secondary" type="button" onclick="logoutSuperAdmin()">로그아웃</button>
+        </div>
     </header>
 
-    <section class="page-creation">
-        <h2>페이지 생성</h2>
-        <input id="pageName" type="text" placeholder="페이지 이름" />
-        <input id="pageSlug" type="text" placeholder="슬러그 (고유 이름)" />
-        <input id="pageDescription" type="text" placeholder="페이지 설명" />
-        <input id="pagePhoto" type="text" placeholder="사진 URL" />
-        <input id="adminPassword" type="password" placeholder="관리자 비밀번호" />
-        <button onclick="createPage()">페이지 생성</button>
-    </section>
+    <div id="sa-status" class="status-banner info" aria-live="polite">
+        슈퍼 관리자 인증 정보를 확인하고 있습니다.
+    </div>
 
-    <section class="page-list">
-        <h2>페이지 목록</h2>
-        <ul id="pages">
-            <!-- 동적으로 페이지 목록을 표시 -->
-        </ul>
-    </section>
+    <nav class="admin-tabs">
+        <button class="tab-btn active" onclick="switchTab('tab-listing')">페이지 목록</button>
+        <button class="tab-btn" id="btn-tab-form" onclick="switchTab('tab-form')">페이지 생성/수정</button>
+        <button class="tab-btn" onclick="switchTab('tab-theme')">테마 미리보기</button>
+        <button class="tab-btn" onclick="switchTab('tab-import')">대량 업로드</button>
+    </nav>
 
-    <footer>
-        <p>&copy; 2025 인플루언서 페이지 관리 시스템</p>
-    </footer>
+    <main class="page-list">
+        <section id="tab-listing" class="tab-content active">
+            <section class="card page-listing">
+                <div class="card-header">
+                    <div>
+                        <h2>생성된 페이지 목록</h2>
+                        <p class="help-text">등록된 모든 인플루언서 페이지를 관리하고 검색할 수 있습니다.</p>
+                    </div>
+                    <div class="page-list-controls">
+                        <input id="page-search" type="search" placeholder="이름 또는 슬러그 검색..." />
+                    </div>
+                </div>
+                <ul id="pages">
+                    </ul>
+                <div class="pagination">
+                    <button id="prev-page" type="button">이전</button>
+                    <span id="page-info"></span>
+                    <button id="next-page" type="button">다음</button>
+                </div>
+            </section>
+            
+            <section class="card api-card" id="api-debug" style="margin-top: 20px;"></section>
+        </section>
 
+        <section id="tab-form" class="tab-content">
+            <section class="card page-form">
+                <div class="card-header">
+                    <div>
+                        <h2 id="form-title">새 페이지 생성</h2>
+                        <p class="help-text">기본 정보와 관리자 계정, 링크 구성을 설정합니다.</p>
+                    </div>
+                </div>
+                
+                <div class="form-grid">
+                    <div class="input-group">
+                        <label>페이지 이름</label>
+                        <input id="pageName" type="text" placeholder="예: 홍길동 공식 링크" />
+                    </div>
+                    <div class="input-group">
+                        <label>대표 슬러그 (ID)</label>
+                        <input id="pageSlug" type="text" placeholder="예: gildong-official" />
+                    </div>
+                    <div class="input-group">
+                        <label>요금제 설정</label>
+                        <select id="plan">
+                            <option value="free">Free (기본)</option>
+                            <option value="basic">Basic (중급)</option>
+                            <option value="premium">Premium (고급)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-grid">
+                    <div class="input-group">
+                        <label>관리자 이메일</label>
+                        <input id="adminEmail" type="email" placeholder="admin@example.com" />
+                    </div>
+                    <div class="input-group">
+                        <label>관리자 비밀번호</label>
+                        <input id="adminPassword" type="password" placeholder="비워두면 기존 비밀번호 유지" />
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <label>페이지 설명 및 프로필 사진</label>
+                    <div class="inline-inputs">
+                        <input id="pageDescription" type="text" placeholder="간단한 소개글을 입력하세요" />
+                        <input id="pagePhoto" type="text" placeholder="사진 이미지 URL (https://...)" />
+                    </div>
+                </div>
+
+                <div class="form-row" style="background: #f1f5f9; padding: 15px; border-radius: 8px;">
+                    <label>별칭 슬러그 관리</label>
+                    <ul id="sa-slug-list" class="link-list"></ul>
+                    <div class="inline-inputs">
+                        <input id="saSlugInput" placeholder="추가할 별칭 입력">
+                        <button class="primary" onclick="addAliasSlug()">별칭 추가</button>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <label>링크 구성</label>
+                    <div class="platform-link-box">
+                        <div id="platform-selector" class="platform-selector"></div>
+                        <div class="platform-inputs">
+                            <div class="platform-prefix" id="platform-prefix">URL 자동 완성</div>
+                            <input id="saPlatformHandle" placeholder="ID 입력" />
+                            <input id="saPlatformName" placeholder="표시 이름" />
+                            <button onclick="addPlatformLink()">플랫폼 추가</button>
+                        </div>
+                    </div>
+                    
+                    <div class="custom-link-box" style="margin-top: 10px; border-top: 1px dashed #cbd5e1; padding-top: 10px;">
+                        <div class="inline-inputs">
+                            <input id="saLinkName" placeholder="커스텀 이름">
+                            <input id="saLinkUrl" placeholder="전체 URL (http...)">
+                            <input id="saLinkIcon" placeholder="아이콘 URL (선택)">
+                            <button class="secondary" onclick="addSuperAdminLink()">커스텀 추가</button>
+                        </div>
+                    </div>
+
+                    <h4 class="link-list-title" style="margin-top: 20px;">현재 링크 목록 (드래그하여 순서 변경)</h4>
+                    <ul id="sa-link-list" class="link-list"></ul>
+                </div>
+
+                <div class="form-actions">
+                    <button id="submit-btn" class="primary" onclick="submitPage()">저장하기</button>
+                    <button id="cancel-edit-btn" class="ghost" style="display: none;" onclick="handleCancelEdit()">수정 취소</button>
+                </div>
+            </section>
+        </section>
+
+        <section id="tab-theme" class="tab-content">
+            <section class="card theme-card preview-card">
+                <div class="card-header">
+                    <h2>테마 및 실시간 미리보기</h2>
+                    <p class="help-text">페이지의 디자인 톤을 결정합니다.</p>
+                </div>
+                <div id="sa-theme-options" class="theme-grid"></div>
+                
+                <div class="preview theme-scope" id="sa-theme-preview" style="margin-top: 30px;">
+                    <section class="user-card preview-user-card" style="border: 4px solid #e2e8f0;">
+                        <div class="profile user-profile">
+                            <img class="profile-photo" id="sa-theme-preview-photo" alt="프로필 사진">
+                            <h3 id="sa-theme-preview-name">페이지 이름</h3>
+                            <p class="profile-description" id="sa-theme-preview-desc"></p>
+                        </div>
+                        <div class="links user-links">
+                            <h3>미리보기 링크</h3>
+                            <ul id="sa-theme-preview-links" class="link-stack"></ul>
+                        </div>
+                    </section>
+                </div>
+            </section>
+        </section>
+
+        <section id="tab-import" class="tab-content">
+            <section class="card import-card">
+                <div class="card-header">
+                    <h2>엑셀/CSV 대량 생성</h2>
+                    <p class="help-text">수백 개의 페이지를 엑셀 파일 한 장으로 즉시 구축합니다.</p>
+                </div>
+                <div class="bulk-upload-controls" style="background: #f8fafc; padding: 20px; border-radius: 12px; border: 2px dashed #cbd5e1;">
+                    <input id="bulk-file-input" type="file" accept=".xlsx,.xls,.csv" />
+                    <div style="margin-top: 15px;">
+                        <button id="bulk-upload-btn" class="primary" type="button" disabled onclick="submitBulkUpload()">데이터 주입 시작</button>
+                        <button id="bulk-reset-btn" type="button" class="ghost" onclick="resetBulkUpload()">파일 제거</button>
+                    </div>
+                </div>
+                <div id="bulk-preview" class="bulk-preview help-text" style="margin-top: 20px;"></div>
+            </section>
+        </section>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="js/platforms.js"></script>
     <script src="js/suscript.js"></script>
+    <script>
+        // 탭 전환 로직
+        function switchTab(tabId) {
+            // 모든 탭 콘텐츠 숨김
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            // 모든 탭 버튼 비활성화
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+
+            // 선택된 탭 활성화
+            document.getElementById(tabId).classList.add('active');
+            event.currentTarget.classList.add('active');
+
+            // 탭별 추가 동작 (예: 목록 새로고침)
+            if (tabId === 'tab-listing') {
+                if (typeof loadPageList === 'function') loadPageList();
+            }
+        }
+
+        // 수정 버튼 클릭 시 탭 자동 전환을 위한 인터셉터
+        const originalEditPage = window.editPage;
+        window.editPage = function(pageId) {
+            switchTab('tab-form'); // 폼 탭으로 이동
+            const btn = document.getElementById('btn-tab-form');
+            if(btn) {
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            }
+            if (typeof originalEditPage === 'function') originalEditPage(pageId);
+        };
+
+        function handleCancelEdit() {
+            resetForm();
+            switchTab('tab-listing');
+        }
+    </script>
 </body>
 </html>

@@ -1,15 +1,16 @@
 # 시스템 점검 결과
 
 ## 1. 구현 및 동작 개요
-- **백엔드 라우팅**: Cloudflare Worker가 공개 페이지 조회(`/api/pages/:pageId`), 슈퍼 관리자 로그인 및 페이지 CRUD(`/api/admin/*`), 페이지 관리자 로그인/저장(`/api/page/:pageId/*`)을 처리합니다. CORS는 `ALLOWED_ORIGINS` 환경변수를 기반으로 설정하며, 인증 토큰은 KV에 저장된 세션 UUID로 검증합니다.【F:worker/index.ts†L1-L87】【F:worker/auth.ts†L1-L36】
-- **슈퍼 관리자**: D1 `super_admin` 테이블의 사용자명/비밀번호를 평문으로 조회 후 세션 토큰을 발급하며, 페이지 생성·목록·삭제·수정 시 KV와 D1(`page_auth`, `page_meta`)을 모두 갱신합니다.【F:worker/super-admin.ts†L21-L169】
-- **페이지 관리자**: D1(`page_auth`) 또는 KV에 저장된 비밀번호를 평문 비교하여 세션 토큰을 발급하고, 페이지 데이터 저장 시 KV와 `page_meta`를 덮어씁니다.【F:worker/page-admin.ts†L1-L59】
+- **백엔드 라우팅**: Cloudflare Worker가 공개 페이지 조회(`/api/pages/:pageId`), 슈퍼 관리자 로그인 및 페이지 CRUD(`/api/admin/*`), 페이지 관리자 로그인/저장(`/api/page/:pageId/*`)을 처리합니다. CORS는 `ALLOWED_ORIGINS` 환경변수를 기반으로 설정하며, 인증 토큰은 `TOKEN_SECRET` HMAC 서명을 검증하거나 과거 KV UUID 세션을 호환 확인합니다.【F:worker/index.ts†L13-L90】【F:worker/auth.ts†L4-L93】【F:worker/auth.ts†L95-L152】
+- **슈퍼 관리자**: D1 `super_admin` 테이블의 PBKDF2 또는 기존 SHA-256 해시를 검증해 서명 토큰을 발급하며, 페이지 생성·목록·삭제·수정 시 KV와 D1(`page_auth`, `page_meta`)을 모두 갱신합니다.【F:worker/super-admin.ts†L21-L169】【F:worker/super-admin.ts†L301-L376】
+- **페이지 관리자**: D1(`page_admins`)의 관리자와 사용자 인증 정보를 비교해 서명 토큰을 발급하고, 페이지 데이터 저장 시 KV와 `page_meta`를 덮어씁니다.【F:worker/page-admin.ts†L1-L105】【F:worker/page-admin.ts†L195-L286】
 - **페이지 조회**: 우선 D1 `page_meta`를 조회하고 없을 경우 KV `page:{pageId}`를 반환합니다. JSON 파싱 실패 시 500 오류를 보냅니다.【F:worker/page-view.ts†L1-L46】
+- **컨택트 제출/조회**: 공개 페이지에서 `contactSchema` 기반 폼을 제출하면 `/api/pages/:pageId/contact`가 IP별 제출 횟수를 제한하며 KV에 저장하고, `contactSettings.enabled`가 true인 페이지만 노출·접수하며 설정된 웹훅으로 페이로드를 전달합니다. 페이지 관리자는 목록 조회와 CSV 다운로드를 지원합니다.【F:worker/contact.ts†L12-L198】【F:public/js/script.js†L491-L578】【F:public/js/script.js†L1339-L1462】
 - **프런트엔드 흐름**: 공통 스크립트가 하드코딩된 워커 도메인으로 API를 호출하며, 사용자 페이지일 때만 데이터 요청을 수행합니다. 슈퍼/페이지 관리자 로그인은 세션 토큰을 `sessionStorage`에 저장해 이후 요청에 사용하며, 페이지 관리자 로그인 폼은 URL의 pageId를 자동 채웁니다.【F:public/js/script.js†L1-L226】
 - **슈퍼 관리자 UI**: 별도 스크립트로 페이지 생성·목록·삭제·편집을 수행하고, 토큰이 없으면 로그인 페이지로 리다이렉트합니다.【F:public/js/suscript.js†L1-L123】
 
 ## 2. 주요 문제점
-- **평문 인증과 세션 무결성 부족**: 슈퍼/페이지 관리자 비밀번호를 해시 없이 비교하고 세션 토큰은 랜덤 UUID를 KV에 저장할 뿐, 서명/스코프/재사용 방지 설정이 없습니다. 세션 TTL(기본 1시간) 외 보안 속성이 부족합니다.【F:worker/auth.ts†L1-L36】【F:worker/super-admin.ts†L21-L47】【F:worker/page-admin.ts†L13-L35】
+- **레거시 해시 호환 부담**: 새 계정은 PBKDF2(SHA-256, 120k iteration, salt)로 저장하지만, 기존 SHA-256 해시도 로그인 시 허용돼 잔존 위험이 남습니다. 운영 단계에서 순차적으로 PBKDF2로 재발급/교체해야 합니다.【F:worker/users.ts†L19-L117】【F:worker/super-admin.ts†L301-L376】
 - **프런트/백 계약 불일치 및 하드코딩된 도메인**: `API_BASE`가 코드에 고정돼 환경별 분리가 불가능하며, 프런트 단의 저장/링크 추가 함수는 백엔드 라우트에 존재하지 않는 `/api/pages/save` 등을 호출합니다(데드 코드).【F:public/js/script.js†L1-L60】
 - **입력 검증 부재**: 요청 본문에 대한 스키마 검증이나 길이 제한이 없어 D1/KV에 임의 구조나 대형 페이로드가 저장될 수 있습니다. 에러 응답도 필드 단위 피드백이 없습니다.【F:worker/super-admin.ts†L50-L159】【F:worker/page-admin.ts†L37-L59】
 - **권한 경계 및 로깅 부족**: 페이지 저장 엔드포인트가 페이지 관리자 전용으로만 존재하고, 슈퍼 관리자의 페이지 수정/삭제와 동일 권한 분리가 부족합니다. 감사 로그, 실패 횟수 제한, IP 기반 레이트리밋이 없습니다.【F:worker/index.ts†L39-L87】【F:worker/super-admin.ts†L50-L159】
@@ -41,3 +42,32 @@
    - Sentry/Workers Trace 등 오류 추적을 붙여 500/401/404 발생 시점을 관찰하고, KV/D1 쿼리 실패 시 재시도 또는 폴백 전략을 마련하십시오.
 
 위 항목을 적용하면 로그인/관리 플로우의 안정성과 보안을 높이고, 환경별 라우팅/데이터 무결성 문제를 예방할 수 있습니다.
+
+## 4. 최근 미동작 원인 분석
+- **슬러그 라우팅과 Pages 규칙 충돌 가능성**: `_redirects`가 단일 세그먼트 슬러그(`/:slug`)를 `user.html`로 리라이트하지만, 최하단 `/* /index.html 200!`가 여전히 존재해 캐시나 우선순위 문제 시 인덱스로 포워딩될 여지가 있습니다. `user.html`이 제공되더라도 API 요청이 404/405/네트워크 오류이면 화면이 기본 템플릿으로 남을 수 있습니다.【F:public/_redirects†L1-L18】【F:public/js/script.js†L1-L76】
+- **페이지 데이터 미존재/슬러그 매핑 누락**: 사용자 페이지는 URL 세그먼트를 그대로 `GET /api/pages/:pageId`에 전달해 KV/D1에서 페이지 메타를 조회합니다. `slug_map`에 별칭이 없거나 `page_meta`/`page:{id}`가 비어 있으면 404로 끝나고 템플릿이 채워지지 않습니다.【F:public/js/script.js†L39-L73】【F:worker/page-view.ts†L10-L44】
+- **API BASE 불일치 시도**: 프런트는 `meta api-base` → 고정 워커 도메인 → pages.dev 유추 → 현재 오리진 순으로 순회합니다. 실제 배포 도메인이 이 목록과 다르면 모든 베이스가 실패해 데이터가 비어 보일 수 있습니다.【F:public/js/script.js†L1-L38】
+
+## 5. 단기 해결 가이드
+1) `_redirects`에서 최종 `/* /index.html 200!`를 제거하거나 주석으로 남기고, 로컬/스테이징에서 슬러그 호출이 항상 `user.html`을 반환하는지 점검합니다.
+2) Cloudflare Pages 캐시를 무효화한 뒤, `curl -I https://<도메인>/<slug>`로 응답 헤더의 리디렉션/리라이트 여부를 확인하고 200이 `user.html`인지 검사합니다.
+3) 슈퍼 관리자 생성 API가 `slug_map`과 `page_meta`를 모두 채웠는지 D1 콘솔에서 `SELECT * FROM slug_map WHERE display_name='<slug>'`로 검증하고, 없다면 재저장/수동 삽입합니다.【F:worker/super-admin.ts†L21-L169】
+4) `user.html`에서 `window.location.pathname`이 원하는 슬러그로 인식되는지 콘솔에서 `pathSegments` 값을 확인해 전역 `API_BASES`가 올바른지 함께 로깅합니다.【F:public/js/script.js†L48-L79】
+
+## 6. 향후 추가 개발 제안 (슬러그/라우팅 중심)
+- **서버사이드 렌더링/HTML 프리패치**: `Pages Functions`나 Worker에서 슬러그 요청 시 `user.html`을 불러와 KV/D1 데이터를 주입한 뒤 반환하면, 클라이언트 JS 실패 시에도 완성된 HTML이 노출됩니다.
+- **라우트·도메인 검증 자동화**: 헬스체크 스크립트로 모든 슬러그(또는 샘플) 경로에 대해 200/콘텐츠 서명 여부를 배포 직후 검증하고 실패 시 알림하도록 CI를 구성합니다.
+- **슬러그 예약어·중복 관리**: `slug_map`에 고유 제약을 적용하고, 관리자 UI에서 예약어(`admin`, `login` 등) 사용 시 경고/차단 로직을 추가해 리다이렉트 충돌을 예방합니다.
+- **읽기 전용 CDN 캐시**: 공개 페이지 응답을 `Cache-Control`과 `ETag`로 캐싱하고, 페이지 저장 시 해당 슬러그 경로만 퍼지하도록 해 성능과 일관성을 확보합니다.
+- **API 베이스 주입 개선**: 빌드 시 환경변수로 `API_BASE`를 삽입하고, 메타 태그 대신 `config.js`를 생성해 Pages/Workers 환경을 분리·문서화하면 잘못된 베이스로의 호출을 방지할 수 있습니다.
+
+## 6. 신규 기능 제안 요약 (가입/프라이빗/알림)
+- **회원가입 및 자동 페이지 프로비저닝**: 이메일·소셜 가입 후 기본 페이지와 페이지 관리자 계정을 동시 생성하고, 슈퍼 관리자 생성 모델과 역할 충돌을 방지하는 정책을 정의합니다.
+- **플랜/권한 세분화**: free/basic/premium 플랜별 페이지·링크·컨택트·프라이빗 링크 한도와 만료 정책을 `plan_limits`로 관리하며, 업/다운그레이드 시 초과 자원 처리 방식을 명시합니다.
+- **프라이빗 페이지 만료/입장 제어**: 난수 세그먼트·입장 코드·N회/N분 만료·재발행을 지원해 일회성/다회성 비밀 링크를 구성하고, 퍼블릭 페이지에도 선택 적용할 수 있는 옵션을 제공합니다.
+- **컨택트 알림 채널 확장**: 웹훅 외 이메일·카카오톡 등으로 문의 내용을 전달하고, 실패 로그·재시도·수신자 관리(페이지 관리자/슈퍼 관리자 선택)를 포함합니다.
+- **컨택트 폼 빌더 고도화**: 노출 토글 기본 비활성화, 필수/옵션/선택지 외 안내문·동의 체크·프리셋(명함/이벤트) 제공, 제출 이력/알림 연계를 포함한 고급 설정을 추가합니다.
+
+## 7. 테스트 및 운영 고려사항
+- **E2E 흐름 자동화**: 가입→페이지 자동 생성→프라이빗 링크 발행/만료→컨택트 제출/알림까지 통합 시나리오를 스크립트화합니다.
+- **관측성 강화**: 프라이빗 링크 만료, 컨택트 알림 실패, 플랜 한도 초과를 로깅·알림하고, 관리자 대시보드에서 상태/이력을 확인할 수 있게 합니다.

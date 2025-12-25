@@ -3,30 +3,38 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{PAGE_NAME}}의 프로필</title>
+    <meta name="api-base" content="https://infl-worker.loto09090909.workers.dev">
+    <title>{{PAGE_NAME}} 바로바로</title>
     <link rel="stylesheet" href="css/style.css">
+    <script src="/config.js"></script>
 </head>
-<body>
-    <header>
-        <h1>{{PAGE_NAME}}의 프로필</h1>
-    </header>
+<body class="user-view theme-scope">
+    <main class="user-shell">
+        <section class="user-card">
+            <header class="user-header">
+                <h1>{{PAGE_NAME}} 바로바로</h1>
+                <span id="env-badge" class="env-badge" aria-live="polite" style="display: none;"></span>
+            </header>
 
-    <section class="profile">
-        <img src="{{PAGE_PHOTO_URL}}" alt="{{PAGE_NAME}}" class="profile-photo">
-        <p>{{PAGE_DESCRIPTION}}</p>
-    </section>
+            <div class="profile user-profile">
+                <img src="{{PAGE_PHOTO_URL}}" alt="{{PAGE_NAME}}" class="profile-photo user-avatar">
+                <p class="profile-description">{{PAGE_DESCRIPTION}}</p>
+            </div>
 
-    <section class="links">
-        <h3>링크</h3>
-        <ul id="links-list">
-            <!-- Links will be dynamically inserted here -->
-        </ul>
-    </section>
+            <section class="links user-links">
+                <h3>링크</h3>
+                <ul id="links-list" class="link-stack">
+                    <!-- Links will be dynamically inserted here -->
+                </ul>
+            </section>
 
-    <footer>
-        <p>&copy; 2025 인플루언서 페이지</p>
-    </footer>
+            <footer class="user-footer">
+                <p>&copy; 2025 인플루언서 페이지</p>
+            </footer>
+        </section>
+    </main>
 
+    <script src="js/platforms.js"></script>
     <script src="js/script.js"></script>
 </body>
 </html>

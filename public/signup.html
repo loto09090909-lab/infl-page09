@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="api-base" content="https://infl-worker.loto09090909.workers.dev">
+    <title>회원가입</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="/config.js"></script>
+</head>
+<body>
+    <header>
+        <h1>회원가입</h1>
+        <span id="env-badge" class="env-badge" aria-live="polite" style="display: none;"></span>
+    </header>
+
+    <section class="card api-card" id="api-debug"></section>
+
+    <section class="status-banner" id="user-signup-status" style="display: none;"></section>
+
+    <section class="login-form" id="user-signup-form">
+        <input id="user-signup-email" type="email" placeholder="이메일">
+        <input id="user-signup-password" type="password" placeholder="비밀번호 (8자 이상)">
+        <div class="login-actions">
+            <button class="primary" onclick="userSignup()">가입</button>
+            <a class="ghost-link" href="/user-login">로그인</a>
+        </div>
+        <div class="oauth-actions">
+            <button class="secondary" type="button" onclick="startOAuth('google')">Google로 가입</button>
+            <button class="secondary" type="button" onclick="startOAuth('naver')">Naver로 가입</button>
+        </div>
+        <p class="help-text">가입 즉시 기본 페이지가 생성됩니다.</p>
+    </section>
+
+    <footer>
+        <p>&copy; 2025 인플루언서 페이지 관리 시스템</p>
+    </footer>
+
+    <script src="js/platforms.js"></script>
+    <script src="js/script.js"></script>
+</body>
+</html>
