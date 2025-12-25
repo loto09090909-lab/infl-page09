@@ -7,8 +7,8 @@ import {
   errorResponseWithCode,
   jsonResponse,
   parseJsonBody,
-  validateEmail,
 } from "./utils";
+import { validateSignupBody } from "./validators";
 
 export type UserRow = {
   id: string;
@@ -303,31 +303,21 @@ export async function signup(req: Request, env: any, headers: HeadersInit) {
   }
 
   const body = await parseJsonBody<AuthBody>(req);
-  if (!body) {
-    return errorResponse("이메일을 입력하세요", 400, headers);
-  }
-  const { email, error: emailError } = validateEmail(body.email);
-  if (emailError) {
-    return errorResponse(emailError, 400, headers);
-  }
-  const isOAuth = !!(body.oauthProvider && body.oauthId);
+  const { error: validationError, data: validatedBody } = validateSignupBody(body);
 
-  if (!isOAuth && typeof body.password !== "string") {
-    return errorResponse("비밀번호를 입력하세요", 400, headers);
-  }
-  if (!isOAuth && body.password.trim().length < 8) {
-    return errorResponse("비밀번호는 8자 이상이어야 합니다", 400, headers);
+  if (validationError || !validatedBody) {
+    return errorResponse(validationError || "잘못된 요청입니다.", 400, headers);
   }
 
-  const existing = await getUserByEmail(env, email);
+  const existing = await getUserByEmail(env, validatedBody.email);
   if (existing) {
     return errorResponse("이미 가입된 이메일입니다", 409, headers);
   }
 
-  const created = await createUser(env, { ...body, email });
+  const created = await createUser(env, validatedBody);
   let pageId: string | null = null;
   try {
-    pageId = await provisionDefaultPage(env, created.id, email);
+    pageId = await provisionDefaultPage(env, created.id, validatedBody.email);
   } catch (error) {
     if (error instanceof PlanLimitError) {
       return errorResponseWithCode(error.message, "PLAN_LIMIT_EXCEEDED", error.status, headers);

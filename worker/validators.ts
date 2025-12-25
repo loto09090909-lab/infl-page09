@@ -196,9 +196,115 @@ export function validateAccessControl(raw: unknown) {
   };
 }
 
+function isEmail(value: string): boolean {
+  // A simple regex, consider a more robust one for production
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+export function validateSignupBody(raw: unknown) {
+  if (!raw || typeof raw !== "object") {
+    return { error: "요청 본문이 필요합니다" };
+  }
+
+  const body = raw as Record<string, unknown>;
+  const email = sanitizeString(body.email, 254);
+
+  if (!email || !isEmail(email)) {
+    return { error: "유효한 이메일을 입력하세요" };
+  }
+
+  const oauthProvider = sanitizeString(body.oauthProvider, 50);
+  const oauthId = sanitizeString(body.oauthId, 100);
+  const isOAuth = !!(oauthProvider && oauthId);
+
+  const password = typeof body.password === "string" ? body.password.trim() : undefined;
+
+  if (!isOAuth && (!password || password.length < 8)) {
+    return { error: "비밀번호는 8자 이상이어야 합니다" };
+  }
+
+  return {
+    data: {
+      email,
+      ...(password && !isOAuth ? { password } : {}),
+      ...(isOAuth ? { oauthProvider, oauthId } : {}),
+    },
+  };
+}
+
+const MAX_FIELD_LENGTH = 2000;
+
+export function validateContactSubmission(
+  schema: any[],
+  rawAnswers: unknown
+): { error?: string; answers?: { label: string; type: string; value: string }[] } {
+  if (!Array.isArray(rawAnswers)) {
+    return { error: "answers는 배열이어야 합니다" };
+  }
+
+  const errors: string[] = [];
+  const answers = schema
+    .map((field) => {
+      const raw = rawAnswers.find((item: any) => item?.label === field.label);
+      const value = sanitizeString(raw?.value, MAX_FIELD_LENGTH) || "";
+
+      if (field.required && !value) {
+        errors.push(`${field.label}을(를) 입력해주세요.`);
+        return null;
+      }
+
+      if (!value) return null;
+
+      if (field.type === "email" && !isEmail(value)) {
+        errors.push(`${field.label}이 올바른 이메일 형식이 아닙니다.`);
+        return null;
+      }
+
+      if (field.type === "tel" && value.replace(/[^0-9+\-]/g, "").length < 6) {
+        errors.push(`${field.label}이 올바른 전화번호 형식인지 확인해주세요.`);
+        return null;
+      }
+
+      if (field.type === "url" && !isHttpUrl(value)) {
+        errors.push(`${field.label}은 http(s) URL이어야 합니다.`);
+        return null;
+      }
+
+      if (
+        (field.type === "select" || field.type === "checkbox") &&
+        Array.isArray(field.options) &&
+        field.options.length
+      ) {
+        const selections = value
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean);
+        const invalid = selections.find((item) => !field.options!.includes(item));
+        if (invalid) {
+          errors.push(`${field.label} 값이 허용된 옵션에 없습니다: ${invalid}`);
+          return null;
+        }
+      }
+
+      return {
+        label: field.label,
+        type: field.type,
+        value,
+      };
+    })
+    .filter(Boolean) as { label: string; type: string; value: string }[];
+
+  if (errors.length) {
+    return { error: errors.join(" ") };
+  }
+
+  return { answers };
+}
+
 export function validateTheme(raw: unknown) {
   if (raw === undefined) return { theme: undefined };
   if (typeof raw !== "string") return { error: "theme은 문자열이어야 합니다" };
+
 
   const trimmed = raw.trim();
   if (!trimmed) return { theme: "classic" };

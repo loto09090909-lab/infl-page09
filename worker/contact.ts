@@ -2,6 +2,7 @@ import { getBearerToken, verifySessionToken } from "./auth";
 import { resolvePageId } from "./slug";
 import { errorResponse, errorResponseWithCode, jsonResponse } from "./utils";
 import { enforcePlanLimit, getPagePlanId, PlanLimitError } from "./plan-limits";
+import { validateContactSubmission } from "./validators";
 
 type ContactField = {
   label: string;
@@ -428,64 +429,13 @@ export async function submitContact(
     return errorResponse("봇 검증에 실패했습니다", 400, headers);
   }
 
-  const answersInput = Array.isArray(body?.answers) ? body.answers : [];
-  if (!answersInput.length) {
-    return errorResponse("answers 배열이 필요합니다", 400, headers);
+  const { error, answers } = validateContactSubmission(schema, body?.answers);
+
+  if (error) {
+    return errorResponse(error, 422, headers);
   }
 
-  const errors: string[] = [];
-  const answers = schema
-    .map((field) => {
-      const raw = answersInput.find((item) => item?.label === field.label);
-      const value = sanitizeString(raw?.value, MAX_FIELD_LENGTH) || "";
-
-      if (field.required && !value) {
-        errors.push(`${field.label}을(를) 입력해주세요.`);
-        return null;
-      }
-
-      if (!value) return null;
-
-      if (field.type === "email" && value && !/^\S+@\S+\.\S+$/.test(value)) {
-        errors.push(`${field.label}이 올바른 이메일 형식이 아닙니다.`);
-        return null;
-      }
-
-      if (field.type === "tel" && value && value.replace(/[^0-9+\-]/g, "").length < 6) {
-        errors.push(`${field.label}이 올바른 전화번호 형식인지 확인해주세요.`);
-        return null;
-      }
-
-      if (field.type === "url" && value && !(value.startsWith("http://") || value.startsWith("https://"))) {
-        errors.push(`${field.label}은 http(s) URL이어야 합니다.`);
-        return null;
-      }
-
-      if ((field.type === "select" || field.type === "checkbox") && Array.isArray(field.options) && field.options.length) {
-        const selections = value
-          .split(",")
-          .map((item) => item.trim())
-          .filter(Boolean);
-        const invalid = selections.filter((item) => !field.options!.includes(item));
-        if (invalid.length) {
-          errors.push(`${field.label} 값이 허용된 옵션에 없습니다.`);
-          return null;
-        }
-      }
-
-      return {
-        label: field.label,
-        type: field.type,
-        value,
-      } as ContactSubmission["answers"][number];
-    })
-    .filter(Boolean) as ContactSubmission["answers"];
-
-  if (errors.length) {
-    return errorResponse(errors.join(" "), 422, headers);
-  }
-
-  if (!answers.length) {
+  if (!answers || !answers.length) {
     return errorResponse("제출할 답변이 없습니다", 400, headers);
   }
 

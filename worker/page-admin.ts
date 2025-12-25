@@ -222,17 +222,56 @@ export async function verifyPageSession(
   const token = getBearerToken(req);
   const canonicalPageId = await resolvePageId(env, pageId);
 
-  const pageTokenValid = await verifySessionToken(env, "page", token, canonicalPageId);
   const superTokenValid = await verifySessionToken(env, "super", token);
+  if (superTokenValid) {
+    return jsonResponse(
+      {
+        ok: true,
+        role: "super",
+        pageId: canonicalPageId,
+      },
+      200,
+      headers
+    );
+  }
 
-  if (!pageTokenValid && !superTokenValid) {
+  const pageTokenValid = await verifySessionToken(env, "page", token, canonicalPageId);
+  if (!pageTokenValid) {
     return errorResponse("페이지 관리자 인증이 필요합니다", 401, headers);
+  }
+
+  const userId = await getSessionSubject(env, "page", token);
+  if (!userId) {
+    return errorResponse("세션에서 사용자 ID를 찾을 수 없습니다", 500, headers);
+  }
+
+  const memberRow = await env.DB.prepare(
+    "SELECT role FROM page_members WHERE page_id = ? AND user_id = ? LIMIT 1"
+  )
+    .bind(canonicalPageId, userId)
+    .first<{ role: string }>();
+  
+  let role = memberRow?.role || null;
+
+  if (!role) {
+    const adminRow = await env.DB.prepare(
+      "SELECT 1 FROM page_admins WHERE page_id = ? AND user_id = ? LIMIT 1"
+    )
+      .bind(canonicalPageId, userId)
+      .first<{ "1": number }>();
+    if (adminRow) {
+      role = "owner";
+    }
+  }
+
+  if (!role) {
+    return errorResponse("페이지에 대한 사용자의 역할을 찾을 수 없습니다.", 403, headers);
   }
 
   return jsonResponse(
     {
       ok: true,
-      role: superTokenValid ? "super" : "page",
+      role: role,
       pageId: canonicalPageId,
     },
     200,

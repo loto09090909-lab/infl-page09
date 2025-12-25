@@ -1,27 +1,28 @@
-const DEFAULT_APP_CONFIG = {
-  // Cloudflare Pages 환경 변수(API_BASE)에서 주입될 값
-  apiBase: "__API_BASE_PLACEHOLDER__",
-  
-  // 배포 환경 라벨 (예: production, preview, local)
-  envLabel: "__ENV_LABEL_PLACEHOLDER__",
+// infl-page09/public/config.js
 
-  // 헬스체크 및 기타 기본 설정
-  healthPath: "/api/health",
-  allowQueryApiBase: true, // 테스트 시 api_base=? 쿼리로 변경 가능하도록 유지
+/**
+ * API 백엔드의 기본 URL을 결정합니다.
+ * 현재 페이지의 호스트네임을 기반으로 운영 환경과 로컬 개발 환경을 구분합니다.
+ *
+ * @returns {string} API 요청에 사용될 기본 URL
+ */
+function getApiBaseUrl() {
+  // 로컬 개발 환경 (Vite, http-server 등)
+  if (
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1"
+  ) {
+    // 로컬에서 실행 중인 Cloudflare Worker 주소
+    return "http://127.0.0.1:8787";
+  }
 
-  // 아래 탐색 기능들은 환경 변수가 주입된 경우 우선순위에서 밀리거나 꺼지게 됩니다.
-  usePagesDerivedBase: false,
-  useMetaApiBase: true,
-  useGlobalApiBase: true,
-  useKnownWorkerBase: false, // 하드코딩된 주소 사용 안 함
-  useCurrentOriginBase: true,
-  
-  // 필요 시 수동 지정용 (일반적으로 빈 값 유지)
-  apiBases: [],
-};
+  // 운영 환경 (Cloudflare Pages에 배포된 경우)
+  // 관례적으로 운영 워커는 동일한 도메인의 '/api' 경로 또는
+  // 별도의 서브도메인(예: api.yourdomain.com)을 사용할 수 있습니다.
+  // 이 프로젝트에서는 별도의 ور커 도메인을 사용하므로, 해당 주소를 명시합니다.
+  // 실제 프로젝트의 워커 주소로 변경해야 합니다.
+  return "https://infl-worker.your-username.workers.dev"; // 🚨 실제 워커 주소로 변경 필요
+}
 
-window.APP_CONFIG = {
-  ...DEFAULT_APP_CONFIG,
-  ...(window.__APP_CONFIG__ || {}),
-  ...(window.APP_CONFIG || {}),
-};
+// 전역 스코프에 함수를 할당하여 다른 스크립트에서 접근할 수 있도록 합니다.
+window.getApiBaseUrl = getApiBaseUrl;

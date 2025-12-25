@@ -1337,3 +1337,18 @@ body.user-view {
     font-weight: 700;
     color: #4b5563;
 }
+
+/* 권한별 UI 제어 */
+/* Viewer는 모든 수정 UI를 숨김 */
+.role-viewer .page-hero .hero-cta .primary,
+.role-viewer .link-management,
+.role-viewer .contact-card,
+.role-viewer .slug-card,
+.role-viewer #tab-advanced {
+    display: none;
+}
+
+/* Editor는 고급 설정(슬러그 관리 등)만 숨김 */
+.role-editor #tab-advanced {
+    display: none;
+}

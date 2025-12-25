@@ -3,7 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="api-base" content="https://infl-worker.loto09090909.workers.dev">
     <title>페이지 관리자 센터</title>
     <link rel="stylesheet" href="css/style.css">
     <script src="/config.js"></script>
@@ -87,7 +86,21 @@
                         <input id="contactFormTitle" placeholder="폼 제목">
                         <input id="contactWebhook" placeholder="웹훅 URL">
                     </div>
-                    <div id="contact-schema-list"></div>
+                    <div class="card-header" style="margin-top: 20px;"><h3>폼 필드 구성</h3></div>
+                    <div id="contact-schema-list" class="contact-schema-list"></div>
+                    <form id="new-contact-field-form" class="form-stack" style="margin-top: 10px; border-top: 1px dashed #e5e7eb; padding-top: 10px;">
+                        <div class="inline-inputs">
+                            <input id="new-field-label" placeholder="필드 라벨 (예: 연락처)" required>
+                            <select id="new-field-type">
+                                <option value="text">Text</option>
+                                <option value="email">Email</option>
+                                <option value="tel">Tel</option>
+                                <option value="url">URL</option>
+                                <option value="textarea">Textarea</option>
+                            </select>
+                            <button type="submit">필드 추가</button>
+                        </div>
+                    </form>
                 </section>
                 <section class="card" id="contact-inbox-card">
                     <div class="card-header"><h2>문의 내역</h2></div>
@@ -102,7 +115,6 @@
                 <input id="primary-slug-input" placeholder="대표 슬러그">
                 <div id="slug-chip-list" class="pill-list"></div>
             </section>
-            <section class="card api-card" id="api-debug"></section>
         </section>
     </main>
 
