@@ -34,25 +34,17 @@ async function saFetch(path, options = {}) {
 }
 
 function slugify(value) {
-    const normalized = value.normalize('NFKD').toLowerCase();
+    if (!value) return '';
+    const normalized = value.toString().toLowerCase();
 
     const separated = normalized
-        .replace(/[\s\p{P}\p{S}_]+/gu, '-')
+        .replace(/[^a-z0-9 -]+/g, '-')
+        .replace(/\s+/g, '-')
         .replace(/-+/g, '-');
 
-    const cleaned = separated.replace(/[^\p{L}\p{N}-]/gu, '');
-    const collapsed = cleaned.replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+    const cleaned = separated.replace(/^-+|-+$/g, '');
 
-    if (collapsed) {
-        return collapsed;
-    }
-
-    const encodedFallback = encodeURIComponent(normalized)
-        .replace(/%/g, '-')
-        .replace(/-+/g, '-')
-        .replace(/^-+|-+$/g, '');
-
-    return encodedFallback;
+    return cleaned;
 }
 
 const platformHelpers = window.PlatformHelpers || {};
@@ -151,6 +143,12 @@ function resolveApiBases() {
         pushBase(metaApiBase);
     }
 
+    if (APP_CONFIG.useGlobalApiBase !== false && typeof window.getApiBaseUrl === 'function') {
+        if (!window.API_BASE || typeof window.API_BASE !== 'string' || window.API_BASE.startsWith('__')) {
+            window.API_BASE = window.getApiBaseUrl();
+        }
+    }
+
     if (APP_CONFIG.useGlobalApiBase !== false) {
         pushBase(window.API_BASE);
     }
@@ -173,7 +171,7 @@ async function apiFetch(
     options = {},
     fallbackStatuses = [301, 302, 307, 308, 404, 405]
 ) {
-    let lastError;
+    let lastError = new Error('API fetch failed with no specific error.'); // Initialize with a default error
 
     for (const base of API_BASES) {
         try {
@@ -189,9 +187,9 @@ async function apiFetch(
                 return res;
             }
 
-            lastError = res;
+            lastError = res; // Store Response object if not ok and not fallback
         } catch (err) {
-            lastError = err;
+            lastError = err || new Error(`Network error for ${base}${path}`); // Ensure err is not undefined
         }
     }
 
@@ -494,23 +492,31 @@ async function submitPage() {
         ? `/api/admin/pages/${encodeURIComponent(targetPageId)}`
         : '/api/admin/pages';
 
-    const res = await apiFetch(endpoint, {
-        method,
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(data)
-    });
+    try {
+        const res = await apiFetch(endpoint, {
+            method,
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify(data)
+        });
 
-    if (res.ok) {
-        setSuperAdminStatus(editingPageId ? '페이지가 수정되었습니다.' : '페이지가 생성되었습니다.', 'success');
-        resetForm();
-        loadPageList();  // 페이지 목록 갱신
-    } else {
-        const errText = await res.text();
+        if (res.ok) {
+            setSuperAdminStatus(editingPageId ? '페이지가 수정되었습니다.' : '페이지가 생성되었습니다.', 'success');
+            resetForm();
+            loadPageList();  // 페이지 목록 갱신
+        } else {
+            const errText = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            setSuperAdminStatus(
+                formatStatusWithRequestId(`페이지 저장 실패: ${errText}`, res),
+                'error'
+            );
+        }
+    } catch (error) {
+        const errorMessage = error.message || '네트워크 오류';
         setSuperAdminStatus(
-            formatStatusWithRequestId(`페이지 저장 실패: ${errText || res.status}`, res),
+            formatStatusWithRequestId(`페이지 저장 실패: ${errorMessage}`, null),
             'error'
         );
     }
@@ -524,40 +530,57 @@ async function loadPageList(page = pageListState.page) {
         return;
     }
 
-    const params = new URLSearchParams({
-        page: String(page),
-        pageSize: String(pageListState.pageSize),
-    });
+    try {
+        const params = new URLSearchParams({
+            page: String(page),
+            pageSize: String(pageListState.pageSize),
+        });
 
-    if (pageListState.search.trim()) {
-        params.set('search', pageListState.search.trim());
-    }
+        if (pageListState.search.trim()) {
+            params.set('search', pageListState.search.trim());
+        }
 
-    const res = await apiFetch(`/api/admin/pages?${params.toString()}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-    });
+        const res = await apiFetch(`/api/admin/pages?${params.toString()}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
 
-    if (!res.ok) {
-        const errText = await res.text();
+        if (!res.ok) {
+            const errText = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            setSuperAdminStatus(
+                formatStatusWithRequestId(`페이지 목록 불러오기 실패: ${errText}`, res),
+                'error'
+            );
+            return;
+        }
+
+        const payload = await res.json().catch((jsonError) => {
+            console.error(`Error parsing JSON for page list: ${jsonError}`);
+            return null;
+        });
+
+        if (payload === null) {
+            setSuperAdminStatus('페이지 목록 응답 파싱 실패', 'error');
+            return;
+        }
+
+        const pages = Array.isArray(payload.items) ? payload.items : [];
+        pageListState = {
+            ...pageListState,
+            page: payload.page || page,
+            pageSize: payload.pageSize || pageListState.pageSize,
+            total: payload.total || 0,
+        };
+
+        renderPageList(pages);
+        renderPagination();
+        setSuperAdminStatus(`페이지 ${pageListState.page} / ${Math.max(1, Math.ceil((pageListState.total || 0) / pageListState.pageSize))} (총 ${pageListState.total}개)를 불러왔습니다.`, 'info');
+    } catch (error) {
+        const errorMessage = error.message || '네트워크 오류';
         setSuperAdminStatus(
-            formatStatusWithRequestId(`페이지 목록 불러오기 실패: ${errText || res.status}`, res),
+            formatStatusWithRequestId(`페이지 목록 불러오기 실패: ${errorMessage}`, null),
             'error'
         );
-        return;
     }
-
-    const payload = await res.json();
-    const pages = Array.isArray(payload.items) ? payload.items : [];
-    pageListState = {
-        ...pageListState,
-        page: payload.page || page,
-        pageSize: payload.pageSize || pageListState.pageSize,
-        total: payload.total || 0,
-    };
-
-    renderPageList(pages);
-    renderPagination();
-    setSuperAdminStatus(`페이지 ${pageListState.page} / ${Math.max(1, Math.ceil((pageListState.total || 0) / pageListState.pageSize))} (총 ${pageListState.total}개)를 불러왔습니다.`, 'info');
 }
 
 function renderPageList(pages) {
@@ -621,18 +644,26 @@ async function deletePage(pageId) {
         return;
     }
 
-    const res = await apiFetch(`/api/admin/pages/${pageId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-    });
+    try {
+        const res = await apiFetch(`/api/admin/pages/${pageId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
 
-    if (res.ok) {
-        setSuperAdminStatus('페이지가 삭제되었습니다.', 'success');
-        loadPageList();  // 페이지 목록 갱신
-    } else {
-        const errText = await res.text();
+        if (res.ok) {
+            setSuperAdminStatus('페이지가 삭제되었습니다.', 'success');
+            loadPageList();  // 페이지 목록 갱신
+        } else {
+            const errText = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            setSuperAdminStatus(
+                formatStatusWithRequestId(`페이지 삭제 실패: ${errText}`, res),
+                'error'
+            );
+        }
+    } catch (error) {
+        const errorMessage = error.message || '네트워크 오류';
         setSuperAdminStatus(
-            formatStatusWithRequestId(`페이지 삭제 실패: ${errText || res.status}`, res),
+            formatStatusWithRequestId(`페이지 삭제 실패: ${errorMessage}`, null),
             'error'
         );
     }
@@ -646,65 +677,76 @@ async function editPage(pageId) {
         return;
     }
 
-  const res = await apiFetch(`/api/admin/pages/${encodeURIComponent(pageId)}`, {
-    headers: { 'Authorization': `Bearer ${token}` }
-  });
+    try {
+        const res = await apiFetch(`/api/admin/pages/${encodeURIComponent(pageId)}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
 
-  if (!res.ok) {
-    const errText = await res.text();
-    setSuperAdminStatus(
-      formatStatusWithRequestId(`페이지 정보를 불러오지 못했습니다: ${errText || res.status}`, res),
-      'error'
-    );
-    return;
-  }
+        if (!res.ok) {
+            const errText = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            setSuperAdminStatus(
+                formatStatusWithRequestId(`페이지 정보를 불러오지 못했습니다: ${errText}`, res),
+                'error'
+            );
+            return;
+        }
 
-  const page = await res.json();
+        const page = await res.json().catch((jsonError) => {
+            console.error(`Error parsing JSON for page edit: ${jsonError}`);
+            return null;
+        });
 
-    if (!page) {
-        alert('해당 페이지 정보를 찾지 못했습니다.');
-        return;
+        if (!page) {
+            setSuperAdminStatus('해당 페이지 정보를 찾지 못했습니다.', 'error');
+            return;
+        }
+
+        editingPageId = page.pageId;
+        document.getElementById('pageName').value = page.profile?.name || '';
+        document.getElementById('pageSlug').value = page.pageId;
+        document.getElementById('pageSlug').setAttribute('disabled', 'true');
+        const adminEmailInput = document.getElementById('adminEmail');
+        if (adminEmailInput) {
+            adminEmailInput.value = '';
+            adminEmailInput.setAttribute('disabled', 'true');
+        }
+        document.getElementById('pageDescription').value = page.profile?.description || '';
+        document.getElementById('pagePhoto').value = page.profile?.photoUrl || '';
+        document.getElementById('adminPassword').value = '';
+        document.getElementById('plan').value = normalizePlanId(page.plan || 'free');
+        pageTheme = typeof page.theme === 'string' ? page.theme : 'classic';
+        selectedPlatformId = PLATFORM_PRESETS[0]?.id || '';
+        document.getElementById('saPlatformHandle').value = '';
+        document.getElementById('saPlatformName').value = '';
+        renderPlatformSelector();
+        updatePlatformPrefix();
+        managedLinks = Array.isArray(page.links) ? [...page.links] : [];
+        renderSuperAdminLinks();
+
+        const slugList = Array.isArray(page.slugs) ? page.slugs : [page.pageId];
+        aliasSlugs = slugList
+            .filter((slug) => slug !== page.pageId)
+            .map((value) => (typeof value === 'string' ? value.trim() : ''))
+            .filter(Boolean);
+        renderAliasSlugs();
+        setFormTitle(`페이지 수정: ${page.pageId}`);
+        applyThemeToScopes();
+        renderThemeOptions();
+        updateThemePreview();
+
+        setSuperAdminStatus(`${page.pageId} 페이지를 편집합니다. 저장 시 관리자 비밀번호를 비워두면 기존 값을 유지합니다.`, 'info');
+
+        const submitBtn = document.getElementById('submit-btn');
+        if (submitBtn) submitBtn.innerText = '수정 저장';
+        const cancelBtn = document.getElementById('cancel-edit-btn');
+        if (cancelBtn) cancelBtn.style.display = 'inline-block';
+    } catch (error) {
+        const errorMessage = error.message || '네트워크 오류';
+        setSuperAdminStatus(
+            formatStatusWithRequestId(`페이지 정보를 불러오지 못했습니다: ${errorMessage}`, null),
+            'error'
+        );
     }
-
-    editingPageId = page.pageId;
-    document.getElementById('pageName').value = page.profile?.name || '';
-    document.getElementById('pageSlug').value = page.pageId;
-  document.getElementById('pageSlug').setAttribute('disabled', 'true');
-  const adminEmailInput = document.getElementById('adminEmail');
-  if (adminEmailInput) {
-    adminEmailInput.value = '';
-    adminEmailInput.setAttribute('disabled', 'true');
-  }
-  document.getElementById('pageDescription').value = page.profile?.description || '';
-  document.getElementById('pagePhoto').value = page.profile?.photoUrl || '';
-  document.getElementById('adminPassword').value = '';
-  document.getElementById('plan').value = normalizePlanId(page.plan || 'free');
-  pageTheme = typeof page.theme === 'string' ? page.theme : 'classic';
-  selectedPlatformId = PLATFORM_PRESETS[0]?.id || '';
-  document.getElementById('saPlatformHandle').value = '';
-  document.getElementById('saPlatformName').value = '';
-  renderPlatformSelector();
-  updatePlatformPrefix();
-  managedLinks = Array.isArray(page.links) ? [...page.links] : [];
-  renderSuperAdminLinks();
-
-  const slugList = Array.isArray(page.slugs) ? page.slugs : [page.pageId];
-  aliasSlugs = slugList
-    .filter((slug) => slug !== page.pageId)
-    .map((value) => (typeof value === 'string' ? value.trim() : ''))
-    .filter(Boolean);
-  renderAliasSlugs();
-  setFormTitle(`페이지 수정: ${page.pageId}`);
-  applyThemeToScopes();
-  renderThemeOptions();
-  updateThemePreview();
-
-    setSuperAdminStatus(`${page.pageId} 페이지를 편집합니다. 저장 시 관리자 비밀번호를 비워두면 기존 값을 유지합니다.`, 'info');
-
-    const submitBtn = document.getElementById('submit-btn');
-    if (submitBtn) submitBtn.innerText = '수정 저장';
-  const cancelBtn = document.getElementById('cancel-edit-btn');
-  if (cancelBtn) cancelBtn.style.display = 'inline-block';
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -976,33 +1018,50 @@ async function submitBulkUpload() {
     return;
   }
 
-  const res = await apiFetch('/api/admin/pages/import', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
-    },
-    body: JSON.stringify({ pages: bulkUploadPages }),
-  });
+  try {
+    const res = await apiFetch('/api/admin/pages/import', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ pages: bulkUploadPages }),
+    });
 
-  if (!res.ok) {
-    const errText = await res.text();
+    if (!res.ok) {
+      const errText = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+      setSuperAdminStatus(
+        formatStatusWithRequestId(`업로드 실패: ${errText}`, res),
+        'error'
+      );
+      return;
+    }
+
+    const result = await res.json().catch((jsonError) => {
+        console.error(`Error parsing JSON for bulk upload result: ${jsonError}`);
+        return null;
+    });
+
+    if (result === null) {
+        setSuperAdminStatus('대량 업로드 응답 파싱 실패', 'error');
+        return;
+    }
+
+    const summary = result?.summary;
+
     setSuperAdminStatus(
-      formatStatusWithRequestId(`업로드 실패: ${errText || res.status}`, res),
+      `업로드 완료: ${summary?.success || 0}개 성공, ${summary?.failed || 0}개 실패`,
+      'success'
+    );
+    resetBulkUpload();
+    loadPageList();
+  } catch (error) {
+    const errorMessage = error.message || '네트워크 오류';
+    setSuperAdminStatus(
+      formatStatusWithRequestId(`업로드 실패: ${errorMessage}`, null),
       'error'
     );
-    return;
   }
-
-  const result = await res.json();
-  const summary = result?.summary;
-
-  setSuperAdminStatus(
-    `업로드 완료: ${summary?.success || 0}개 성공, ${summary?.failed || 0}개 실패`,
-    'success'
-  );
-  resetBulkUpload();
-  loadPageList();
 }
 
 function reorderList(list, from, to) {

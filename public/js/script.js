@@ -18,307 +18,28 @@
 window.APP_CONFIG = window.APP_CONFIG || {};
 const APP_CONFIG = window.APP_CONFIG;
 
-const urlParams = new URLSearchParams(window.location.search);
-const queryApiBase = urlParams.get("api_base") || urlParams.get("apiBase");
-const storedManualBase = (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('sessionManualApiBase')) ||
-                         (typeof localStorage !== 'undefined' && localStorage.getItem('manualApiBase')) || null;
-const isPagesDevBase = (value) => typeof value === 'string' && value.includes('.pages.dev');
-
-let MANUAL_API_BASE = (storedManualBase && !isPagesDevBase(storedManualBase)) ? storedManualBase : null;
-
-// 상태 데이터 변수들
-let adminLinks = [];
-let adminSlugs = [];
-let adminContactSchema = [];
-let contactSettings = { enabled: false };
-let pagePlan = 'free';
-let pagePlanStatus = null;
-let contactSubmissions = [];
-let pageTheme = 'classic';
-let privateTemplates = [];
-let currentPageId = urlParams.get('pageId') || '';
-let selectedPlatformId = '';
-let dragState = null;
-let userViewReady = document.getElementById("links-list") !== null;
-
-const MAX_CONTACT_FIELDS = 50;
-const PLAN_LIMITS = { free: 8, basic: 25, premium: 100 };
-
-/**
- * [2] 헬퍼 상수 (PLATFORM_PRESETS 등)
- */
-const platformHelpers = window.PlatformHelpers || {};
-const PLATFORM_PRESETS = platformHelpers.PLATFORM_PRESETS || [];
-
-
-/**
- * [3] API 통신 함수 (통합 버전)
- */
-async function getApiBase() {
-    if (APP_CONFIG.apiBase && !APP_CONFIG.apiBase.startsWith('__')) {
-        return APP_CONFIG.apiBase.replace(/\/+$/, '');
-    }
-    if (MANUAL_API_BASE) return MANUAL_API_BASE.replace(/\/+$/, '');
-    return window.location.origin;
-}
-
-async function apiFetch(path, options = {}) {
-    const base = await getApiBase();
-    const token = sessionStorage.getItem('page_admin_token');
-    options.headers = { 'Accept': 'application/json', ...options.headers };
-    if (token) options.headers['Authorization'] = `Bearer ${token}`;
-
-    const res = await fetch(`${base}${path}`, options);
-    if (res.status === 401 && document.body?.dataset?.pageRole === 'page-admin') {
-        sessionStorage.removeItem('page_admin_token');
-        window.location.replace('/page-admin-login.html');
-    }
-    return res;
-}
-
-/**
- * [4] UI 및 탭 기능
- */
-function switchTab(tabId) {
-    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    const target = document.getElementById(tabId);
-    if (target) target.classList.add('active');
-    if (window.event && window.event.currentTarget) window.event.currentTarget.classList.add('active');
-
-    // 탭별 로드
-    if (tabId === 'tab-contact') fetchContactSubmissions();
-    if (tabId === 'tab-advanced') loadPrivateTemplates();
-    if (tabId === 'tab-links') renderAdminLinks();
-}
-
-/**
- * [5] 초기화 로직
- */
-document.addEventListener('DOMContentLoaded', () => {
-    // 환경 배지
-    if (APP_CONFIG.envLabel && !APP_CONFIG.envLabel.startsWith('__')) {
-        const badge = document.getElementById('env-badge');
-        if (badge) { badge.textContent = APP_CONFIG.envLabel; badge.style.display = 'block'; }
-    }
-
-    // 관리자 페이지 데이터 로드
-    if (document.body?.dataset?.pageRole === 'page-admin') {
-        if (currentPageId) loadPageData(currentPageId, { includeAdmin: true });
-        if (PLATFORM_PRESETS.length) selectedPlatformId = PLATFORM_PRESETS[0].id;
-        renderPlatformSelector();
-        renderThemeOptions();
-        renderContactPresets();
-        renderSlugEditor();
-        updatePlatformPrefix();
-    }
-});
-
-/**
- * [6] 관리 기능 함수들 (필수 로직만 요약 통합)
- */
-
-function renderPlatformSelector() {
-    const selector = document.getElementById('platform-selector');
-    const presets = window.PlatformHelpers?.PLATFORM_PRESETS || [];
-    if (!selector || !presets.length) return;
-    selector.innerHTML = '';
-    presets.forEach((preset) => {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = `platform-button ${preset.id === selectedPlatformId ? 'active' : ''}`;
-        btn.innerHTML = `<span>${preset.label}</span>`;
-        btn.onclick = () => { selectedPlatformId = preset.id; renderPlatformSelector(); updatePlatformPrefix(); };
-        selector.appendChild(btn);
-    });
-}
-
-function updatePlatformPrefix() {
-    const prefixEl = document.getElementById('platform-prefix');
-    const presets = window.PlatformHelpers?.PLATFORM_PRESETS || [];
-    const preset = presets.find(p => p.id === selectedPlatformId) || presets[0];
-    if (prefixEl) prefixEl.innerText = preset?.baseUrl || '';
-}
-
-function addPlatformLink() {
-    const handle = document.getElementById('platformHandle')?.value;
-    const name = document.getElementById('platformLinkName')?.value;
-    const presets = window.PlatformHelpers?.PLATFORM_PRESETS || [];
-    const preset = presets.find(p => p.id === selectedPlatformId);
-    if (!handle || !name || !preset) return alert('아이디와 이름을 입력하세요.');
-    adminLinks.push({ title: name, url: preset.baseUrl + handle, platformId: preset.id, handle: handle, isPrivate: false });
-    renderAdminLinks();
-}
-
-function renderAdminLinks() {
-    const list = document.getElementById('link-list');
-    if (!list) return;
-    list.innerHTML = '';
-    adminLinks.forEach((link, idx) => {
-        const li = document.createElement('li');
-        li.className = 'link-item';
-        li.innerHTML = `
-            <div class="link-info"><strong>${link.title || link.url}</strong></div>
-            <button class="ghost" onclick="adminLinks.splice(${idx}, 1); renderAdminLinks();">삭제</button>
-        `;
-        list.appendChild(li);
-    });
-}
-
-// 기존 apiFetch 함수를 getApiBase를 사용하도록 수정
-async function apiFetch(path, options = {}) {
-    const base = await getApiBase();
-    return fetch(`${base}${path}`, options);
-}
-
-function applyRuntimeOverrides() {
-    if (APP_CONFIG.envLabel) {
-        const badge = document.getElementById('env-badge');
-        if (badge) badge.dataset.envLabel = APP_CONFIG.envLabel;
-    }
-
-    if (APP_CONFIG.preferredApiBase && !MANUAL_API_BASE) {
-        const preferredBase = APP_CONFIG.preferredApiBase.replace(/\/+$/, '');
-        if (!isPagesDevBase(preferredBase)) {
-            MANUAL_API_BASE = preferredBase;
-        }
-    }
-
-    if (APP_CONFIG.allowQueryApiBase !== false && queryApiBase) {
-        const normalizedQueryBase = queryApiBase.trim().replace(/\/+$/, '');
-        if (!isPagesDevBase(normalizedQueryBase)) {
-            MANUAL_API_BASE = normalizedQueryBase;
-            try {
-                sessionStorage.setItem('sessionManualApiBase', MANUAL_API_BASE);
-            } catch (error) {
-                console.warn('세션 수동 베이스 저장 실패', error);
-            }
-        }
-    }
-
-    if (storedManualBase && isPagesDevBase(storedManualBase)) {
-        try {
-            sessionStorage.removeItem('sessionManualApiBase');
-            localStorage.removeItem('manualApiBase');
-        } catch (error) {
-            console.warn('수동 베이스 초기화 실패', error);
-        }
-    }
-}
-
-applyRuntimeOverrides();
-
-function getTurnstileSiteKey() {
-    return APP_CONFIG.turnstileSiteKey || window.TURNSTILE_SITE_KEY || '';
-}
-
-function ensureTurnstileLoaded(onReady) {
-    if (!getTurnstileSiteKey()) {
-        if (onReady) onReady(false);
-        return;
-    }
-
-    if (window.turnstile) {
-        if (onReady) onReady(true);
-        return;
-    }
-
-    if (window.__turnstileLoading) {
-        if (onReady) {
-            window.__turnstileCallbacks = window.__turnstileCallbacks || [];
-            window.__turnstileCallbacks.push(onReady);
-        }
-        return;
-    }
-
-    window.__turnstileLoading = true;
-    if (onReady) {
-        window.__turnstileCallbacks = window.__turnstileCallbacks || [];
-        window.__turnstileCallbacks.push(onReady);
-    }
-
-    const script = document.createElement('script');
-    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
-    script.async = true;
-    script.defer = true;
-    script.onload = () => {
-        window.__turnstileLoading = false;
-        (window.__turnstileCallbacks || []).forEach((cb) => cb(true));
-        window.__turnstileCallbacks = [];
-    };
-    script.onerror = () => {
-        window.__turnstileLoading = false;
-        (window.__turnstileCallbacks || []).forEach((cb) => cb(false));
-        window.__turnstileCallbacks = [];
-    };
-    document.head.appendChild(script);
-}
-
-function renderTurnstileWidget() {
-    const siteKey = getTurnstileSiteKey();
-    const container = document.getElementById('turnstile-container');
-    if (!container) return;
-    if (!siteKey) {
-        container.innerHTML = '';
-        return;
-    }
-
-    ensureTurnstileLoaded((ready) => {
-        if (!ready || !window.turnstile) {
-            container.innerHTML = '';
-            return;
-        }
-        container.innerHTML = '';
-        window.__turnstileToken = '';
-        window.turnstile.render(container, {
-            sitekey: siteKey,
-            callback: (token) => {
-                window.__turnstileToken = token;
-            },
-            'expired-callback': () => {
-                window.__turnstileToken = '';
-            },
-            'error-callback': () => {
-                window.__turnstileToken = '';
-            },
-        });
-    });
-}
-
-function normalizeContactSettings(raw) {
-    if (!raw || typeof raw !== 'object') {
-        return { enabled: false };
-    }
-    const webhookUrl = typeof raw.webhookUrl === 'string' ? raw.webhookUrl.trim() : '';
-    const webhookUrls = Array.isArray(raw.webhookUrls)
-        ? raw.webhookUrls.map((url) => (typeof url === 'string' ? url.trim() : '')).filter(Boolean)
-        : [];
-    const formTitle = typeof raw.formTitle === 'string' ? raw.formTitle.trim() : '';
-    const formDescription = typeof raw.formDescription === 'string' ? raw.formDescription.trim() : '';
-    const consentText = typeof raw.consentText === 'string' ? raw.consentText.trim() : '';
-    const consentRequired = raw.consentRequired === true;
-    return {
-        enabled: raw.enabled === true,
-        ...(webhookUrl ? { webhookUrl } : {}),
-        ...(webhookUrls.length ? { webhookUrls } : {}),
-        ...(formTitle ? { formTitle } : {}),
-        ...(formDescription ? { formDescription } : {}),
-        ...(consentText ? { consentText } : {}),
-        ...(consentRequired ? { consentRequired: true } : {}),
-    };
-}
+const PlatformHelpers = window.PlatformHelpers || {};
+const PLATFORM_PRESETS = PlatformHelpers.PLATFORM_PRESETS || [];
 
 function resolveApiBases() {
     const bases = [];
     const pushBase = (value) => {
         if (!value) return;
-        const trimmed = String(value).trim();
-        if (!trimmed) return;
-        const normalized = trimmed.replace(/\/+$/, '');
-        if (normalized.includes('.pages.dev')) return;
+        const normalized = String(value).trim().replace(/\/+$/, '');
+        if (!normalized || normalized.includes('.pages.dev')) return;
         if (!bases.includes(normalized)) {
             bases.push(normalized);
         }
+    };
+    const pushPreferredBase = (value) => {
+        if (!value) return;
+        const normalized = String(value).trim().replace(/\/+$/, '');
+        if (!normalized || normalized.includes('.pages.dev')) return;
+        const existingIndex = bases.indexOf(normalized);
+        if (existingIndex !== -1) {
+            bases.splice(existingIndex, 1);
+        }
+        bases.unshift(normalized);
     };
 
     if (typeof APP_CONFIG.apiBase === 'string') {
@@ -327,9 +48,19 @@ function resolveApiBases() {
 
     (APP_CONFIG.apiBases || []).forEach((base) => pushBase(base));
 
+    if (APP_CONFIG.preferredApiBase) {
+        pushPreferredBase(APP_CONFIG.preferredApiBase);
+    }
+
     if (APP_CONFIG.useMetaApiBase !== false) {
         const metaApiBase = document.querySelector('meta[name="api-base"]')?.content?.trim();
         pushBase(metaApiBase);
+    }
+
+    if (APP_CONFIG.useGlobalApiBase !== false && typeof window.getApiBaseUrl === 'function') {
+        if (!window.API_BASE || typeof window.API_BASE !== 'string' || window.API_BASE.startsWith('__')) {
+            window.API_BASE = window.getApiBaseUrl();
+        }
     }
 
     if (APP_CONFIG.useGlobalApiBase !== false) {
@@ -341,79 +72,133 @@ function resolveApiBases() {
     }
 
     if (APP_CONFIG.useKnownWorkerBase !== false) {
-        const knownWorkerBase = APP_CONFIG.knownWorkerBase;
-        pushBase(knownWorkerBase);
+        pushBase(APP_CONFIG.knownWorkerBase);
     }
 
     return bases;
 }
 
 const API_BASES = resolveApiBases();
-const API_HEALTH_CACHE = new Map();
-let LAST_API_BASE_USED = null;
 
-function getApiBaseCandidates() {
-    if (MANUAL_API_BASE) {
-        return [MANUAL_API_BASE, ...API_BASES.filter((base) => base !== MANUAL_API_BASE)];
-    }
-    return API_BASES;
-}
+async function apiFetch(
+    path,
+    options = {},
+    fallbackStatuses = [301, 302, 307, 308, 404, 405]
+) {
+    let lastError = new Error('API fetch failed with no specific error.'); // Initialize with a default error
 
-function withTimeout(promise, timeoutMs = 8000, controller = new AbortController()) {
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    return promise.finally(() => clearTimeout(timeout));
-}
+    for (const base of API_BASES) {
+        try {
+            const res = await fetch(`${base}${path}`, options);
+            if (res.ok) {
+                return res;
+            }
 
-async function checkApiHealth(base) {
-    if (!base) return false;
+            if (!fallbackStatuses.includes(res.status)) {
+                return res;
+            }
 
-    const cached = API_HEALTH_CACHE.get(base);
-    const now = Date.now();
-    const ttl = 60 * 1000; // 1 minute
-    if (cached && now - cached.checkedAt < ttl) {
-        return cached.ok;
-    }
-
-    const path = (APP_CONFIG.healthPath || '/api/health').startsWith('/')
-        ? APP_CONFIG.healthPath
-        : `/${APP_CONFIG.healthPath}`;
-    const url = `${base}${path}`;
-
-    try {
-        const controller = new AbortController();
-        const res = await withTimeout(
-            fetch(url, { method: 'GET', headers: { Accept: 'application/json' }, signal: controller.signal }),
-            4000,
-            controller
-        );
-        const ok = res.ok;
-        API_HEALTH_CACHE.set(base, { ok, checkedAt: now });
-        return ok;
-    } catch (error) {
-        API_HEALTH_CACHE.set(base, { ok: false, checkedAt: now });
-        return false;
-    }
-}
-
-async function primeApiBaseSelection() {
-    for (const base of getApiBaseCandidates()) {
-        const healthy = await checkApiHealth(base);
-        if (healthy) {
-            LAST_API_BASE_USED = base;
-            updateEnvBadge(base);
-            return base;
+            lastError = res; // Store Response object if not ok and not fallback
+        } catch (err) {
+            lastError = err || new Error(`Network error for ${base}${path}`); // Ensure err is not undefined
         }
     }
-    updateEnvBadge(getApiBaseCandidates()[0] || null);
-    return null;
+
+    if (lastError instanceof Response) return lastError;
+    throw lastError;
 }
 
-const getPlatformPreset = platformHelpers.getPlatformPreset || ((platformId) => PLATFORM_PRESETS.find((preset) => preset.id === platformId));
-const buildPlatformUrl = platformHelpers.buildPlatformUrl || function (preset, handle) {
+function setAuthStatus(elementId, message, tone = 'info') {
+    const statusEl = document.getElementById(elementId);
+    if (!statusEl) return false;
+    
+    statusEl.textContent = message;
+    statusEl.className = `status-banner ${tone}`;
+    statusEl.style.display = message ? 'block' : 'none';
+    
+    return true;
+}
+
+function isHttpUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch (error) {
+    return false;
+  }
+}
+
+function createCustomIcon(url, alt = '') {
+    if (!url) return null;
+
+    const iconEl = document.createElement('img');
+    iconEl.src = url;
+    iconEl.alt = alt;
+    iconEl.className = 'custom-icon-preview'; // Or some other appropriate class
+    iconEl.onerror = () => iconEl.remove();
+    return iconEl;
+}
+
+function ensureUserViewContainer() {
+    if (document.getElementById('user-view-container')) return;
+
+    const container = document.createElement('div');
+    container.id = 'user-view-container';
+    
+    container.innerHTML = `
+        <main class="user-shell">
+            <section class="user-card">
+                <header class="user-header">
+                    <h1 id="user-page-name"></h1>
+                    <span id="env-badge" class="env-badge" aria-live="polite" style="display: none;"></span>
+                </header>
+                <div class="profile user-profile">
+                    <img src="" alt="" class="profile-photo user-avatar" id="user-page-photo" style="display: none;">
+                    <p class="profile-description" id="user-page-description"></p>
+                </div>
+                <section class="links user-links">
+                    <h3>링크</h3>
+                    <ul id="links-list" class="link-stack">
+                    </ul>
+                </section>
+                <section id="user-contact-section" class="contact" style="display: none;">
+                    <h2 id="user-contact-title">문의하기</h2>
+                    <p id="user-contact-help" class="help-text"></p>
+                    <form id="user-contact-form" onsubmit="submitContactForm(event)">
+                        <div id="user-contact-fields"></div>
+                        <button id="user-contact-submit" type="submit">제출</button>
+                    </form>
+                    <div id="user-contact-status"></div>
+                </section>
+                <footer class="user-footer">
+                    <p>&copy; 2025 인플루언서 페이지</p>
+                </footer>
+            </section>
+        </main>
+    `;
+    document.body.appendChild(container);
+}
+
+function slugify(value) {
+    if (!value) return '';
+    const normalized = value.toString().toLowerCase();
+
+    const separated = normalized
+        .replace(/[^a-z0-9 -]+/g, '-')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-');
+
+    const cleaned = separated.replace(/^-+|-+$/g, '');
+
+    return cleaned;
+}
+
+const buildPlatformUrl = PlatformHelpers.buildPlatformUrl || function (preset, handle) {
     const cleanHandle = (handle || '').trim().replace(/^\/+/, '');
-    return preset && cleanHandle ? `${preset.baseUrl}${cleanHandle}` : '';
+    return cleanHandle ? `${preset.baseUrl}${cleanHandle}` : '';
 };
-const inferPlatformFromLink = platformHelpers.inferPlatformFromLink || function (link) {
+
+const inferPlatformFromLink = PlatformHelpers.inferPlatformFromLink || function (link) {
     for (const preset of PLATFORM_PRESETS) {
         if (link.platformId === preset.id) {
             return { preset, handle: link.handle || link.url?.replace(preset.baseUrl, '') || '' };
@@ -423,65 +208,63 @@ const inferPlatformFromLink = platformHelpers.inferPlatformFromLink || function 
             return { preset, handle: link.url.slice(preset.baseUrl.length) };
         }
     }
-
     return null;
 };
 
-function slugify(value) {
-    const normalized = value.normalize('NFKD').toLowerCase();
-    const separated = normalized
-        .replace(/[\s\p{P}\p{S}_]+/gu, '-')
-        .replace(/-+/g, '-');
-    const cleaned = separated.replace(/[^\p{L}\p{N}-]/gu, '');
-    const collapsed = cleaned.replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+function createLinkIcon(preset, className = 'platform-icon') {
+    if (!preset) return null;
 
-    if (collapsed) return collapsed;
-
-    const encodedFallback = encodeURIComponent(normalized)
-        .replace(/%/g, '-')
-        .replace(/-+/g, '-')
-        .replace(/^-+|-+$/g, '');
-
-    return encodedFallback;
-}
-
-function isHttpUrl(value) {
-    try {
-        const url = new URL(value);
-        return url.protocol === 'http:' || url.protocol === 'https:';
-    } catch (error) {
-        return false;
-    }
-}
-
-function setPageLoginStatus(message, tone = 'info') {
-    const statusEl = document.getElementById('page-login-status');
-    if (!statusEl) return;
-
-    if (!message) {
-        statusEl.style.display = 'none';
-        statusEl.textContent = '';
-        return;
+    if (!preset.iconPath) {
+        const fallbackIcon = document.createElement('span');
+        fallbackIcon.className = `${className} platform-icon-fallback`;
+        fallbackIcon.innerText = preset.emoji || '🔗';
+        return fallbackIcon;
     }
 
-    statusEl.textContent = message;
-    statusEl.className = `status-banner ${tone}`;
-    statusEl.style.display = 'block';
+    const iconEl = document.createElement('img');
+    iconEl.src = preset.iconPath || '';
+    iconEl.alt = preset.label || '';
+    iconEl.className = className;
+    iconEl.onerror = () => {
+        const fallback = document.createElement('span');
+        fallback.className = `${className} platform-icon-fallback`;
+        fallback.innerText = preset.emoji || '🔗';
+        iconEl.replaceWith(fallback);
+    };
+
+    return iconEl;
 }
 
-function setAuthStatus(targetId, message, tone = 'info') {
-    const statusEl = document.getElementById(targetId);
-    if (!statusEl) return false;
-    if (!message) {
-        statusEl.style.display = 'none';
-        statusEl.textContent = '';
-        return true;
-    }
-    statusEl.textContent = message;
-    statusEl.className = `status-banner ${tone}`;
-    statusEl.style.display = 'block';
-    return true;
-}
+const urlParams = new URLSearchParams(window.location.search);
+
+/**
+ * [2] 페이지 컨텍스트 및 라우팅 변수
+ */
+const pathSegments = window.location.pathname.split('/').filter(Boolean);
+const searchParams = new URLSearchParams(window.location.search);
+const pageRole = document.body?.dataset?.pageRole; // 'page-admin', 'super-admin' 등
+
+// 페이지 종류 식별
+const isAdminLogin = window.location.pathname.endsWith('/login.html');
+const isPageAdminLogin = window.location.pathname.endsWith('/page-admin-login.html');
+const isAdminHtml = window.location.pathname.endsWith('/admin.html');
+const isSuperAdminHtml = window.location.pathname.endsWith('/super-admin.html');
+
+const isUserPage = pathSegments.length === 2 && pathSegments[0] === 'user';
+const privateTokenFromPath = pathSegments.length === 3 && pathSegments[1] === 'private' ? pathSegments[2] : null;
+const isPrivateLink = !!privateTokenFromPath;
+
+const looksLikeSlugPage = pathSegments.length === 1 && !isAdminHtml && !isUserPage && !isPrivateLink && !isSuperAdminHtml && !isAdminLogin && !isPageAdminLogin;
+
+const isPublicView = looksLikeSlugPage || isPrivateLink || isUserPage || document.body.classList.contains('user-view');
+
+const pageIdFromQuery = searchParams.get('pageId');
+const pageIdFromPath = looksLikeSlugPage || isPrivateLink ? pathSegments[0] : null;
+
+let derivedPageId = pageIdFromQuery || pageIdFromPath; // Make it 'let'
+
+let userViewReady = document.getElementById('user-view-container');
+
 
 function formatStatusWithRequestId(message, res) {
     if (!res || typeof res.headers?.get !== 'function') return message;
@@ -489,595 +272,171 @@ function formatStatusWithRequestId(message, res) {
     return requestId ? `${message} (요청 ID: ${requestId})` : message;
 }
 
-function updateEnvBadge(base) {
-    const badge = document.getElementById('env-badge');
-    if (!badge) return;
-
-    const envLabel = (badge.dataset.envLabel || APP_CONFIG.envLabel || 'local').trim();
-    let host = '';
-    try {
-        host = base ? new URL(base).host : '';
-    } catch (error) {
-        host = '';
-    }
-
-    const detail = host ? `${envLabel} · ${host}` : envLabel;
-    badge.innerHTML = `<span class="env-dot"></span><span>${detail}</span>`;
-    badge.style.display = 'inline-flex';
-}
-
-function setManualApiBase(base) {
-    const normalized = base ? base.replace(/\/+$/, '') : null;
-    if (normalized && isPagesDevBase(normalized)) {
-        console.warn('pages.dev 베이스는 사용할 수 없습니다.');
-        return;
-    }
-    MANUAL_API_BASE = normalized || null;
-    try {
-        if (typeof sessionStorage !== 'undefined') {
-            if (MANUAL_API_BASE) {
-                sessionStorage.setItem('sessionManualApiBase', MANUAL_API_BASE);
-            } else {
-                sessionStorage.removeItem('sessionManualApiBase');
-            }
-        }
-        if (MANUAL_API_BASE) {
-            localStorage.setItem('manualApiBase', MANUAL_API_BASE);
-        } else {
-            localStorage.removeItem('manualApiBase');
-        }
-    } catch (error) {
-        console.warn('manualApiBase 저장 실패', error);
-    }
-    updateEnvBadge(MANUAL_API_BASE || LAST_API_BASE_USED || getApiBaseCandidates()[0] || null);
-}
-
-async function renderApiDebugPanel(targetId) {
-    const container = document.getElementById(targetId);
-    if (!container) return;
-
-    container.innerHTML = '';
-    container.classList.add('api-debug');
-
-    const header = document.createElement('div');
-    header.className = 'api-debug-header';
-    header.innerHTML = '<div><p class="eyebrow">API 연결</p><h3>환경/호스트 상태</h3></div>';
-
-    const actions = document.createElement('div');
-    actions.className = 'api-debug-actions';
-    const refreshBtn = document.createElement('button');
-    refreshBtn.type = 'button';
-    refreshBtn.className = 'ghost';
-    refreshBtn.innerText = '재검사';
-    refreshBtn.onclick = () => refreshApiDebugPanel(targetId);
-    const resetBtn = document.createElement('button');
-    resetBtn.type = 'button';
-    resetBtn.className = 'ghost';
-    resetBtn.innerText = '자동 선택';
-    resetBtn.onclick = () => {
-        setManualApiBase(null);
-        refreshApiDebugPanel(targetId);
-    };
-    actions.appendChild(refreshBtn);
-    actions.appendChild(resetBtn);
-    header.appendChild(actions);
-
-    const list = document.createElement('div');
-    list.id = `${targetId}-list`;
-    list.className = 'api-debug-list';
-    list.innerHTML = '<p class="help-text">헬스체크 결과를 불러오는 중...</p>';
-
-    container.appendChild(header);
-    container.appendChild(list);
-
-    await refreshApiDebugPanel(targetId);
-}
-
-async function refreshApiDebugPanel(targetId) {
-    const list = document.getElementById(`${targetId}-list`);
-    if (!list) return;
-
-    const candidates = getApiBaseCandidates();
-    if (!candidates.length) {
-        list.innerHTML = '<p class="help-text">사용 가능한 API 베이스가 없습니다.</p>';
-        return;
-    }
-
-    const rows = await Promise.all(
-        candidates.map(async (base) => {
-            const status = await checkApiHealth(base).catch(() => false);
-            const wrapper = document.createElement('div');
-            wrapper.className = `api-debug-row ${MANUAL_API_BASE === base ? 'active' : ''}`;
-
-            const dot = document.createElement('span');
-            dot.className = `env-dot ${status ? 'ok' : 'fail'}`;
-
-            const label = document.createElement('div');
-            label.className = 'api-debug-label';
-            label.innerHTML = `<strong>${base}</strong><span>${status ? '응답 정상' : '응답 없음'}</span>`;
-
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.className = MANUAL_API_BASE === base ? 'secondary' : 'ghost';
-            button.innerText = MANUAL_API_BASE === base ? '수동 선택됨' : '이 베이스 사용';
-            button.onclick = () => {
-                setManualApiBase(base);
-                refreshApiDebugPanel(targetId);
-                primeApiBaseSelection();
-            };
-
-            wrapper.appendChild(dot);
-            wrapper.appendChild(label);
-            wrapper.appendChild(button);
-            return wrapper;
-        })
-    );
-
-    list.innerHTML = '';
-    rows.forEach((row) => list.appendChild(row));
-}
-
-function createLinkIcon(preset) {
-    if (!preset) return null;
-
-    if (!preset.iconPath) {
-        const fallback = document.createElement('span');
-        fallback.className = 'link-icon platform-icon-fallback';
-        fallback.innerText = preset.emoji || '🔗';
-        return fallback;
-    }
-
-    const icon = document.createElement('img');
-    icon.className = 'link-icon';
-    icon.src = preset.iconPath;
-    icon.alt = preset.label || '';
-    icon.onerror = () => {
-        const fallback = document.createElement('span');
-        fallback.className = 'link-icon platform-icon-fallback';
-        fallback.innerText = preset.emoji || '🔗';
-        icon.replaceWith(fallback);
-    };
-
-    return icon;
-}
-const hasUserView = document.getElementById("links-list") !== null;
-
-let publicContactSchema = [];
-let publicContactSettings = { enabled: false };
-let contactEnabled = false;
-
-const THEME_PRESETS = [
-    {
-        id: 'classic',
-        label: '클래식',
-        desc: '밝은 기본 스타일',
-        swatch: ['#f7f7fb', '#ffffff', '#16a34a', '#0f172a'],
-    },
-    {
-        id: 'midnight',
-        label: '미드나잇',
-        desc: '어두운 배경 + 하늘색 포인트',
-        swatch: ['#0b1220', '#0f172a', '#22d3ee', '#e5e7eb'],
-    },
-    {
-        id: 'sunset',
-        label: '선셋',
-        desc: '따뜻한 주황/살구 톤',
-        swatch: ['#fff7ed', '#fef3c7', '#f97316', '#7c2d12'],
-    },
-    {
-        id: 'mint',
-        label: '민트',
-        desc: '시원한 민트/틸 포인트',
-        swatch: ['#ecfeff', '#f0fdfa', '#14b8a6', '#042f2e'],
-    },
-];
-
-const CONTACT_PRESETS = [
-    {
-        id: 'basic',
-        label: '기본 문의',
-        fields: [
-            { label: '이메일', type: 'email', placeholder: 'you@example.com' },
-            { label: 'SNS 아이디', type: 'text', placeholder: '@account' },
-        ],
-    },
-    {
-        id: 'business',
-        label: '비즈니스 제안',
-        fields: [
-            { label: '회사명', type: 'text', placeholder: '회사 이름' },
-            { label: '연락처', type: 'tel', placeholder: '010-0000-0000' },
-            { label: '제안 링크', type: 'url', placeholder: 'https://example.com' },
-        ],
-    },
-    {
-        id: 'creator',
-        label: '콜라보 문의',
-        fields: [
-            { label: '채널명', type: 'text', placeholder: 'YouTube/Instagram' },
-            { label: '선호 연락처', type: 'text', placeholder: 'DM, 이메일 등' },
-        ],
-    },
-];
-
-function createCustomIcon(url, alt = "") {
-    if (!url) return null;
-
-    const icon = document.createElement('img');
-    icon.className = 'link-icon';
-    icon.src = url;
-    icon.alt = alt;
-    icon.onerror = () => icon.remove();
-    return icon;
-}
-
-function applyThemeToScopes() {
-    const validTheme = THEME_PRESETS.some((preset) => preset.id === pageTheme)
-        ? pageTheme
-        : 'classic';
-    pageTheme = validTheme;
-
-    const scopes = document.querySelectorAll('.theme-scope');
-    scopes.forEach((scope) => {
-        THEME_PRESETS.forEach((preset) => scope.classList.remove(`theme-${preset.id}`));
-        scope.classList.add(`theme-${validTheme}`);
-    });
-}
-
-function renderThemeOptions() {
-    const host = document.getElementById('theme-options');
-    if (!host) return;
-
-    host.innerHTML = '';
-
-    THEME_PRESETS.forEach((preset) => {
-        const tile = document.createElement('button');
-        tile.type = 'button';
-        tile.className = `theme-tile ${preset.id === pageTheme ? 'active' : ''}`;
-        tile.setAttribute('aria-pressed', preset.id === pageTheme ? 'true' : 'false');
-
-        const swatch = document.createElement('div');
-        swatch.className = 'theme-swatch';
-        (preset.swatch || []).slice(0, 4).forEach((color) => {
-            const cell = document.createElement('span');
-            cell.style.background = color;
-            swatch.appendChild(cell);
-        });
-
-        const meta = document.createElement('div');
-        meta.className = 'theme-meta';
-        const title = document.createElement('div');
-        title.className = 'title';
-        title.innerText = preset.label;
-        const desc = document.createElement('div');
-        desc.className = 'desc';
-        desc.innerText = preset.desc;
-        meta.appendChild(title);
-        meta.appendChild(desc);
-
-        tile.appendChild(swatch);
-        tile.appendChild(meta);
-        tile.onclick = () => {
-            pageTheme = preset.id;
-            applyThemeToScopes();
-            renderThemeOptions();
-        };
-
-        host.appendChild(tile);
-    });
-}
-
-function ensureUserViewContainer() {
-    if (userViewReady) return;
-
-    document.body.classList.add('user-view');
-    document.body.classList.add('theme-scope');
-    applyThemeToScopes();
-
-    const host = document.querySelector('main') || document.body;
-    host.innerHTML = '';
-
-    const shell = document.createElement('main');
-    shell.className = 'user-shell';
-
-    const card = document.createElement('section');
-    card.className = 'user-card';
-
-    const header = document.createElement('header');
-    header.className = 'user-header';
-    const title = document.createElement('h1');
-    title.innerText = '페이지를 불러오는 중...';
-    header.appendChild(title);
-
-    const profileSection = document.createElement('div');
-    profileSection.className = 'profile user-profile';
-    const img = document.createElement('img');
-    img.className = 'profile-photo user-avatar';
-    img.alt = '프로필 사진';
-    const desc = document.createElement('p');
-    desc.className = 'profile-description';
-    profileSection.appendChild(img);
-    profileSection.appendChild(desc);
-
-    const linksSection = document.createElement('section');
-    linksSection.className = 'links user-links';
-    const linksHeader = document.createElement('h3');
-    linksHeader.innerText = '링크';
-    const linksUl = document.createElement('ul');
-    linksUl.id = 'links-list';
-    linksUl.className = 'link-stack';
-    linksSection.appendChild(linksHeader);
-    linksSection.appendChild(linksUl);
-
-    const contactSection = document.createElement('section');
-    contactSection.className = 'contact user-contact';
-    contactSection.id = 'user-contact-section';
-    const contactHeader = document.createElement('h3');
-    contactHeader.innerText = '문의하기';
-    contactHeader.id = 'user-contact-title';
-    contactSection.appendChild(contactHeader);
-
-    const contactHelp = document.createElement('p');
-    contactHelp.className = 'help-text';
-    contactHelp.id = 'user-contact-help';
-    contactHelp.innerText = '페이지 관리자에게 직접 문의 메시지를 남길 수 있습니다.';
-    contactSection.appendChild(contactHelp);
-
-    const contactForm = document.createElement('form');
-    contactForm.id = 'user-contact-form';
-    contactForm.className = 'contact-form';
-    contactForm.addEventListener('submit', submitContactForm);
-
-    const contactFields = document.createElement('div');
-    contactFields.id = 'user-contact-fields';
-    contactFields.className = 'contact-field-stack';
-    contactForm.appendChild(contactFields);
-
-    const honeypot = document.createElement('input');
-    honeypot.type = 'text';
-    honeypot.name = 'company';
-    honeypot.id = 'user-contact-company';
-    honeypot.autocomplete = 'off';
-    honeypot.tabIndex = -1;
-    honeypot.style.display = 'none';
-    contactForm.appendChild(honeypot);
-
-    const turnstileContainer = document.createElement('div');
-    turnstileContainer.id = 'turnstile-container';
-    turnstileContainer.className = 'turnstile-container';
-    contactForm.appendChild(turnstileContainer);
-
-    const contactActions = document.createElement('div');
-    contactActions.className = 'contact-actions';
-    const submitBtn = document.createElement('button');
-    submitBtn.type = 'submit';
-    submitBtn.className = 'primary';
-    submitBtn.innerText = '문의 보내기';
-    submitBtn.id = 'user-contact-submit';
-    contactActions.appendChild(submitBtn);
-    contactForm.appendChild(contactActions);
-
-    const contactStatusBox = document.createElement('div');
-    contactStatusBox.id = 'user-contact-status';
-    contactStatusBox.className = 'status-banner';
-    contactStatusBox.style.display = 'none';
-    contactForm.appendChild(contactStatusBox);
-
-    contactSection.appendChild(contactForm);
-
-    const footer = document.createElement('footer');
-    footer.className = 'user-footer';
-    footer.innerHTML = '<p>&copy; 2025 인플루언서 페이지</p>';
-
-    card.appendChild(header);
-    card.appendChild(profileSection);
-    card.appendChild(linksSection);
-    card.appendChild(contactSection);
-    card.appendChild(footer);
-
-    shell.appendChild(card);
-    host.appendChild(shell);
-
-    userViewReady = true;
-}
-
-// 페이지 데이터 로드
-async function loadPageData(pageId, options = {}) {
-    if (!pageId || pageId === 'undefined') {
-        console.debug('pageId가 없어 페이지 데이터를 요청하지 않습니다.');
-        return;
-    }
-
-    const includeAdmin = !!options.includeAdmin;
-    const privateToken = options.privateToken;
-    const fetchOptions = {};
-    if (includeAdmin) {
-        const token = sessionStorage.getItem('page_admin_token');
-        if (token) {
-            fetchOptions.headers = { Authorization: `Bearer ${token}` };
-        }
-    }
-
-    const targetPath = privateToken
-        ? `/api/pages/${encodeURIComponent(pageId)}/private/${encodeURIComponent(privateToken)}`
-        : `/api/pages/${encodeURIComponent(pageId)}`;
-    const res = await apiFetch(targetPath, fetchOptions);
-
-    if (!res.ok) {
-        console.error('Failed to fetch page data:', res);
-        return;
-    }
-
-    const data = await res.json();
-
-    currentPageId = pageId;
-    pageTheme = typeof data.theme === 'string' ? data.theme : 'classic';
-    applyThemeToScopes();
-    renderThemeOptions();
-
-    if (data && data.profile) {
-        updatePageContext(pageId, data.profile);
-        document.title = data.profile.name;
-
-        const titleEl = document.querySelector('h1');
-        if (titleEl) titleEl.innerText = data.profile.name;
-
-        const photoEl = document.querySelector('.profile-photo');
-        if (photoEl && data.profile.photoUrl) photoEl.src = data.profile.photoUrl;
-
-        const descEl = document.querySelector('.profile-description');
-        if (descEl && data.profile.description) descEl.innerText = data.profile.description;
-
-        const publicLinks = Array.isArray(data.links) ? data.links : [];
-        const privateLinks = includeAdmin && Array.isArray(data.privateLinks)
-            ? data.privateLinks.map((link) => ({ ...link, isPrivate: true }))
-            : [];
-
-        renderUserLinks(publicLinks);
-        publicContactSchema = Array.isArray(data.contactSchema) ? data.contactSchema : [];
-        publicContactSettings = normalizeContactSettings(data?.contactSettings);
-        contactEnabled = publicContactSettings.enabled === true;
-        renderPublicContactForm();
-
-        if (includeAdmin) {
-            const normalizeLink = (link, isPrivate = false) => ({
-                ...link,
-                title: link.title || link.name || link.url || '',
-                url: link.url || '',
-                iconUrl: link.iconUrl || '',
-                platformId: link.platformId || '',
-                handle: link.handle || '',
-                isPrivate: isPrivate || !!link.isPrivate,
-            });
-
-            adminLinks = [
-                ...publicLinks.map((link) => normalizeLink(link, false)),
-                ...privateLinks.map((link) => normalizeLink(link, true)),
-            ];
-            adminSlugs = Array.isArray(data.slugs) && data.slugs.length ? data.slugs : [pageId];
-            adminContactSchema = Array.isArray(data.contactSchema) ? data.contactSchema : [];
-            contactSettings = normalizeContactSettings(data?.contactSettings);
-            pagePlan = data.plan || 'free';
-            renderAdminLinks();
-            renderSlugEditor();
-            renderContactSchema();
-            hydrateContactSettings();
-            renderPrivacySummary();
-            renderUsage();
-            renderOnboardingBanner();
-            fetchContactSubmissions();
-            fetchPagePlanStatus(pageId);
-            loadPrivateTemplates();
-        }
-
-        const nameInput = document.getElementById('name');
-        const descInput = document.getElementById('desc');
-        const photoInput = document.getElementById('photo');
-        if (nameInput) nameInput.value = data.profile.name ?? '';
-        if (descInput) descInput.value = data.profile.description ?? '';
-        if (photoInput) photoInput.value = data.profile.photoUrl ?? '';
-    } else {
-        console.error('Page data not found');
-    }
-}
-
-async function fetchPagePlanStatus(pageId) {
-    const token = sessionStorage.getItem('page_admin_token');
-    if (!token || !pageId) return;
-
-    try {
-        const res = await apiFetch(`/api/page/${encodeURIComponent(pageId)}/plan-status`, {
-            method: 'GET',
-            headers: { Authorization: `Bearer ${token}` },
-        }, [401, 403, 404]);
-
-        if (!res.ok) return;
-
-        const payload = await res.json().catch(() => null);
-        if (!payload) return;
-
-        pagePlan = payload.planId || pagePlan;
-        pagePlanStatus = payload;
-        renderUsage();
-    } catch (error) {
-        console.warn('플랜 상태를 불러오지 못했습니다.', error);
-    }
-}
-
-function updatePageContext(pageId, profile = {}) {
-    const badge = document.getElementById('current-page-id');
-    if (badge) {
-        badge.innerText = pageId || '-';
-    }
-
-    const slugBadge = document.getElementById('current-slug-badge');
-    if (slugBadge) {
-        const primarySlug = adminSlugs[0] || pageId;
-        slugBadge.innerText = primarySlug ? `슬러그: ${primarySlug}` : '슬러그: -';
-    }
-
-    const publicLink = document.getElementById('public-link');
-    if (publicLink) {
-        if (pageId) {
-            publicLink.href = `/${encodeURIComponent(pageId)}`;
-            publicLink.style.visibility = 'visible';
-        } else {
-            publicLink.href = '#';
-            publicLink.style.visibility = 'hidden';
-        }
-    }
-
-    const adminPageTitle = document.querySelector('.page-hero h1');
-    if (adminPageTitle && profile?.name) {
-        adminPageTitle.innerText = `${profile.name} 페이지 관리`;
-    }
-}
-
-// URL에서 pageId (슬러그) 추출
-const pathSegments = window.location.pathname.split('/').filter(Boolean);
-const searchParams = new URLSearchParams(window.location.search);
-const pageIdFromQuery = searchParams.get('pageId');
-const pageRole = document.body?.dataset?.pageRole;
-const pageIdFromPath =
-    pathSegments.length >= 2 && pathSegments[1] === 'admin' ? pathSegments[0] : '';
-const isUserPage = pathSegments.length === 2 && pathSegments[0] === 'user' && pathSegments[1];
-const isPrivateLink = pathSegments.length === 3 && pathSegments[1] === 'private';
-const reservedRoutes = new Set([
-    'admin',
-    'admin.html',
-    'login',
-    'login.html',
-    'super-admin',
-    'super-admin.html',
-    'page-admin-login',
-    'page-admin-login.html',
-    'signup',
-    'signup.html',
-    'user-login',
-    'user-login.html',
-    'dashboard',
-    'user-dashboard.html',
-    'user',
-    'user.html',
-]);
-const looksLikeSlugPage =
-    pathSegments.length === 1 &&
-    !pathSegments[0].includes('.') &&
-    !reservedRoutes.has(pathSegments[0]);
-const isAdminHtml = pathSegments.length === 1 && pathSegments[0].startsWith('admin');
-const isUserHtml = window.location.pathname.endsWith('/user.html');
-const isPublicView = !pageRole && (isUserPage || looksLikeSlugPage || isUserHtml || isPrivateLink);
-const derivedPageId = pageIdFromPath || pageIdFromQuery || '';
-const privateTokenFromPath = isPrivateLink ? pathSegments[2] : '';
-
-updateEnvBadge(MANUAL_API_BASE || API_BASES[0] || null);
-primeApiBaseSelection();
-applyThemeToScopes();
+const getPlatformPreset = PlatformHelpers.getPlatformPreset || ((platformId) => PLATFORM_PRESETS.find((preset) => preset.id === platformId));
 
 if (isPublicView) {
     document.body.classList.add('user-view');
     document.body.classList.add('theme-scope');
+}
+
+
+let currentUserRole = 'viewer';
+
+// 상태 데이터 변수들
+let adminLinks = [];
+let adminSlugs = [];
+let pagePlan = 'free';
+let pageTheme = 'classic';
+let pagePlanStatus = {};
+let contactSettings = {};
+let adminContactSchema = [];
+let publicContactSchema = [];
+let publicContactSettings = {};
+let contactEnabled = false;
+let contactSubmissions = [];
+let privateTemplates = [];
+let dragState = null;
+let currentPageId = '';
+
+const MAX_CONTACT_FIELDS = 20;
+
+const PLAN_LIMITS = {
+    free: { max_private_links: 3, max_contact_fields: 3 },
+    basic: { max_private_links: 10, max_contact_fields: 10 },
+    premium: { max_private_links: 100, max_contact_fields: 25 },
+};
+
+const THEME_PRESETS = [
+    { id: 'classic', label: '클래식', desc: '밝은 기본 스타일', swatch: ['#f7f7fb', '#ffffff', '#16a34a', '#0f172a'] },
+    { id: 'midnight', label: '미드나잇', desc: '어두운 배경 + 하늘색 포인트', swatch: ['#0b1220', '#0f172a', '#22d3ee', '#e5e7eb'] },
+    { id: 'sunset', label: '선셋', desc: '따뜻한 주황/살구 톤', swatch: ['#fff7ed', '#fef3c7', '#f97316', '#7c2d12'] },
+    { id: 'mint', label: '민트', desc: '시원한 민트/틸 포인트', swatch: ['#ecfeff', '#f0fdfa', '#14b8a6', '#042f2e'] },
+];
+
+const CONTACT_PRESETS = [
+    { label: '간단 문의', fields: [{ label: '이메일', type: 'email', required: true }, { label: '문의 내용', type: 'textarea', required: true }] },
+    { label: '견적 요청', fields: [{ label: '회사명', type: 'text' }, { label: '담당자', type: 'text', required: true }, { label: '연락처', type: 'tel', required: true }, { label: '예산', type: 'text' }, { label: '내용', type: 'textarea' }] },
+    { label: '방송 출연 제안', fields: [{ label: '프로그램명', type: 'text' }, { label: '방송사', type: 'text' }, { label: '담당자/연락처', type: 'text', required: true }, { label: '제안 내용', type: 'textarea' }] },
+];
+
+function updatePageContext(pageId) {
+    derivedPageId = pageId;
+    currentPageId = pageId;
+    const pageLink = document.getElementById('public-link');
+    const slugBadge = document.getElementById('current-slug-badge');
+    const idBadge = document.getElementById('current-page-id');
+
+    if (idBadge) idBadge.innerText = pageId;
+
+    if (pageLink) {
+        const slug = adminSlugs?.[0] || pageId;
+        pageLink.href = `/${slug}`;
+    }
+
+    if (slugBadge) {
+        slugBadge.innerText = `슬러그: ${adminSlugs?.[0] || '-'}`;
+    }
+}
+
+async function loadPageData(pageId, options = {}) {
+    if (!pageId) return;
+
+    currentPageId = pageId;
+    const { includeAdmin, privateToken } = options;
+    const adminQuery = includeAdmin ? '?admin=true' : '';
+    const privateQuery = privateToken ? `?token=${privateToken}` : '';
+    const endpoint = privateToken
+        ? `/api/pages/${encodeURIComponent(pageId)}/private${privateQuery}`
+        : `/api/pages/${encodeURIComponent(pageId)}${adminQuery}`;
+
+    try {
+        const res = await apiFetch(endpoint);
+
+        if (!res.ok) {
+            const errorText = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            console.error('페이지 데이터 로드 실패:', errorText);
+            // Optionally, provide feedback to the user if in an admin context
+            if (includeAdmin) {
+                setPageLoginStatus(`페이지 데이터 로드 실패: ${errorText}`, 'error');
+            }
+            return;
+        }
+
+        const data = await res.json().catch((jsonError) => {
+            console.error(`Error parsing JSON for page data: ${jsonError}`);
+            return null;
+        });
+
+        if (data === null) {
+            const errorMessage = '페이지 데이터 JSON 파싱 실패';
+            console.error(errorMessage);
+            if (includeAdmin) {
+                setPageLoginStatus(errorMessage, 'error');
+            }
+            return;
+        }
+
+        // 프로필 정보 채우기
+        const profileName = document.getElementById('user-page-name') || document.getElementById('name');
+        const profileDesc = document.getElementById('user-page-description') || document.getElementById('desc');
+        const profilePhoto = document.getElementById('user-page-photo') || document.getElementById('photo');
+        const adminTitle = document.getElementById('admin-page-title');
+
+        if (profileName) profileName.innerText = data.profile?.name || '';
+        if (profileDesc) profileDesc.innerText = data.profile?.description || '';
+        if (profilePhoto) {
+            if (data.profile?.photoUrl) {
+                profilePhoto.src = data.profile.photoUrl;
+                profilePhoto.style.display = 'block';
+            } else {
+                profilePhoto.style.display = 'none';
+            }
+        }
+        
+        if (includeAdmin) {
+            if (document.getElementById('name')) document.getElementById('name').value = data.profile?.name || '';
+            if (document.getElementById('desc')) document.getElementById('desc').value = data.profile?.description || '';
+            if (document.getElementById('photo')) document.getElementById('photo').value = data.profile?.photoUrl || '';
+            if (adminTitle) adminTitle.innerText = data.profile?.name || '페이지 관리';
+
+            adminLinks = [...(data.links || []), ...(data.privateLinks || [])];
+            pagePlan = data.plan || 'free';
+            pageTheme = data.theme || 'classic';
+            pagePlanStatus = data.planStatus || {};
+            adminSlugs = Array.isArray(data.slugs) && data.slugs.length ? data.slugs : [slugify(pageId)];
+            contactSettings = data.contactSettings || {};
+            adminContactSchema = data.contactSchema || [];
+            
+            renderAdminLinks();
+            renderSlugEditor();
+            hydrateContactSettings();
+            renderContactSchemaEditor();
+            renderThemeOptions();
+            renderUsage();
+            updatePageContext(pageId);
+        } else {
+            renderUserLinks(data.links || []);
+            pageTheme = data.theme || 'classic';
+            publicContactSchema = data.contactSchema || [];
+            publicContactSettings = data.contactSettings || {};
+            contactEnabled = publicContactSettings.enabled === true;
+            renderPublicContactForm();
+        }
+
+        applyThemeToScopes();
+
+    } catch (error) {
+        const errorMessage = error.message || '알 수 없는 페이지 데이터 처리 오류';
+        console.error('페이지 데이터 처리 중 오류:', errorMessage, error);
+        // Optionally, provide feedback to the user if in an admin context
+        if (includeAdmin) {
+            setPageLoginStatus(`페이지 데이터 처리 중 오류: ${errorMessage}`, 'error');
+        } else {
+             // For public view, display a generic message or redirect
+             // Example: document.body.innerHTML = '페이지를 불러올 수 없습니다.';
+             // For now, just console.error
+        }
+    }
 }
 
 async function ensurePageSession() {
@@ -1094,23 +453,47 @@ async function ensurePageSession() {
         const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/session`, {
             method: 'GET',
             headers: { Authorization: `Bearer ${token}` },
-        }, [401, 403, 404]);
+        });
 
         if (!res.ok) {
             sessionStorage.removeItem('page_admin_token');
-            const message = await res.text();
-            setPageLoginStatus(`세션이 만료되었습니다: ${message || res.status}`, 'error');
+            const errorText = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            setPageLoginStatus(`세션이 만료되었습니다: ${errorText}`, 'error');
             window.location.href = `/page-admin-login.html?pageId=${encodeURIComponent(derivedPageId)}`;
             return;
         }
 
-        const payload = await res.json().catch(() => null);
-        if (payload?.pageId && payload.pageId !== derivedPageId) {
-            updatePageContext(payload.pageId);
+        const payload = await res.json().catch((jsonError) => {
+            console.error(`Error parsing JSON for session: ${jsonError}`);
+            return null;
+        });
+
+        if (payload === null) {
+            setPageLoginStatus('세션 데이터 파싱 실패', 'error');
+            return;
+        }
+
+        if (payload) {
+            if (payload.pageId && payload.pageId !== derivedPageId) {
+                updatePageContext(payload.pageId);
+            }
+            currentUserRole = payload.role || 'viewer';
+            applyRolePermissions();
         }
     } catch (error) {
+        const errorMessage = error.message || '네트워크 오류';
         console.error('세션 확인 중 오류', error);
+        setPageLoginStatus(`세션 확인 중 오류: ${errorMessage}`, 'error');
+        // Do not redirect here, as the user might already be on the login page or we want to show the error first.
     }
+}
+
+function applyRolePermissions() {
+    const body = document.body;
+    body.classList.remove('role-owner', 'role-editor', 'role-viewer', 'role-super');
+    
+    const role = currentUserRole || 'viewer';
+    body.classList.add(`role-${role}`);
 }
 
 if (pageRole === 'page-admin' && derivedPageId) {
@@ -1119,6 +502,7 @@ if (pageRole === 'page-admin' && derivedPageId) {
 
 if ((looksLikeSlugPage || isPrivateLink) && !userViewReady && !pageRole) {
     ensureUserViewContainer();
+    userViewReady = document.getElementById('user-view-container');
 }
 
 // 페이지 관리자 대시보드는 토큰과 pageId를 필수로 요구
@@ -1127,7 +511,7 @@ if (pageRole === 'page-admin') {
 
     if (!token) {
         const redirectTarget = derivedPageId
-            ? `/page-admin-login.html?pageId=${encodeURIComponent(derivedPageId)}`
+            ? `/page-admin-login.html?pageId=${encodeURIComponent(derivedPageId)}` 
             : '/page-admin-login.html';
         window.location.href = redirectTarget;
     }
@@ -1156,7 +540,6 @@ if (userViewReady || pageRole === 'page-admin') {
 
 // 페이지 관리자 로그인 화면에서 URL로 받은 pageId를 자동 입력
 document.addEventListener('DOMContentLoaded', () => {
-    renderApiDebugPanel('api-debug');
     renderThemeOptions();
     consumeOAuthTokenFromQuery();
     if (window.location.pathname.endsWith('/user-dashboard.html') || window.location.pathname.endsWith('/dashboard')) {
@@ -1180,6 +563,22 @@ document.addEventListener('DOMContentLoaded', () => {
             primarySlugInput.addEventListener('blur', (e) => setPrimarySlug(e.target.value));
         }
         renderOnboardingBanner();
+
+        const newFieldForm = document.getElementById('new-contact-field-form');
+        if (newFieldForm) {
+            newFieldForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const labelInput = document.getElementById('new-field-label');
+                const typeInput = document.getElementById('new-field-type');
+                const label = labelInput.value.trim();
+                const type = typeInput.value;
+                if (label && type) {
+                    adminContactSchema.push({ label, type, required: false });
+                    renderContactSchemaEditor();
+                    labelInput.value = '';
+                }
+            });
+        }
     }
 });
 
@@ -1273,13 +672,13 @@ async function savePage() {
         contactSettings: {
             enabled: enabledContact,
             ...(contactSettings && contactSettings.webhookUrl
-                ? { webhookUrl: contactSettings.webhookUrl.trim() }
+                ? { webhookUrl: contactSettings.webhookUrl.trim() } 
                 : {}),
             ...(Array.isArray(contactSettings.webhookUrls) && contactSettings.webhookUrls.length
-                ? { webhookUrls: contactSettings.webhookUrls }
+                ? { webhookUrls: contactSettings.webhookUrls } 
                 : {}),
             ...(Array.isArray(contactSettings.emailRecipients) && contactSettings.emailRecipients.length
-                ? { emailRecipients: contactSettings.emailRecipients }
+                ? { emailRecipients: contactSettings.emailRecipients } 
                 : {}),
             ...(contactSettings.emailSubject ? { emailSubject: contactSettings.emailSubject.trim() } : {}),
             ...(contactSettings.formTitle ? { formTitle: contactSettings.formTitle.trim() } : {}),
@@ -1292,20 +691,25 @@ async function savePage() {
         theme: pageTheme,
     };
 
-    const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/save`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify(payload),
-    });
+    try {
+        const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/save`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify(payload),
+        });
 
-    if (res.ok) {
-        setStatus('페이지가 저장되었습니다.', 'success');
-    } else {
-        const errText = await res.text();
-        setStatus(`저장 실패: ${errText || res.status}`, 'error');
+        if (res.ok) {
+            setStatus('페이지가 저장되었습니다.', 'success');
+        } else {
+            const errText = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            setStatus(`저장 실패: ${errText}`, 'error');
+        }
+    } catch (error) {
+        const errorMessage = error.message || '네트워크 오류';
+        setStatus(`저장 실패: ${errorMessage}`, 'error');
     }
 }
 
@@ -1537,21 +941,28 @@ async function login() {
         return;
     }
 
-    const res = await apiFetch('/api/admin/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
-    });
+    try {
+        const res = await apiFetch('/api/admin/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
 
-    if (res.ok) {
-        const session = await res.json();
-        if (session?.token) {
-            sessionStorage.setItem('super_admin_token', session.token);
+        if (res.ok) {
+            const session = await res.json();
+            if (session?.token) {
+                sessionStorage.setItem('super_admin_token', session.token);
+            }
+            window.location.href = "/super-admin.html";  // 슈퍼 관리자 페이지로 리디렉션
+        } else {
+            const errText = await res.text();
+            const message = formatStatusWithRequestId(`로그인 실패: ${errText || res.status}`, res);
+            if (!setAuthStatus('super-login-status', message, 'error')) {
+                alert(message);
+            }
         }
-        window.location.href = "/super-admin.html";  // 슈퍼 관리자 페이지로 리디렉션
-    } else {
-        const errText = await res.text();
-        const message = formatStatusWithRequestId(`로그인 실패: ${errText || res.status}`, res);
+    } catch (error) {
+        const message = formatStatusWithRequestId(`로그인 실패: ${error.message || '네트워크 오류' || error}`, null);
         if (!setAuthStatus('super-login-status', message, 'error')) {
             alert(message);
         }
@@ -1571,15 +982,26 @@ async function fetchUserPrimaryPage() {
     const token = sessionStorage.getItem('user_token');
     if (!token) return null;
 
-    const res = await apiFetch('/api/user/pages', {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${token}` },
-    }, [401, 403, 404]);
+    try {
+        const res = await apiFetch('/api/user/pages', {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${token}` },
+        }, [401, 403, 404]);
 
-    if (!res.ok) return null;
-    const payload = await res.json().catch(() => null);
-    const items = Array.isArray(payload?.items) ? payload.items : [];
-    return items[0]?.pageId || null;
+        if (!res.ok) {
+            console.error('기본 사용자 페이지 로드 실패', res.status);
+            return null;
+        }
+        const payload = await res.json().catch((jsonError) => {
+            console.error(`Error parsing JSON for user primary page: ${jsonError}`);
+            return null;
+        });
+        const items = Array.isArray(payload?.items) ? payload.items : [];
+        return items[0]?.pageId || null;
+    } catch (error) {
+        console.error('기본 사용자 페이지 로드 중 오류', error);
+        return null;
+    }
 }
 
 async function fetchUserPages() {
@@ -1589,23 +1011,37 @@ async function fetchUserPages() {
         return [];
     }
 
-    const res = await apiFetch('/api/user/pages', {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${token}` },
-    }, [401, 403, 404]);
+    try {
+        const res = await apiFetch('/api/user/pages', {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${token}` },
+        }, [401, 403, 404]);
 
-    if (!res.ok) {
-        const msg = await res.text().catch(() => '');
+        if (!res.ok) {
+            const msg = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            setAuthStatus(
+                'user-dashboard-status',
+                formatStatusWithRequestId(`페이지 목록을 불러오지 못했습니다: ${msg}`, res),
+                'error'
+            );
+            return [];
+        }
+        setAuthStatus('user-dashboard-status', '', 'info');
+        const payload = await res.json().catch((jsonError) => {
+            console.error(`Error parsing JSON for user pages: ${jsonError}`);
+            return null;
+        });
+        return Array.isArray(payload?.items) ? payload.items : [];
+    } catch (error) {
+        const errorMessage = error.message || '네트워크 오류';
         setAuthStatus(
             'user-dashboard-status',
-            formatStatusWithRequestId(`페이지 목록을 불러오지 못했습니다: ${msg || res.status}`, res),
+            `페이지 목록을 불러오지 못했습니다: ${errorMessage}`,
             'error'
         );
+        console.error('사용자 페이지 로드 중 오류', error);
         return [];
     }
-    setAuthStatus('user-dashboard-status', '', 'info');
-    const payload = await res.json().catch(() => null);
-    return Array.isArray(payload?.items) ? payload.items : [];
 }
 
 function renderUserPagesDashboard(items) {
@@ -1679,26 +1115,46 @@ async function userSignup() {
         return;
     }
 
-    const res = await apiFetch('/api/users/signup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-    }, [400, 401, 409, 422]);
+    try {
+        const res = await apiFetch('/api/users/signup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password }),
+        }, [400, 401, 409, 422]);
 
-    if (!res.ok) {
-        const msg = await res.text();
-        const message = formatStatusWithRequestId(`회원가입 실패: ${msg || res.status}`, res);
+        if (!res.ok) {
+            const msg = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            const message = formatStatusWithRequestId(`회원가입 실패: ${msg}`, res);
+            if (!setAuthStatus('user-signup-status', message, 'error')) {
+                alert(message);
+            }
+            return;
+        }
+
+        const payload = await res.json().catch((jsonError) => {
+            console.error(`Error parsing JSON for signup: ${jsonError}`);
+            return null;
+        });
+
+        if (payload === null) {
+            const errorMessage = '회원가입 응답 파싱 실패';
+            if (!setAuthStatus('user-signup-status', errorMessage, 'error')) {
+                alert(errorMessage);
+            }
+            return;
+        }
+
+        storeUserSession(payload?.token, payload?.expiresIn);
+
+        const pageId = payload?.pageId;
+        window.location.href = '/dashboard';
+    } catch (error) {
+        const errorMessage = error.message || '네트워크 오류';
+        const message = formatStatusWithRequestId(`회원가입 실패: ${errorMessage}`, null);
         if (!setAuthStatus('user-signup-status', message, 'error')) {
             alert(message);
         }
-        return;
     }
-
-    const payload = await res.json().catch(() => null);
-    storeUserSession(payload?.token, payload?.expiresIn);
-
-    const pageId = payload?.pageId;
-    window.location.href = '/dashboard';
 }
 
 async function userLogin() {
@@ -1714,36 +1170,55 @@ async function userLogin() {
         return;
     }
 
-    const res = await apiFetch('/api/users/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-    }, [400, 401, 404, 423]);
+    try {
+        const res = await apiFetch('/api/users/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password }),
+        }, [400, 401, 404, 423]);
 
-    if (!res.ok) {
-        const msg = await res.text();
-        const message = formatStatusWithRequestId(`로그인 실패: ${msg || res.status}`, res);
+        if (!res.ok) {
+            const msg = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            const message = formatStatusWithRequestId(`로그인 실패: ${msg}`, res);
+            if (!setAuthStatus('user-login-status', message, 'error')) {
+                alert(message);
+            }
+            return;
+        }
+
+        const payload = await res.json().catch((jsonError) => {
+            console.error(`Error parsing JSON for login: ${jsonError}`);
+            return null;
+        });
+
+        if (payload === null) {
+            const errorMessage = '로그인 응답 파싱 실패';
+            if (!setAuthStatus('user-login-status', errorMessage, 'error')) {
+                alert(errorMessage);
+            }
+            return;
+        }
+
+        storeUserSession(payload?.token, payload?.expiresIn);
+
+        window.location.href = '/dashboard';
+    } catch (error) {
+        const errorMessage = error.message || '네트워크 오류';
+        const message = formatStatusWithRequestId(`로그인 실패: ${errorMessage}`, null);
         if (!setAuthStatus('user-login-status', message, 'error')) {
             alert(message);
         }
-        return;
     }
-
-    const payload = await res.json().catch(() => null);
-    storeUserSession(payload?.token, payload?.expiresIn);
-
-    window.location.href = '/dashboard';
 }
 
 function startOAuth(provider) {
     const redirect = `${window.location.origin}/dashboard`;
-    primeApiBaseSelection().then((base) => {
-        const targetBase = base || API_BASES[0];
-        if (!targetBase) {
+    getApiBase().then((base) => {
+        if (!base) {
             alert('API 베이스를 찾지 못했습니다.');
             return;
         }
-        const url = `${targetBase}/api/auth/${encodeURIComponent(provider)}/start?redirect=${encodeURIComponent(redirect)}`;
+        const url = `${base}/api/auth/${encodeURIComponent(provider)}/start?redirect=${encodeURIComponent(redirect)}`;
         window.location.href = url;
     });
 }
@@ -1799,26 +1274,40 @@ async function bootstrapSuperAdmin() {
         headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const res = await apiFetch('/api/admin/bootstrap', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ username, password })
-    }, [400, 401, 404, 405]);
+    try {
+        const res = await apiFetch('/api/admin/bootstrap', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ username, password })
+        }, [400, 401, 404, 405]);
 
-    if (res.ok) {
-        const payload = await res.json().catch(() => ({}));
-        if (!setAuthStatus(
-            'super-login-status',
-            `계정을 준비했습니다: ${payload.username || username} (${payload.mode || 'created'})`,
-            'success'
-        )) {
-            alert(`계정을 준비했습니다: ${payload.username || username} (${payload.mode || 'created'})`);
+        if (res.ok) {
+            const payload = await res.json().catch((jsonError) => {
+                console.error(`Error parsing JSON for bootstrap: ${jsonError}`);
+                return {};
+            });
+            if (!setAuthStatus(
+                'super-login-status',
+                `계정을 준비했습니다: ${payload.username || username} (${payload.mode || 'created'})`,
+                'success'
+            )) {
+                alert(`계정을 준비했습니다: ${payload.username || username} (${payload.mode || 'created'})`);
+            }
+        } else {
+            const errText = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            const message = formatStatusWithRequestId(
+                `계정 생성/재설정 실패: ${errText}`,
+                res
+            );
+            if (!setAuthStatus('super-login-status', message, 'error')) {
+                alert(message);
+            }
         }
-    } else {
-        const errText = await res.text();
+    } catch (error) {
+        const errorMessage = error.message || '네트워크 오류';
         const message = formatStatusWithRequestId(
-            `계정 생성/재설정 실패: ${errText || res.status}`,
-            res
+            `계정 생성/재설정 실패: ${errorMessage}`,
+            null
         );
         if (!setAuthStatus('super-login-status', message, 'error')) {
             alert(message);
@@ -1908,20 +1397,34 @@ async function pageAdminLogin() {
 
     setPageLoginStatus('로그인 중입니다...', 'info');
 
-    const res = await apiFetch(`/api/page/${encodeURIComponent(pageId)}/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-    });
+    try {
+        const res = await apiFetch(`/api/page/${encodeURIComponent(pageId)}/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+        });
 
-    if (res.ok) {
-        const session = await res.json();
-        sessionStorage.setItem('page_admin_token', session.token);
-        setPageLoginStatus('로그인에 성공했습니다. 잠시 후 이동합니다.', 'success');
-        window.location.href = `/admin.html?pageId=${encodeURIComponent(pageId)}`;
-    } else {
-        const message = await res.text();
-        setPageLoginStatus(`로그인 실패: ${message || res.status}`, 'error');
+        if (res.ok) {
+            const session = await res.json().catch((jsonError) => {
+                console.error(`Error parsing JSON for page admin login: ${jsonError}`);
+                return null;
+            });
+
+            if (session === null) {
+                setPageLoginStatus('로그인 응답 파싱 실패', 'error');
+                return;
+            }
+
+            sessionStorage.setItem('page_admin_token', session.token);
+            setPageLoginStatus('로그인에 성공했습니다. 잠시 후 이동합니다.', 'success');
+            window.location.href = `/admin.html?pageId=${encodeURIComponent(pageId)}`;
+        } else {
+            const message = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            setPageLoginStatus(`로그인 실패: ${message}`, 'error');
+        }
+    } catch (error) {
+        const errorMessage = error.message || '네트워크 오류';
+        setPageLoginStatus(`로그인 실패: ${errorMessage}`, 'error');
     }
 }
 
@@ -1929,7 +1432,7 @@ async function pageAdminLogin() {
 async function logout() {
     const token = sessionStorage.getItem('page_admin_token');
     const redirectTarget = derivedPageId
-        ? `/page-admin-login.html?pageId=${encodeURIComponent(derivedPageId)}`
+        ? `/page-admin-login.html?pageId=${encodeURIComponent(derivedPageId)}` 
         : '/page-admin-login.html';
 
     if (token && derivedPageId) {
@@ -2222,7 +1725,7 @@ async function submitContactForm(event) {
         }, [400, 404, 422]);
 
         if (!res.ok) {
-            const msg = await res.text();
+            const msg = await res.text().catch(() => `API 응답 오류: ${res.status}`);
             throw new Error(msg || `저장 실패 (${res.status})`);
         }
 
@@ -2265,11 +1768,19 @@ async function fetchContactSubmissions() {
         }, [401, 403, 404]);
 
         if (!res.ok) {
-            const msg = await res.text();
+            const msg = await res.text().catch(() => `API 응답 오류: ${res.status}`);
             throw new Error(msg || `불러오기 실패 (${res.status})`);
         }
 
-        const payload = await res.json().catch(() => null);
+        const payload = await res.json().catch((jsonError) => {
+            console.error(`Error parsing JSON for contact submissions: ${jsonError}`);
+            return null;
+        });
+
+        if (payload === null) {
+            throw new Error('문의 내역 응답 파싱 실패');
+        }
+
         contactSubmissions = Array.isArray(payload?.submissions) ? payload.submissions : [];
         renderContactSubmissions();
     } catch (error) {
@@ -2302,7 +1813,7 @@ async function downloadContactCsv() {
         }, [401, 403, 404]);
 
         if (!res.ok) {
-            const msg = await res.text();
+            const msg = await res.text().catch(() => `API 응답 오류: ${res.status}`);
             throw new Error(msg || `다운로드 실패 (${res.status})`);
         }
 
@@ -2354,7 +1865,7 @@ async function clearContactSubmissions() {
         }, [401, 403, 404]);
 
         if (!res.ok) {
-            const msg = await res.text();
+            const msg = await res.text().catch(() => `API 응답 오류: ${res.status}`);
             throw new Error(msg || `삭제 실패 (${res.status})`);
         }
 
@@ -2422,8 +1933,21 @@ async function loadPrivateTemplates() {
             headers: { Authorization: `Bearer ${token}` },
         }, [401, 403, 404]);
 
-        if (!res.ok) return;
-        const payload = await res.json().catch(() => null);
+        if (!res.ok) {
+            const errorText = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            console.warn('템플릿 목록을 불러오지 못했습니다:', errorText);
+            return;
+        }
+        const payload = await res.json().catch((jsonError) => {
+            console.error(`Error parsing JSON for private templates: ${jsonError}`);
+            return null;
+        });
+
+        if (payload === null) {
+            console.warn('템플릿 목록 응답 파싱 실패');
+            return;
+        }
+
         privateTemplates = Array.isArray(payload?.items) ? payload.items : [];
         renderPrivateTemplates();
     } catch (error) {
@@ -2452,26 +1976,40 @@ async function createPrivateTemplate() {
         ...(noteInput?.value ? { note: noteInput.value.trim() } : {}),
     };
 
-    const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/private-templates`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ name, payload }),
-    }, [400, 401, 403]);
+    try {
+        const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/private-templates`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ name, payload }),
+        }, [400, 401, 403]);
 
-    if (!res.ok) {
-        const msg = await res.text();
-        alert(`템플릿 생성 실패: ${msg || res.status}`);
-        return;
+        if (!res.ok) {
+            const msg = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            alert(`템플릿 생성 실패: ${msg || res.status}`);
+            return;
+        }
+
+        const created = await res.json().catch((jsonError) => {
+            console.error(`Error parsing JSON for created template: ${jsonError}`);
+            return null;
+        });
+
+        if (created === null) {
+            alert('템플릿 생성 응답 파싱 실패');
+            return;
+        }
+
+        privateTemplates = [created, ...privateTemplates];
+        renderPrivateTemplates();
+
+        if (nameInput) nameInput.value = '';
+        if (expiresInput) expiresInput.value = '';
+        if (maxUsesInput) maxUsesInput.value = '';
+        if (noteInput) noteInput.value = '';
+    } catch (error) {
+        const errorMessage = error.message || '네트워크 오류';
+        alert(`템플릿 생성 실패: ${errorMessage}`);
     }
-
-    const created = await res.json().catch(() => null);
-    privateTemplates = [created, ...privateTemplates];
-    renderPrivateTemplates();
-
-    if (nameInput) nameInput.value = '';
-    if (expiresInput) expiresInput.value = '';
-    if (maxUsesInput) maxUsesInput.value = '';
-    if (noteInput) noteInput.value = '';
 }
 
 async function deletePrivateTemplate(templateId) {
@@ -2479,35 +2017,54 @@ async function deletePrivateTemplate(templateId) {
     if (!token || !derivedPageId) return;
     if (!confirm('템플릿을 삭제할까요?')) return;
 
-    await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/private-templates/${encodeURIComponent(templateId)}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-    }, [401, 403, 404]);
+    try {
+        await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/private-templates/${encodeURIComponent(templateId)}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` },
+        }, [401, 403, 404]);
 
-    privateTemplates = privateTemplates.filter((item) => item.id !== templateId);
-    renderPrivateTemplates();
+        privateTemplates = privateTemplates.filter((item) => item.id !== templateId);
+        renderPrivateTemplates();
+    } catch (error) {
+        console.warn('템플릿 삭제 실패', error);
+        alert(`템플릿 삭제 실패: ${error.message || '네트워크 오류'}`);
+    }
 }
 
 async function issuePrivateLinkFromTemplate(templateId) {
     const token = sessionStorage.getItem('page_admin_token');
     if (!token || !derivedPageId) return;
 
-    const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/private-templates/${encodeURIComponent(templateId)}/links`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-    }, [401, 403, 404]);
+    try {
+        const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/private-templates/${encodeURIComponent(templateId)}/links`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+        }, [401, 403, 404]);
 
-    if (!res.ok) {
-        const msg = await res.text();
-        alert(`링크 발급 실패: ${msg || res.status}`);
-        return;
-    }
+        if (!res.ok) {
+            const msg = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            alert(`링크 발급 실패: ${msg || res.status}`);
+            return;
+        }
 
-    const payload = await res.json().catch(() => null);
-    const tokenValue = payload?.token;
-    if (tokenValue) {
-        const linkUrl = `${window.location.origin}/${encodeURIComponent(derivedPageId)}/private/${encodeURIComponent(tokenValue)}`;
-        alert(`프라이빗 링크가 발급되었습니다: ${linkUrl}`);
+        const payload = await res.json().catch((jsonError) => {
+            console.error(`Error parsing JSON for private link issue: ${jsonError}`);
+            return null;
+        });
+
+        if (payload === null) {
+            alert('링크 발급 응답 파싱 실패');
+            return;
+        }
+
+        const tokenValue = payload?.token;
+        if (tokenValue) {
+            const linkUrl = `${window.location.origin}/${encodeURIComponent(derivedPageId)}/private/${encodeURIComponent(tokenValue)}`;
+            alert(`프라이빗 링크가 발급되었습니다: ${linkUrl}`);
+        }
+    } catch (error) {
+        const errorMessage = error.message || '네트워크 오류';
+        alert(`링크 발급 실패: ${errorMessage}`);
     }
 }
 
@@ -2778,102 +2335,11 @@ function removeSlugAlias(slug) {
 }
 
 function renderContactSchema() {
-    const list = document.getElementById('contact-schema-list');
-    if (!list) return;
+    renderContactSchemaEditor();
+}
 
-    list.innerHTML = '';
-    if (!adminContactSchema.length) {
-        const empty = document.createElement('p');
-        empty.className = 'help-text';
-        empty.innerText = '추가된 컨택트 필드가 없습니다. 위 입력창에서 필드를 추가해주세요.';
-        list.appendChild(empty);
-        return;
-    }
-
-    adminContactSchema.forEach((field, idx) => {
-        const row = document.createElement('div');
-        row.className = 'contact-row';
-
-        const labelInput = document.createElement('input');
-        labelInput.placeholder = '라벨';
-        labelInput.value = field.label || '';
-        labelInput.oninput = (e) => {
-            const current = adminContactSchema[idx] || {};
-            adminContactSchema[idx] = { ...current, label: e.target.value };
-        };
-
-        const typeSelect = document.createElement('select');
-        ['text', 'email', 'tel', 'url', 'textarea', 'select', 'checkbox'].forEach((type) => {
-            const opt = document.createElement('option');
-            opt.value = type;
-            opt.innerText = type;
-            if (field.type === type) opt.selected = true;
-            typeSelect.appendChild(opt);
-        });
-        typeSelect.onchange = (e) => {
-            const current = adminContactSchema[idx] || {};
-            adminContactSchema[idx] = { ...current, type: e.target.value };
-            renderUsage();
-        };
-
-        const placeholderInput = document.createElement('input');
-        placeholderInput.placeholder = 'placeholder';
-        placeholderInput.value = field.placeholder || '';
-        placeholderInput.oninput = (e) => {
-            const current = adminContactSchema[idx] || {};
-            adminContactSchema[idx] = { ...current, placeholder: e.target.value };
-        };
-
-        const helpTextInput = document.createElement('input');
-        helpTextInput.placeholder = '도움말';
-        helpTextInput.value = field.helpText || '';
-        helpTextInput.oninput = (e) => {
-            const current = adminContactSchema[idx] || {};
-            adminContactSchema[idx] = { ...current, helpText: e.target.value };
-        };
-
-        const requiredToggle = document.createElement('label');
-        requiredToggle.className = 'inline-toggle';
-        const requiredInput = document.createElement('input');
-        requiredInput.type = 'checkbox';
-        requiredInput.checked = !!field.required;
-        requiredInput.onchange = (e) => {
-            const current = adminContactSchema[idx] || {};
-            adminContactSchema[idx] = { ...current, required: e.target.checked };
-        };
-        requiredToggle.appendChild(requiredInput);
-        requiredToggle.append(' 필수');
-
-        const optionsInput = document.createElement('input');
-        optionsInput.placeholder = '옵션 (쉼표로 구분)';
-        optionsInput.value = Array.isArray(field.options) ? field.options.join(', ') : '';
-        optionsInput.oninput = (e) => {
-            const raw = (e.target.value || '').split(',');
-            const options = raw.map((item) => item.trim()).filter(Boolean);
-            const current = adminContactSchema[idx] || {};
-            adminContactSchema[idx] = { ...current, options };
-        };
-
-        const removeBtn = document.createElement('button');
-        removeBtn.type = 'button';
-        removeBtn.className = 'pill-button ghost';
-        removeBtn.innerText = '삭제';
-        removeBtn.onclick = () => {
-            adminContactSchema.splice(idx, 1);
-            renderContactSchema();
-            renderUsage();
-        };
-
-        row.appendChild(labelInput);
-        row.appendChild(typeSelect);
-        row.appendChild(placeholderInput);
-        row.appendChild(helpTextInput);
-        row.appendChild(optionsInput);
-        row.appendChild(requiredToggle);
-        row.appendChild(removeBtn);
-
-        list.appendChild(row);
-    });
+function renderContactSchema() {
+    renderContactSchemaEditor();
 }
 
 function hydrateContactSettings() {
@@ -2968,6 +2434,69 @@ function hydrateContactSettings() {
     };
 }
 
+function renderContactSchemaEditor() {
+    const list = document.getElementById('contact-schema-list');
+    if (!list) return;
+
+    list.innerHTML = '';
+    if (!adminContactSchema || !adminContactSchema.length) {
+        const empty = document.createElement('p');
+        empty.className = 'help-text';
+        empty.innerText = '추가된 컨택트 필드가 없습니다. 아래 폼에서 필드를 추가해주세요.';
+        list.appendChild(empty);
+    } else {
+        adminContactSchema.forEach((field, idx) => {
+            const row = document.createElement('div');
+            row.className = 'contact-row';
+
+            const labelInput = document.createElement('input');
+            labelInput.placeholder = '라벨';
+            labelInput.value = field.label || '';
+            labelInput.oninput = (e) => {
+                adminContactSchema[idx].label = e.target.value;
+            };
+
+            const typeSelect = document.createElement('select');
+            ['text', 'email', 'tel', 'url', 'textarea'].forEach((type) => {
+                const opt = document.createElement('option');
+                opt.value = type;
+                opt.innerText = type.charAt(0).toUpperCase() + type.slice(1);
+                if (field.type === type) opt.selected = true;
+                typeSelect.appendChild(opt);
+            });
+            typeSelect.onchange = (e) => {
+                adminContactSchema[idx].type = e.target.value;
+            };
+            
+            const requiredToggle = document.createElement('label');
+            requiredToggle.className = 'inline-toggle';
+            const requiredInput = document.createElement('input');
+            requiredInput.type = 'checkbox';
+            requiredInput.checked = !!field.required;
+            requiredInput.onchange = (e) => {
+                adminContactSchema[idx].required = e.target.checked;
+            };
+            requiredToggle.appendChild(requiredInput);
+            requiredToggle.append(' 필수');
+
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.className = 'pill-button ghost';
+            removeBtn.innerText = '삭제';
+            removeBtn.onclick = () => {
+                adminContactSchema.splice(idx, 1);
+                renderContactSchemaEditor();
+            };
+
+            row.appendChild(labelInput);
+            row.appendChild(typeSelect);
+            row.appendChild(requiredToggle);
+            row.appendChild(removeBtn);
+            list.appendChild(row);
+        });
+    }
+}
+
 function renderContactSubmissions() {
     const list = document.getElementById('contact-submission-list');
     const status = document.getElementById('contact-submission-status');
@@ -3049,109 +2578,104 @@ function renderPresetButtons(targetId, onClick) {
 }
 
 function renderContactPresets() {
-    renderPresetButtons('contact-presets', (preset) => applyContactPreset(preset.id));
-}
-
-function renderOnboardingPresets() {
-    renderPresetButtons('onboarding-presets', (preset) => applyContactPreset(preset.id));
-}
-
-function applyContactPreset(presetId) {
-    const preset = CONTACT_PRESETS.find((item) => item.id === presetId);
-    if (!preset) return;
-    adminContactSchema = preset.fields.map((field) => ({ ...field }));
-    renderContactSchema();
-    renderUsage();
-}
-
-function addContactField() {
-    const labelInput = document.getElementById('contactLabel');
-    const typeInput = document.getElementById('contactType');
-    const placeholderInput = document.getElementById('contactPlaceholder');
-    const helpTextInput = document.getElementById('contactHelpText');
-    const optionsInput = document.getElementById('contactOptions');
-    const requiredInput = document.getElementById('contactRequired');
-
-    const label = labelInput?.value?.trim();
-    const type = typeInput?.value || 'text';
-    const placeholder = placeholderInput?.value || '';
-    const helpText = helpTextInput?.value || '';
-    const rawOptions = (optionsInput?.value || '').split(',');
-    const options = rawOptions.map((item) => item.trim()).filter(Boolean);
-    const required = requiredInput?.checked || false;
-
-    if (!label) {
-        alert('라벨을 입력해주세요.');
-        return;
-    }
-
-    if (adminContactSchema.length >= MAX_CONTACT_FIELDS) {
-        alert(`컨택트 필드는 최대 ${MAX_CONTACT_FIELDS}개까지 추가할 수 있습니다.`);
-        return;
-    }
-
-    if ((type === 'select' || type === 'checkbox') && !options.length) {
-        alert('선택지/체크박스 타입은 옵션을 한 개 이상 입력해야 합니다.');
-        return;
-    }
-
-    adminContactSchema.push({
-        label,
-        type,
-        placeholder,
-        helpText,
-        ...(required ? { required: true } : {}),
-        ...(options.length ? { options } : {}),
+    renderPresetButtons('contact-preset-buttons', (preset) => {
+        if (!confirm(`${preset.label} 프리셋으로 덮어쓸까요? 기존 필드 구성은 사라집니다.`)) return;
+        adminContactSchema = JSON.parse(JSON.stringify(preset.fields));
+        renderContactSchemaEditor();
     });
-    renderContactSchema();
-    renderUsage();
+}
 
-    if (labelInput) labelInput.value = '';
-    if (placeholderInput) placeholderInput.value = '';
-    if (helpTextInput) helpTextInput.value = '';
-    if (optionsInput) optionsInput.value = '';
-    if (requiredInput) requiredInput.checked = false;
+function applyThemeToScopes() {
+    const validTheme = THEME_PRESETS.some((preset) => preset.id === pageTheme) ? pageTheme : 'classic';
+    pageTheme = validTheme;
+
+    const scopes = document.querySelectorAll('.theme-scope');
+    scopes.forEach((scope) => {
+        THEME_PRESETS.forEach((preset) => scope.classList.remove(`theme-${preset.id}`));
+        scope.classList.add(`theme-${validTheme}`);
+    });
+}
+
+function renderThemeOptions() {
+    const host = document.getElementById('theme-options');
+    if (!host) return;
+
+    host.innerHTML = '';
+
+    THEME_PRESETS.forEach((preset) => {
+        const tile = document.createElement('button');
+        tile.type = 'button';
+        tile.className = `theme-tile ${preset.id === pageTheme ? 'active' : ''}`;
+        tile.setAttribute('aria-pressed', preset.id === pageTheme ? 'true' : 'false');
+
+        const swatch = document.createElement('div');
+        swatch.className = 'theme-swatch';
+        (preset.swatch || []).slice(0, 4).forEach((color) => {
+            const cell = document.createElement('span');
+            cell.style.background = color;
+            swatch.appendChild(cell);
+        });
+
+        const meta = document.createElement('div');
+        meta.className = 'theme-meta';
+        const title = document.createElement('div');
+        title.className = 'title';
+        title.innerText = preset.label;
+        const desc = document.createElement('div');
+        desc.className = 'desc';
+        desc.innerText = preset.desc;
+        meta.appendChild(title);
+        meta.appendChild(desc);
+
+        tile.appendChild(swatch);
+        tile.appendChild(meta);
+        tile.onclick = () => {
+            pageTheme = preset.id;
+            applyThemeToScopes();
+            renderThemeOptions();
+        };
+
+        host.appendChild(tile);
+    });
 }
 
 function renderOnboardingBanner() {
-    const card = document.getElementById('onboarding-card');
-    if (!card) return;
-    const nameInput = document.getElementById('name');
-    const shouldShow = !adminLinks.length && !(nameInput?.value?.trim());
-    card.style.display = shouldShow ? 'block' : 'none';
-    if (shouldShow) {
-        renderOnboardingPresets();
+    const banner = document.getElementById('onboarding-banner');
+    if (!banner) return;
+    const hasProfile = !!(document.getElementById('name')?.value?.trim() && document.getElementById('desc')?.value?.trim());
+    const hasLinks = adminLinks.length > 0;
+    if (hasProfile && hasLinks) {
+        banner.style.display = 'none';
+    } else {
+        banner.style.display = 'block';
     }
 }
 
-function applyDefaultTemplate() {
-    const nameInput = document.getElementById('name');
-    const descInput = document.getElementById('desc');
-    const photoInput = document.getElementById('photo');
-
-    if (nameInput && !nameInput.value) nameInput.value = '나의 링크 보드';
-    if (descInput && !descInput.value) descInput.value = '주요 채널과 컨택트를 한 곳에 모았어요.';
-    if (photoInput && !photoInput.value) photoInput.value = 'https://placehold.co/200x200.png';
-
-    const inferredSlug = slugify(nameInput?.value || derivedPageId || 'my-page');
-    if (inferredSlug) {
-        adminSlugs = [inferredSlug, ...adminSlugs.filter((s) => s !== inferredSlug)];
+function renderTurnstileWidget() {
+    const host = document.getElementById('turnstile-widget');
+    if (!host || !APP_CONFIG.turnstileSiteKey) return;
+    
+    if (typeof turnstile !== 'undefined') {
+        try {
+            window.__turnstileId = turnstile.render(host, {
+                sitekey: APP_CONFIG.turnstileSiteKey,
+                callback: (token) => {
+                    window.__turnstileToken = token;
+                },
+            });
+        } catch(e) {
+            console.error('Turnstile 렌더링 실패', e);
+        }
     }
-
-    adminLinks = [
-        { title: 'Instagram', url: 'https://instagram.com/' + (derivedPageId || 'mychannel'), platformId: 'instagram', handle: derivedPageId || 'mychannel' },
-        { title: 'YouTube', url: 'https://www.youtube.com/@' + (derivedPageId || 'creator'), platformId: 'youtube', handle: derivedPageId || 'creator' },
-        { title: '이메일 문의', url: 'mailto:hello@example.com', isPrivate: true },
-    ];
-
-    applyContactPreset('basic');
-    renderAdminLinks();
-    renderContactSchema();
-    renderSlugEditor();
-    renderOnboardingBanner();
-    renderUsage();
 }
 
-function requestUpgrade() {
-    window.location.href = 'mailto:support@example.com?subject=%EC%97%85%EA%B7%B8%EB%A0%88%EC%9D%B4%EB%93%9C%20%EB%AC%B8%EC%9D%98';
+function setPageLoginStatus(message, tone = 'info') {
+    const statusEl = document.getElementById('page-login-status');
+    if (!statusEl) return false;
+    
+    statusEl.textContent = message;
+    statusEl.className = `status-banner ${tone}`;
+    statusEl.style.display = message ? 'block' : 'none';
+
+    return true;
 }

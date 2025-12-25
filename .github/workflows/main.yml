@@ -27,6 +27,23 @@ jobs:
       run: npm install 
       working-directory: './worker' # 👈 **[핵심 수정]**
 
+    - name: Start Wrangler Dev Server
+      run: npx wrangler dev &
+      working-directory: './worker'
+
+    - name: Wait for server to start
+      run: sleep 10
+
+    - name: Run E2E Test
+      run: |
+        chmod +x ../scripts/admin_e2e.sh
+        ../scripts/admin_e2e.sh
+      working-directory: './worker'
+      env:
+        BASE_URL: http://127.0.0.1:8787
+        TOKEN_SECRET: "test-secret"
+        SESSION_SECRET: "test-secret"
+
     # 2. 배포 명령 단계를 /worker 폴더에서 실행
     - name: Publish to Cloudflare Workers
       # /worker 디렉토리에서 npx wrangler deploy를 실행합니다.
