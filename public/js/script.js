@@ -18,8 +18,93 @@
 window.APP_CONFIG = window.APP_CONFIG || {};
 const APP_CONFIG = window.APP_CONFIG;
 
+const PlatformHelpers = window.PlatformHelpers || {};
+const PLATFORM_PRESETS = PlatformHelpers.PLATFORM_PRESETS || [];
+
+function resolveApiBases() {
+    const bases = [];
+    const pushBase = (value) => {
+        if (!value) return;
+        const normalized = String(value).trim().replace(/\/+$/, '');
+        if (!normalized || normalized.includes('.pages.dev')) return;
+        if (!bases.includes(normalized)) {
+            bases.push(normalized);
+        }
+    };
+    const pushPreferredBase = (value) => {
+        if (!value) return;
+        const normalized = String(value).trim().replace(/\/+$/, '');
+        if (!normalized || normalized.includes('.pages.dev')) return;
+        const existingIndex = bases.indexOf(normalized);
+        if (existingIndex !== -1) {
+            bases.splice(existingIndex, 1);
+        }
+        bases.unshift(normalized);
+    };
+
+    if (typeof APP_CONFIG.apiBase === 'string') {
+        pushBase(APP_CONFIG.apiBase);
+    }
+
+    (APP_CONFIG.apiBases || []).forEach((base) => pushBase(base));
+
+    if (APP_CONFIG.preferredApiBase) {
+        pushPreferredBase(APP_CONFIG.preferredApiBase);
+    }
+
+    if (APP_CONFIG.useMetaApiBase !== false) {
+        const metaApiBase = document.querySelector('meta[name="api-base"]')?.content?.trim();
+        pushBase(metaApiBase);
+    }
+
+    if (APP_CONFIG.useGlobalApiBase !== false) {
+        pushBase(window.API_BASE);
+    }
+
+    if (APP_CONFIG.useCurrentOriginBase !== false) {
+        pushBase(window.location?.origin);
+    }
+
+    if (APP_CONFIG.useKnownWorkerBase !== false) {
+        pushBase(APP_CONFIG.knownWorkerBase);
+    }
+
+    return bases;
+}
+
+const API_BASES = resolveApiBases();
+
+async function apiFetch(
+    path,
+    options = {},
+    fallbackStatuses = [301, 302, 307, 308, 404, 405]
+) {
+    let lastError;
+
+    for (const base of API_BASES) {
+        try {
+            const res = await fetch(`${base}${path}`, options);
+            if (res.ok) {
+                return res;
+            }
+
+            if (!fallbackStatuses.includes(res.status)) {
+                return res;
+            }
+
+            lastError = res;
+        } catch (err) {
+            lastError = err;
+        }
+    }
+
+    if (lastError instanceof Response) return lastError;
+    throw lastError;
+}
+
+
 const urlParams = new URLSearchParams(window.location.search);
-const getPlatformPreset = platformHelpers.getPlatformPreset || ((platformId) => PLATFORM_PRESETS.find((preset) => preset.id === platformId));
+const getPlatformPreset = PlatformHelpers.getPlatformPreset || ((platformId) => PLATFORM_PRESETS.find((preset) => preset.id === platformId));
 if (isPublicView) {
     document.body.classList.add('user-view');
     document.body.classList.add('theme-scope');
