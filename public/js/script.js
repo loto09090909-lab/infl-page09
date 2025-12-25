@@ -175,25 +175,16 @@ function ensureUserViewContainer() {
 
 function slugify(value) {
     if (!value) return '';
-    const normalized = value.toString().normalize('NFKD').toLowerCase();
+    const normalized = value.toString().toLowerCase();
 
     const separated = normalized
-        .replace(/[\s\p{P}\p{S}_]+/gu, '-')
+        .replace(/[^a-z0-9 -]+/g, '-')
+        .replace(/\s+/g, '-')
         .replace(/-+/g, '-');
 
-    const cleaned = separated.replace(/[^\p{L}\p{N}-]/gu, '');
-    const collapsed = cleaned.replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+    const cleaned = separated.replace(/^-+|-+$/g, '');
 
-    if (collapsed) {
-        return collapsed;
-    }
-
-    const encodedFallback = encodeURIComponent(normalized)
-        .replace(/%/g, '-')
-        .replace(/-+/g, '-')
-        .replace(/^-+|-+$/g, '');
-
-    return encodedFallback;
+    return cleaned;
 }
 
 const buildPlatformUrl = PlatformHelpers.buildPlatformUrl || function (preset, handle) {
