@@ -103,7 +103,44 @@ async function apiFetch(
 }
 
 
+
 const urlParams = new URLSearchParams(window.location.search);
+
+/**
+ * [2] 페이지 컨텍스트 및 라우팅 변수
+ */
+const pathSegments = window.location.pathname.split('/').filter(Boolean);
+const searchParams = new URLSearchParams(window.location.search);
+const pageRole = document.body?.dataset?.pageRole; // 'page-admin', 'super-admin' 등
+
+// 페이지 종류 식별
+const isAdminLogin = window.location.pathname.endsWith('/login.html');
+const isPageAdminLogin = window.location.pathname.endsWith('/page-admin-login.html');
+const isAdminHtml = window.location.pathname.endsWith('/admin.html');
+const isSuperAdminHtml = window.location.pathname.endsWith('/super-admin.html');
+
+const isUserPage = pathSegments.length === 2 && pathSegments[0] === 'user';
+const privateTokenFromPath = pathSegments.length === 3 && pathSegments[1] === 'private' ? pathSegments[2] : null;
+const isPrivateLink = !!privateTokenFromPath;
+
+const looksLikeSlugPage = pathSegments.length === 1 && !isAdminHtml && !isUserPage && !isPrivateLink && !isSuperAdminHtml && !isAdminLogin && !isPageAdminLogin;
+
+const isPublicView = looksLikeSlugPage || isPrivateLink || isUserPage || document.body.classList.contains('user-view');
+
+const pageIdFromQuery = searchParams.get('pageId');
+const pageIdFromPath = looksLikeSlugPage || isPrivateLink ? pathSegments[0] : null;
+
+const derivedPageId = pageIdFromQuery || pageIdFromPath;
+
+const userViewReady = document.getElementById('user-view-container');
+
+function formatStatusWithRequestId(message, res) {
+    if (!res || typeof res.headers?.get !== 'function') return message;
+    const requestId = res.headers.get('X-Request-Id');
+    return requestId ? `${message} (요청 ID: ${requestId})` : message;
+}
+
+
 const getPlatformPreset = PlatformHelpers.getPlatformPreset || ((platformId) => PLATFORM_PRESETS.find((preset) => preset.id === platformId));
 if (isPublicView) {
     document.body.classList.add('user-view');
