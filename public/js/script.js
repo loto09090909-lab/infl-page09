@@ -345,12 +345,30 @@ async function loadPageData(pageId, options = {}) {
 
     try {
         const res = await apiFetch(endpoint);
+
         if (!res.ok) {
-            console.error('페이지 데이터 로드 실패', res.status);
+            const errorText = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            console.error('페이지 데이터 로드 실패:', errorText);
+            // Optionally, provide feedback to the user if in an admin context
+            if (includeAdmin) {
+                setPageLoginStatus(`페이지 데이터 로드 실패: ${errorText}`, 'error');
+            }
             return;
         }
 
-        const data = await res.json().catch(() => null);
+        const data = await res.json().catch((jsonError) => {
+            console.error(`Error parsing JSON for page data: ${jsonError}`);
+            return null;
+        });
+
+        if (data === null) {
+            const errorMessage = '페이지 데이터 JSON 파싱 실패';
+            console.error(errorMessage);
+            if (includeAdmin) {
+                setPageLoginStatus(errorMessage, 'error');
+            }
+            return;
+        }
 
         // 프로필 정보 채우기
         const profileName = document.getElementById('user-page-name') || document.getElementById('name');
@@ -402,7 +420,16 @@ async function loadPageData(pageId, options = {}) {
         applyThemeToScopes();
 
     } catch (error) {
-        console.error('페이지 데이터 처리 중 오류', error);
+        const errorMessage = error.message || '알 수 없는 페이지 데이터 처리 오류';
+        console.error('페이지 데이터 처리 중 오류:', errorMessage, error);
+        // Optionally, provide feedback to the user if in an admin context
+        if (includeAdmin) {
+            setPageLoginStatus(`페이지 데이터 처리 중 오류: ${errorMessage}`, 'error');
+        } else {
+             // For public view, display a generic message or redirect
+             // Example: document.body.innerHTML = '페이지를 불러올 수 없습니다.';
+             // For now, just console.error
+        }
     }
 }
 
@@ -424,13 +451,22 @@ async function ensurePageSession() {
 
         if (!res.ok) {
             sessionStorage.removeItem('page_admin_token');
-            const message = await res.text();
-            setPageLoginStatus(`세션이 만료되었습니다: ${message || res.status}`, 'error');
+            const errorText = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            setPageLoginStatus(`세션이 만료되었습니다: ${errorText}`, 'error');
             window.location.href = `/page-admin-login.html?pageId=${encodeURIComponent(derivedPageId)}`;
             return;
         }
 
-        const payload = await res.json().catch(() => null);
+        const payload = await res.json().catch((jsonError) => {
+            console.error(`Error parsing JSON for session: ${jsonError}`);
+            return null;
+        });
+
+        if (payload === null) {
+            setPageLoginStatus('세션 데이터 파싱 실패', 'error');
+            return;
+        }
+
         if (payload) {
             if (payload.pageId && payload.pageId !== derivedPageId) {
                 updatePageContext(payload.pageId);
@@ -439,7 +475,10 @@ async function ensurePageSession() {
             applyRolePermissions();
         }
     } catch (error) {
+        const errorMessage = error.message || '네트워크 오류';
         console.error('세션 확인 중 오류', error);
+        setPageLoginStatus(`세션 확인 중 오류: ${errorMessage}`, 'error');
+        // Do not redirect here, as the user might already be on the login page or we want to show the error first.
     }
 }
 
@@ -646,20 +685,25 @@ async function savePage() {
         theme: pageTheme,
     };
 
-    const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/save`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify(payload),
-    });
+    try {
+        const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/save`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify(payload),
+        });
 
-    if (res.ok) {
-        setStatus('페이지가 저장되었습니다.', 'success');
-    } else {
-        const errText = await res.text();
-        setStatus(`저장 실패: ${errText || res.status}`, 'error');
+        if (res.ok) {
+            setStatus('페이지가 저장되었습니다.', 'success');
+        } else {
+            const errText = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            setStatus(`저장 실패: ${errText}`, 'error');
+        }
+    } catch (error) {
+        const errorMessage = error.message || '네트워크 오류';
+        setStatus(`저장 실패: ${errorMessage}`, 'error');
     }
 }
 
@@ -891,21 +935,28 @@ async function login() {
         return;
     }
 
-    const res = await apiFetch('/api/admin/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
-    });
+    try {
+        const res = await apiFetch('/api/admin/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
 
-    if (res.ok) {
-        const session = await res.json();
-        if (session?.token) {
-            sessionStorage.setItem('super_admin_token', session.token);
+        if (res.ok) {
+            const session = await res.json();
+            if (session?.token) {
+                sessionStorage.setItem('super_admin_token', session.token);
+            }
+            window.location.href = "/super-admin.html";  // 슈퍼 관리자 페이지로 리디렉션
+        } else {
+            const errText = await res.text();
+            const message = formatStatusWithRequestId(`로그인 실패: ${errText || res.status}`, res);
+            if (!setAuthStatus('super-login-status', message, 'error')) {
+                alert(message);
+            }
         }
-        window.location.href = "/super-admin.html";  // 슈퍼 관리자 페이지로 리디렉션
-    } else {
-        const errText = await res.text();
-        const message = formatStatusWithRequestId(`로그인 실패: ${errText || res.status}`, res);
+    } catch (error) {
+        const message = formatStatusWithRequestId(`로그인 실패: ${error.message || '네트워크 오류' || error}`, null);
         if (!setAuthStatus('super-login-status', message, 'error')) {
             alert(message);
         }
@@ -925,15 +976,26 @@ async function fetchUserPrimaryPage() {
     const token = sessionStorage.getItem('user_token');
     if (!token) return null;
 
-    const res = await apiFetch('/api/user/pages', {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${token}` },
-    }, [401, 403, 404]);
+    try {
+        const res = await apiFetch('/api/user/pages', {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${token}` },
+        }, [401, 403, 404]);
 
-    if (!res.ok) return null;
-    const payload = await res.json().catch(() => null);
-    const items = Array.isArray(payload?.items) ? payload.items : [];
-    return items[0]?.pageId || null;
+        if (!res.ok) {
+            console.error('기본 사용자 페이지 로드 실패', res.status);
+            return null;
+        }
+        const payload = await res.json().catch((jsonError) => {
+            console.error(`Error parsing JSON for user primary page: ${jsonError}`);
+            return null;
+        });
+        const items = Array.isArray(payload?.items) ? payload.items : [];
+        return items[0]?.pageId || null;
+    } catch (error) {
+        console.error('기본 사용자 페이지 로드 중 오류', error);
+        return null;
+    }
 }
 
 async function fetchUserPages() {
@@ -943,23 +1005,37 @@ async function fetchUserPages() {
         return [];
     }
 
-    const res = await apiFetch('/api/user/pages', {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${token}` },
-    }, [401, 403, 404]);
+    try {
+        const res = await apiFetch('/api/user/pages', {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${token}` },
+        }, [401, 403, 404]);
 
-    if (!res.ok) {
-        const msg = await res.text().catch(() => '');
+        if (!res.ok) {
+            const msg = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            setAuthStatus(
+                'user-dashboard-status',
+                formatStatusWithRequestId(`페이지 목록을 불러오지 못했습니다: ${msg}`, res),
+                'error'
+            );
+            return [];
+        }
+        setAuthStatus('user-dashboard-status', '', 'info');
+        const payload = await res.json().catch((jsonError) => {
+            console.error(`Error parsing JSON for user pages: ${jsonError}`);
+            return null;
+        });
+        return Array.isArray(payload?.items) ? payload.items : [];
+    } catch (error) {
+        const errorMessage = error.message || '네트워크 오류';
         setAuthStatus(
             'user-dashboard-status',
-            formatStatusWithRequestId(`페이지 목록을 불러오지 못했습니다: ${msg || res.status}`, res),
+            `페이지 목록을 불러오지 못했습니다: ${errorMessage}`,
             'error'
         );
+        console.error('사용자 페이지 로드 중 오류', error);
         return [];
     }
-    setAuthStatus('user-dashboard-status', '', 'info');
-    const payload = await res.json().catch(() => null);
-    return Array.isArray(payload?.items) ? payload.items : [];
 }
 
 function renderUserPagesDashboard(items) {
@@ -1033,26 +1109,46 @@ async function userSignup() {
         return;
     }
 
-    const res = await apiFetch('/api/users/signup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-    }, [400, 401, 409, 422]);
+    try {
+        const res = await apiFetch('/api/users/signup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password }),
+        }, [400, 401, 409, 422]);
 
-    if (!res.ok) {
-        const msg = await res.text();
-        const message = formatStatusWithRequestId(`회원가입 실패: ${msg || res.status}`, res);
+        if (!res.ok) {
+            const msg = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            const message = formatStatusWithRequestId(`회원가입 실패: ${msg}`, res);
+            if (!setAuthStatus('user-signup-status', message, 'error')) {
+                alert(message);
+            }
+            return;
+        }
+
+        const payload = await res.json().catch((jsonError) => {
+            console.error(`Error parsing JSON for signup: ${jsonError}`);
+            return null;
+        });
+
+        if (payload === null) {
+            const errorMessage = '회원가입 응답 파싱 실패';
+            if (!setAuthStatus('user-signup-status', errorMessage, 'error')) {
+                alert(errorMessage);
+            }
+            return;
+        }
+
+        storeUserSession(payload?.token, payload?.expiresIn);
+
+        const pageId = payload?.pageId;
+        window.location.href = '/dashboard';
+    } catch (error) {
+        const errorMessage = error.message || '네트워크 오류';
+        const message = formatStatusWithRequestId(`회원가입 실패: ${errorMessage}`, null);
         if (!setAuthStatus('user-signup-status', message, 'error')) {
             alert(message);
         }
-        return;
     }
-
-    const payload = await res.json().catch(() => null);
-    storeUserSession(payload?.token, payload?.expiresIn);
-
-    const pageId = payload?.pageId;
-    window.location.href = '/dashboard';
 }
 
 async function userLogin() {
@@ -1068,25 +1164,45 @@ async function userLogin() {
         return;
     }
 
-    const res = await apiFetch('/api/users/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-    }, [400, 401, 404, 423]);
+    try {
+        const res = await apiFetch('/api/users/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password }),
+        }, [400, 401, 404, 423]);
 
-    if (!res.ok) {
-        const msg = await res.text();
-        const message = formatStatusWithRequestId(`로그인 실패: ${msg || res.status}`, res);
+        if (!res.ok) {
+            const msg = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            const message = formatStatusWithRequestId(`로그인 실패: ${msg}`, res);
+            if (!setAuthStatus('user-login-status', message, 'error')) {
+                alert(message);
+            }
+            return;
+        }
+
+        const payload = await res.json().catch((jsonError) => {
+            console.error(`Error parsing JSON for login: ${jsonError}`);
+            return null;
+        });
+
+        if (payload === null) {
+            const errorMessage = '로그인 응답 파싱 실패';
+            if (!setAuthStatus('user-login-status', errorMessage, 'error')) {
+                alert(errorMessage);
+            }
+            return;
+        }
+
+        storeUserSession(payload?.token, payload?.expiresIn);
+
+        window.location.href = '/dashboard';
+    } catch (error) {
+        const errorMessage = error.message || '네트워크 오류';
+        const message = formatStatusWithRequestId(`로그인 실패: ${errorMessage}`, null);
         if (!setAuthStatus('user-login-status', message, 'error')) {
             alert(message);
         }
-        return;
     }
-
-    const payload = await res.json().catch(() => null);
-    storeUserSession(payload?.token, payload?.expiresIn);
-
-    window.location.href = '/dashboard';
 }
 
 function startOAuth(provider) {
@@ -1152,26 +1268,40 @@ async function bootstrapSuperAdmin() {
         headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const res = await apiFetch('/api/admin/bootstrap', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ username, password })
-    }, [400, 401, 404, 405]);
+    try {
+        const res = await apiFetch('/api/admin/bootstrap', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ username, password })
+        }, [400, 401, 404, 405]);
 
-    if (res.ok) {
-        const payload = await res.json().catch(() => ({}));
-        if (!setAuthStatus(
-            'super-login-status',
-            `계정을 준비했습니다: ${payload.username || username} (${payload.mode || 'created'})`,
-            'success'
-        )) {
-            alert(`계정을 준비했습니다: ${payload.username || username} (${payload.mode || 'created'})`);
+        if (res.ok) {
+            const payload = await res.json().catch((jsonError) => {
+                console.error(`Error parsing JSON for bootstrap: ${jsonError}`);
+                return {};
+            });
+            if (!setAuthStatus(
+                'super-login-status',
+                `계정을 준비했습니다: ${payload.username || username} (${payload.mode || 'created'})`,
+                'success'
+            )) {
+                alert(`계정을 준비했습니다: ${payload.username || username} (${payload.mode || 'created'})`);
+            }
+        } else {
+            const errText = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            const message = formatStatusWithRequestId(
+                `계정 생성/재설정 실패: ${errText}`,
+                res
+            );
+            if (!setAuthStatus('super-login-status', message, 'error')) {
+                alert(message);
+            }
         }
-    } else {
-        const errText = await res.text();
+    } catch (error) {
+        const errorMessage = error.message || '네트워크 오류';
         const message = formatStatusWithRequestId(
-            `계정 생성/재설정 실패: ${errText || res.status}`,
-            res
+            `계정 생성/재설정 실패: ${errorMessage}`,
+            null
         );
         if (!setAuthStatus('super-login-status', message, 'error')) {
             alert(message);
@@ -1261,20 +1391,34 @@ async function pageAdminLogin() {
 
     setPageLoginStatus('로그인 중입니다...', 'info');
 
-    const res = await apiFetch(`/api/page/${encodeURIComponent(pageId)}/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-    });
+    try {
+        const res = await apiFetch(`/api/page/${encodeURIComponent(pageId)}/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+        });
 
-    if (res.ok) {
-        const session = await res.json();
-        sessionStorage.setItem('page_admin_token', session.token);
-        setPageLoginStatus('로그인에 성공했습니다. 잠시 후 이동합니다.', 'success');
-        window.location.href = `/admin.html?pageId=${encodeURIComponent(pageId)}`;
-    } else {
-        const message = await res.text();
-        setPageLoginStatus(`로그인 실패: ${message || res.status}`, 'error');
+        if (res.ok) {
+            const session = await res.json().catch((jsonError) => {
+                console.error(`Error parsing JSON for page admin login: ${jsonError}`);
+                return null;
+            });
+
+            if (session === null) {
+                setPageLoginStatus('로그인 응답 파싱 실패', 'error');
+                return;
+            }
+
+            sessionStorage.setItem('page_admin_token', session.token);
+            setPageLoginStatus('로그인에 성공했습니다. 잠시 후 이동합니다.', 'success');
+            window.location.href = `/admin.html?pageId=${encodeURIComponent(pageId)}`;
+        } else {
+            const message = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            setPageLoginStatus(`로그인 실패: ${message}`, 'error');
+        }
+    } catch (error) {
+        const errorMessage = error.message || '네트워크 오류';
+        setPageLoginStatus(`로그인 실패: ${errorMessage}`, 'error');
     }
 }
 
@@ -1575,7 +1719,7 @@ async function submitContactForm(event) {
         }, [400, 404, 422]);
 
         if (!res.ok) {
-            const msg = await res.text();
+            const msg = await res.text().catch(() => `API 응답 오류: ${res.status}`);
             throw new Error(msg || `저장 실패 (${res.status})`);
         }
 
@@ -1618,11 +1762,19 @@ async function fetchContactSubmissions() {
         }, [401, 403, 404]);
 
         if (!res.ok) {
-            const msg = await res.text();
+            const msg = await res.text().catch(() => `API 응답 오류: ${res.status}`);
             throw new Error(msg || `불러오기 실패 (${res.status})`);
         }
 
-        const payload = await res.json().catch(() => null);
+        const payload = await res.json().catch((jsonError) => {
+            console.error(`Error parsing JSON for contact submissions: ${jsonError}`);
+            return null;
+        });
+
+        if (payload === null) {
+            throw new Error('문의 내역 응답 파싱 실패');
+        }
+
         contactSubmissions = Array.isArray(payload?.submissions) ? payload.submissions : [];
         renderContactSubmissions();
     } catch (error) {
@@ -1655,7 +1807,7 @@ async function downloadContactCsv() {
         }, [401, 403, 404]);
 
         if (!res.ok) {
-            const msg = await res.text();
+            const msg = await res.text().catch(() => `API 응답 오류: ${res.status}`);
             throw new Error(msg || `다운로드 실패 (${res.status})`);
         }
 
@@ -1707,7 +1859,7 @@ async function clearContactSubmissions() {
         }, [401, 403, 404]);
 
         if (!res.ok) {
-            const msg = await res.text();
+            const msg = await res.text().catch(() => `API 응답 오류: ${res.status}`);
             throw new Error(msg || `삭제 실패 (${res.status})`);
         }
 
@@ -1775,8 +1927,21 @@ async function loadPrivateTemplates() {
             headers: { Authorization: `Bearer ${token}` },
         }, [401, 403, 404]);
 
-        if (!res.ok) return;
-        const payload = await res.json().catch(() => null);
+        if (!res.ok) {
+            const errorText = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            console.warn('템플릿 목록을 불러오지 못했습니다:', errorText);
+            return;
+        }
+        const payload = await res.json().catch((jsonError) => {
+            console.error(`Error parsing JSON for private templates: ${jsonError}`);
+            return null;
+        });
+
+        if (payload === null) {
+            console.warn('템플릿 목록 응답 파싱 실패');
+            return;
+        }
+
         privateTemplates = Array.isArray(payload?.items) ? payload.items : [];
         renderPrivateTemplates();
     } catch (error) {
@@ -1805,26 +1970,40 @@ async function createPrivateTemplate() {
         ...(noteInput?.value ? { note: noteInput.value.trim() } : {}),
     };
 
-    const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/private-templates`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ name, payload }),
-    }, [400, 401, 403]);
+    try {
+        const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/private-templates`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ name, payload }),
+        }, [400, 401, 403]);
 
-    if (!res.ok) {
-        const msg = await res.text();
-        alert(`템플릿 생성 실패: ${msg || res.status}`);
-        return;
+        if (!res.ok) {
+            const msg = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            alert(`템플릿 생성 실패: ${msg || res.status}`);
+            return;
+        }
+
+        const created = await res.json().catch((jsonError) => {
+            console.error(`Error parsing JSON for created template: ${jsonError}`);
+            return null;
+        });
+
+        if (created === null) {
+            alert('템플릿 생성 응답 파싱 실패');
+            return;
+        }
+
+        privateTemplates = [created, ...privateTemplates];
+        renderPrivateTemplates();
+
+        if (nameInput) nameInput.value = '';
+        if (expiresInput) expiresInput.value = '';
+        if (maxUsesInput) maxUsesInput.value = '';
+        if (noteInput) noteInput.value = '';
+    } catch (error) {
+        const errorMessage = error.message || '네트워크 오류';
+        alert(`템플릿 생성 실패: ${errorMessage}`);
     }
-
-    const created = await res.json().catch(() => null);
-    privateTemplates = [created, ...privateTemplates];
-    renderPrivateTemplates();
-
-    if (nameInput) nameInput.value = '';
-    if (expiresInput) expiresInput.value = '';
-    if (maxUsesInput) maxUsesInput.value = '';
-    if (noteInput) noteInput.value = '';
 }
 
 async function deletePrivateTemplate(templateId) {
@@ -1832,35 +2011,54 @@ async function deletePrivateTemplate(templateId) {
     if (!token || !derivedPageId) return;
     if (!confirm('템플릿을 삭제할까요?')) return;
 
-    await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/private-templates/${encodeURIComponent(templateId)}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-    }, [401, 403, 404]);
+    try {
+        await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/private-templates/${encodeURIComponent(templateId)}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` },
+        }, [401, 403, 404]);
 
-    privateTemplates = privateTemplates.filter((item) => item.id !== templateId);
-    renderPrivateTemplates();
+        privateTemplates = privateTemplates.filter((item) => item.id !== templateId);
+        renderPrivateTemplates();
+    } catch (error) {
+        console.warn('템플릿 삭제 실패', error);
+        alert(`템플릿 삭제 실패: ${error.message || '네트워크 오류'}`);
+    }
 }
 
 async function issuePrivateLinkFromTemplate(templateId) {
     const token = sessionStorage.getItem('page_admin_token');
     if (!token || !derivedPageId) return;
 
-    const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/private-templates/${encodeURIComponent(templateId)}/links`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-    }, [401, 403, 404]);
+    try {
+        const res = await apiFetch(`/api/page/${encodeURIComponent(derivedPageId)}/private-templates/${encodeURIComponent(templateId)}/links`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+        }, [401, 403, 404]);
 
-    if (!res.ok) {
-        const msg = await res.text();
-        alert(`링크 발급 실패: ${msg || res.status}`);
-        return;
-    }
+        if (!res.ok) {
+            const msg = await res.text().catch(() => `API 응답 오류: ${res.status}`);
+            alert(`링크 발급 실패: ${msg || res.status}`);
+            return;
+        }
 
-    const payload = await res.json().catch(() => null);
-    const tokenValue = payload?.token;
-    if (tokenValue) {
-        const linkUrl = `${window.location.origin}/${encodeURIComponent(derivedPageId)}/private/${encodeURIComponent(tokenValue)}`;
-        alert(`프라이빗 링크가 발급되었습니다: ${linkUrl}`);
+        const payload = await res.json().catch((jsonError) => {
+            console.error(`Error parsing JSON for private link issue: ${jsonError}`);
+            return null;
+        });
+
+        if (payload === null) {
+            alert('링크 발급 응답 파싱 실패');
+            return;
+        }
+
+        const tokenValue = payload?.token;
+        if (tokenValue) {
+            const linkUrl = `${window.location.origin}/${encodeURIComponent(derivedPageId)}/private/${encodeURIComponent(tokenValue)}`;
+            alert(`프라이빗 링크가 발급되었습니다: ${linkUrl}`);
+        }
+    } catch (error) {
+        const errorMessage = error.message || '네트워크 오류';
+        alert(`링크 발급 실패: ${errorMessage}`);
     }
 }
 

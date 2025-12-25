@@ -24,5 +24,6 @@ function getApiBaseUrl() {
   return "https://infl-worker.your-username.workers.dev"; // 🚨 실제 워커 주소로 변경 필요
 }
 
-// 전역 스코프에 함수를 할당하여 다른 스크립트에서 접근할 수 있도록 합니다.
-window.getApiBaseUrl = getApiBaseUrl;
+window.APP_CONFIG = window.APP_CONFIG || {};
+window.APP_CONFIG.apiBase = getApiBaseUrl(); 
+window.API_BASE = window.APP_CONFIG.apiBase;
