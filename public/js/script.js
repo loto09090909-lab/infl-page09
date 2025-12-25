@@ -346,8 +346,8 @@ async function loadPageData(pageId, options = {}) {
     const adminQuery = includeAdmin ? '?admin=true' : '';
     const privateQuery = privateToken ? `?token=${privateToken}` : '';
     const endpoint = privateToken
-        ? `/api/page/${pageId}/private${privateQuery}`
-        : `/api/page/${pageId}${adminQuery}`;
+        ? `/api/page/${encodeURIComponent(pageId)}/private${privateQuery}`
+        : `/api/page/${encodeURIComponent(pageId)}${adminQuery}`;
 
     try {
         const res = await apiFetch(endpoint);
