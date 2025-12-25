@@ -165,7 +165,7 @@ async function apiFetch(
     options = {},
     fallbackStatuses = [301, 302, 307, 308, 404, 405]
 ) {
-    let lastError;
+    let lastError = new Error('API fetch failed with no specific error.'); // Initialize with a default error
 
     for (const base of API_BASES) {
         try {
@@ -181,9 +181,9 @@ async function apiFetch(
                 return res;
             }
 
-            lastError = res;
+            lastError = res; // Store Response object if not ok and not fallback
         } catch (err) {
-            lastError = err;
+            lastError = err || new Error(`Network error for ${base}${path}`); // Ensure err is not undefined
         }
     }
 

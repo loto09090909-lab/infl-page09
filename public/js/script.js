@@ -79,7 +79,7 @@ async function apiFetch(
     options = {},
     fallbackStatuses = [301, 302, 307, 308, 404, 405]
 ) {
-    let lastError;
+    let lastError = new Error('API fetch failed with no specific error.'); // Initialize with a default error
 
     for (const base of API_BASES) {
         try {
@@ -92,9 +92,9 @@ async function apiFetch(
                 return res;
             }
 
-            lastError = res;
+            lastError = res; // Store Response object if not ok and not fallback
         } catch (err) {
-            lastError = err;
+            lastError = err || new Error(`Network error for ${base}${path}`); // Ensure err is not undefined
         }
     }
 
@@ -350,7 +350,7 @@ async function loadPageData(pageId, options = {}) {
             return;
         }
 
-        const data = await res.json();
+        const data = await res.json().catch(() => null);
 
         // 프로필 정보 채우기
         const profileName = document.getElementById('user-page-name') || document.getElementById('name');
