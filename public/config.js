@@ -21,9 +21,7 @@ function getApiBaseUrl() {
   // 별도의 서브도메인(예: api.yourdomain.com)을 사용할 수 있습니다.
   // 이 프로젝트에서는 별도의 ور커 도메인을 사용하므로, 해당 주소를 명시합니다.
   // 실제 프로젝트의 워커 주소로 변경해야 합니다.
-  return "https://infl-worker.your-username.workers.dev"; // 🚨 실제 워커 주소로 변경 필요
+  return "https://infl-worker.loto09090909.workers.dev"; // 🚨 실제 워커 주소로 변경 필요
 }
 
-window.APP_CONFIG = window.APP_CONFIG || {};
-window.APP_CONFIG.apiBase = getApiBaseUrl(); 
-window.API_BASE = window.APP_CONFIG.apiBase;
+window.getApiBaseUrl = getApiBaseUrl; // Assign to global scope for access by other scripts

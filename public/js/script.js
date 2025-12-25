@@ -57,6 +57,12 @@ function resolveApiBases() {
         pushBase(metaApiBase);
     }
 
+    if (APP_CONFIG.useGlobalApiBase !== false && typeof window.getApiBaseUrl === 'function') {
+        if (!window.API_BASE || typeof window.API_BASE !== 'string' || window.API_BASE.startsWith('__')) {
+            window.API_BASE = window.getApiBaseUrl();
+        }
+    }
+
     if (APP_CONFIG.useGlobalApiBase !== false) {
         pushBase(window.API_BASE);
     }
