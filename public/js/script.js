@@ -102,7 +102,141 @@ async function apiFetch(
     throw lastError;
 }
 
+function setAuthStatus(elementId, message, tone = 'info') {
+    const statusEl = document.getElementById(elementId);
+    if (!statusEl) return false;
+    
+    statusEl.textContent = message;
+    statusEl.className = `status-banner ${tone}`;
+    statusEl.style.display = message ? 'block' : 'none';
+    
+    return true;
+}
 
+function isHttpUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch (error) {
+    return false;
+  }
+}
+
+function createCustomIcon(url, alt = '') {
+    if (!url) return null;
+
+    const iconEl = document.createElement('img');
+    iconEl.src = url;
+    iconEl.alt = alt;
+    iconEl.className = 'custom-icon-preview'; // Or some other appropriate class
+    iconEl.onerror = () => iconEl.remove();
+    return iconEl;
+}
+
+function ensureUserViewContainer() {
+    if (document.getElementById('user-view-container')) return;
+
+    const container = document.createElement('div');
+    container.id = 'user-view-container';
+    
+    container.innerHTML = `
+        <main class="user-shell">
+            <section class="user-card">
+                <header class="user-header">
+                    <h1 id="user-page-name"></h1>
+                    <span id="env-badge" class="env-badge" aria-live="polite" style="display: none;"></span>
+                </header>
+                <div class="profile user-profile">
+                    <img src="" alt="" class="profile-photo user-avatar" id="user-page-photo" style="display: none;">
+                    <p class="profile-description" id="user-page-description"></p>
+                </div>
+                <section class="links user-links">
+                    <h3>링크</h3>
+                    <ul id="links-list" class="link-stack">
+                    </ul>
+                </section>
+                <section id="user-contact-section" class="contact" style="display: none;">
+                    <h2 id="user-contact-title">문의하기</h2>
+                    <p id="user-contact-help" class="help-text"></p>
+                    <form id="user-contact-form" onsubmit="submitContactForm(event)">
+                        <div id="user-contact-fields"></div>
+                        <button id="user-contact-submit" type="submit">제출</button>
+                    </form>
+                    <div id="user-contact-status"></div>
+                </section>
+                <footer class="user-footer">
+                    <p>&copy; 2025 인플루언서 페이지</p>
+                </footer>
+            </section>
+        </main>
+    `;
+    document.body.appendChild(container);
+}
+
+function slugify(value) {
+    if (!value) return '';
+    const normalized = value.toString().normalize('NFKD').toLowerCase();
+
+    const separated = normalized
+        .replace(/[\s\p{P}\p{S}_]+/gu, '-')
+        .replace(/-+/g, '-');
+
+    const cleaned = separated.replace(/[^\p{L}\p{N}-]/gu, '');
+    const collapsed = cleaned.replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+
+    if (collapsed) {
+        return collapsed;
+    }
+
+    const encodedFallback = encodeURIComponent(normalized)
+        .replace(/%/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-+|-+$/g, '');
+
+    return encodedFallback;
+}
+
+const buildPlatformUrl = PlatformHelpers.buildPlatformUrl || function (preset, handle) {
+    const cleanHandle = (handle || '').trim().replace(/^\/+/, '');
+    return cleanHandle ? `${preset.baseUrl}${cleanHandle}` : '';
+};
+
+const inferPlatformFromLink = PlatformHelpers.inferPlatformFromLink || function (link) {
+    for (const preset of PLATFORM_PRESETS) {
+        if (link.platformId === preset.id) {
+            return { preset, handle: link.handle || link.url?.replace(preset.baseUrl, '') || '' };
+        }
+
+        if (typeof link.url === 'string' && link.url.startsWith(preset.baseUrl)) {
+            return { preset, handle: link.url.slice(preset.baseUrl.length) };
+        }
+    }
+    return null;
+};
+
+function createLinkIcon(preset, className = 'platform-icon') {
+    if (!preset) return null;
+
+    if (!preset.iconPath) {
+        const fallbackIcon = document.createElement('span');
+        fallbackIcon.className = `${className} platform-icon-fallback`;
+        fallbackIcon.innerText = preset.emoji || '🔗';
+        return fallbackIcon;
+    }
+
+    const iconEl = document.createElement('img');
+    iconEl.src = preset.iconPath || '';
+    iconEl.alt = preset.label || '';
+    iconEl.className = className;
+    iconEl.onerror = () => {
+        const fallback = document.createElement('span');
+        fallback.className = `${className} platform-icon-fallback`;
+        fallback.innerText = preset.emoji || '🔗';
+        iconEl.replaceWith(fallback);
+    };
+
+    return iconEl;
+}
 
 const urlParams = new URLSearchParams(window.location.search);
 
@@ -130,9 +264,10 @@ const isPublicView = looksLikeSlugPage || isPrivateLink || isUserPage || documen
 const pageIdFromQuery = searchParams.get('pageId');
 const pageIdFromPath = looksLikeSlugPage || isPrivateLink ? pathSegments[0] : null;
 
-const derivedPageId = pageIdFromQuery || pageIdFromPath;
+let derivedPageId = pageIdFromQuery || pageIdFromPath; // Make it 'let'
 
-const userViewReady = document.getElementById('user-view-container');
+let userViewReady = document.getElementById('user-view-container');
+
 
 function formatStatusWithRequestId(message, res) {
     if (!res || typeof res.headers?.get !== 'function') return message;
@@ -140,19 +275,146 @@ function formatStatusWithRequestId(message, res) {
     return requestId ? `${message} (요청 ID: ${requestId})` : message;
 }
 
-
 const getPlatformPreset = PlatformHelpers.getPlatformPreset || ((platformId) => PLATFORM_PRESETS.find((preset) => preset.id === platformId));
+
 if (isPublicView) {
     document.body.classList.add('user-view');
     document.body.classList.add('theme-scope');
 }
 
+
 let currentUserRole = 'viewer';
 
 // 상태 데이터 변수들
 let adminLinks = [];
-//...
-//...
+let adminSlugs = [];
+let pagePlan = 'free';
+let pageTheme = 'classic';
+let pagePlanStatus = {};
+let contactSettings = {};
+let adminContactSchema = [];
+let publicContactSchema = [];
+let publicContactSettings = {};
+let contactEnabled = false;
+let contactSubmissions = [];
+let privateTemplates = [];
+let dragState = null;
+let currentPageId = '';
+
+const MAX_CONTACT_FIELDS = 20;
+
+const PLAN_LIMITS = {
+    free: { max_private_links: 3, max_contact_fields: 3 },
+    basic: { max_private_links: 10, max_contact_fields: 10 },
+    premium: { max_private_links: 100, max_contact_fields: 25 },
+};
+
+const THEME_PRESETS = [
+    { id: 'classic', label: '클래식', desc: '밝은 기본 스타일', swatch: ['#f7f7fb', '#ffffff', '#16a34a', '#0f172a'] },
+    { id: 'midnight', label: '미드나잇', desc: '어두운 배경 + 하늘색 포인트', swatch: ['#0b1220', '#0f172a', '#22d3ee', '#e5e7eb'] },
+    { id: 'sunset', label: '선셋', desc: '따뜻한 주황/살구 톤', swatch: ['#fff7ed', '#fef3c7', '#f97316', '#7c2d12'] },
+    { id: 'mint', label: '민트', desc: '시원한 민트/틸 포인트', swatch: ['#ecfeff', '#f0fdfa', '#14b8a6', '#042f2e'] },
+];
+
+const CONTACT_PRESETS = [
+    { label: '간단 문의', fields: [{ label: '이메일', type: 'email', required: true }, { label: '문의 내용', type: 'textarea', required: true }] },
+    { label: '견적 요청', fields: [{ label: '회사명', type: 'text' }, { label: '담당자', type: 'text', required: true }, { label: '연락처', type: 'tel', required: true }, { label: '예산', type: 'text' }, { label: '내용', type: 'textarea' }] },
+    { label: '방송 출연 제안', fields: [{ label: '프로그램명', type: 'text' }, { label: '방송사', type: 'text' }, { label: '담당자/연락처', type: 'text', required: true }, { label: '제안 내용', type: 'textarea' }] },
+];
+
+function updatePageContext(pageId) {
+    derivedPageId = pageId;
+    currentPageId = pageId;
+    const pageLink = document.getElementById('public-link');
+    const slugBadge = document.getElementById('current-slug-badge');
+    const idBadge = document.getElementById('current-page-id');
+
+    if (idBadge) idBadge.innerText = pageId;
+
+    if (pageLink) {
+        const slug = adminSlugs?.[0] || pageId;
+        pageLink.href = `/${slug}`;
+    }
+
+    if (slugBadge) {
+        slugBadge.innerText = `슬러그: ${adminSlugs?.[0] || '-'}`;
+    }
+}
+
+async function loadPageData(pageId, options = {}) {
+    if (!pageId) return;
+
+    currentPageId = pageId;
+    const { includeAdmin, privateToken } = options;
+    const adminQuery = includeAdmin ? '?admin=true' : '';
+    const privateQuery = privateToken ? `?token=${privateToken}` : '';
+    const endpoint = privateToken
+        ? `/api/page/${pageId}/private${privateQuery}`
+        : `/api/page/${pageId}${adminQuery}`;
+
+    try {
+        const res = await apiFetch(endpoint);
+        if (!res.ok) {
+            console.error('페이지 데이터 로드 실패', res.status);
+            return;
+        }
+
+        const data = await res.json();
+
+        // 프로필 정보 채우기
+        const profileName = document.getElementById('user-page-name') || document.getElementById('name');
+        const profileDesc = document.getElementById('user-page-description') || document.getElementById('desc');
+        const profilePhoto = document.getElementById('user-page-photo') || document.getElementById('photo');
+        const adminTitle = document.getElementById('admin-page-title');
+
+        if (profileName) profileName.innerText = data.profile?.name || '';
+        if (profileDesc) profileDesc.innerText = data.profile?.description || '';
+        if (profilePhoto) {
+            if (data.profile?.photoUrl) {
+                profilePhoto.src = data.profile.photoUrl;
+                profilePhoto.style.display = 'block';
+            } else {
+                profilePhoto.style.display = 'none';
+            }
+        }
+        
+        if (includeAdmin) {
+            if (document.getElementById('name')) document.getElementById('name').value = data.profile?.name || '';
+            if (document.getElementById('desc')) document.getElementById('desc').value = data.profile?.description || '';
+            if (document.getElementById('photo')) document.getElementById('photo').value = data.profile?.photoUrl || '';
+            if (adminTitle) adminTitle.innerText = data.profile?.name || '페이지 관리';
+
+            adminLinks = [...(data.links || []), ...(data.privateLinks || [])];
+            pagePlan = data.plan || 'free';
+            pageTheme = data.theme || 'classic';
+            pagePlanStatus = data.planStatus || {};
+            adminSlugs = Array.isArray(data.slugs) && data.slugs.length ? data.slugs : [slugify(pageId)];
+            contactSettings = data.contactSettings || {};
+            adminContactSchema = data.contactSchema || [];
+            
+            renderAdminLinks();
+            renderSlugEditor();
+            hydrateContactSettings();
+            renderContactSchemaEditor();
+            renderThemeOptions();
+            renderUsage();
+            updatePageContext(pageId);
+        } else {
+            renderUserLinks(data.links || []);
+            pageTheme = data.theme || 'classic';
+            publicContactSchema = data.contactSchema || [];
+            publicContactSettings = data.contactSettings || {};
+            contactEnabled = publicContactSettings.enabled === true;
+            renderPublicContactForm();
+        }
+
+        applyThemeToScopes();
+
+    } catch (error) {
+        console.error('페이지 데이터 처리 중 오류', error);
+    }
+}
+
 async function ensurePageSession() {
     if (pageRole !== 'page-admin' || !derivedPageId) return;
 
@@ -204,6 +466,7 @@ if (pageRole === 'page-admin' && derivedPageId) {
 
 if ((looksLikeSlugPage || isPrivateLink) && !userViewReady && !pageRole) {
     ensureUserViewContainer();
+    userViewReady = document.getElementById('user-view-container');
 }
 
 // 페이지 관리자 대시보드는 토큰과 pageId를 필수로 요구
@@ -212,7 +475,7 @@ if (pageRole === 'page-admin') {
 
     if (!token) {
         const redirectTarget = derivedPageId
-            ? `/page-admin-login.html?pageId=${encodeURIComponent(derivedPageId)}`
+            ? `/page-admin-login.html?pageId=${encodeURIComponent(derivedPageId)}` 
             : '/page-admin-login.html';
         window.location.href = redirectTarget;
     }
@@ -373,13 +636,13 @@ async function savePage() {
         contactSettings: {
             enabled: enabledContact,
             ...(contactSettings && contactSettings.webhookUrl
-                ? { webhookUrl: contactSettings.webhookUrl.trim() }
+                ? { webhookUrl: contactSettings.webhookUrl.trim() } 
                 : {}),
             ...(Array.isArray(contactSettings.webhookUrls) && contactSettings.webhookUrls.length
-                ? { webhookUrls: contactSettings.webhookUrls }
+                ? { webhookUrls: contactSettings.webhookUrls } 
                 : {}),
             ...(Array.isArray(contactSettings.emailRecipients) && contactSettings.emailRecipients.length
-                ? { emailRecipients: contactSettings.emailRecipients }
+                ? { emailRecipients: contactSettings.emailRecipients } 
                 : {}),
             ...(contactSettings.emailSubject ? { emailSubject: contactSettings.emailSubject.trim() } : {}),
             ...(contactSettings.formTitle ? { formTitle: contactSettings.formTitle.trim() } : {}),
@@ -1028,7 +1291,7 @@ async function pageAdminLogin() {
 async function logout() {
     const token = sessionStorage.getItem('page_admin_token');
     const redirectTarget = derivedPageId
-        ? `/page-admin-login.html?pageId=${encodeURIComponent(derivedPageId)}`
+        ? `/page-admin-login.html?pageId=${encodeURIComponent(derivedPageId)}` 
         : '/page-admin-login.html';
 
     if (token && derivedPageId) {
@@ -1954,7 +2217,8 @@ function hydrateContactSettings() {
             ? contactSettings.emailRecipients.join('\n')
             : '';
         emailRecipientsInput.oninput = (e) => {
-            const raw = (e.target.value || '').split(/[\n,]/);
+            const raw = (e.target.value || '').split(/[
+,]/);
             const list = raw.map((item) => item.trim()).filter(Boolean);
             contactSettings = list.length
                 ? { ...contactSettings, emailRecipients: list }
@@ -2120,109 +2384,104 @@ function renderPresetButtons(targetId, onClick) {
 }
 
 function renderContactPresets() {
-    renderPresetButtons('contact-presets', (preset) => applyContactPreset(preset.id));
-}
-
-function renderOnboardingPresets() {
-    renderPresetButtons('onboarding-presets', (preset) => applyContactPreset(preset.id));
-}
-
-function applyContactPreset(presetId) {
-    const preset = CONTACT_PRESETS.find((item) => item.id === presetId);
-    if (!preset) return;
-    adminContactSchema = preset.fields.map((field) => ({ ...field }));
-    renderContactSchema();
-    renderUsage();
-}
-
-function addContactField() {
-    const labelInput = document.getElementById('contactLabel');
-    const typeInput = document.getElementById('contactType');
-    const placeholderInput = document.getElementById('contactPlaceholder');
-    const helpTextInput = document.getElementById('contactHelpText');
-    const optionsInput = document.getElementById('contactOptions');
-    const requiredInput = document.getElementById('contactRequired');
-
-    const label = labelInput?.value?.trim();
-    const type = typeInput?.value || 'text';
-    const placeholder = placeholderInput?.value || '';
-    const helpText = helpTextInput?.value || '';
-    const rawOptions = (optionsInput?.value || '').split(',');
-    const options = rawOptions.map((item) => item.trim()).filter(Boolean);
-    const required = requiredInput?.checked || false;
-
-    if (!label) {
-        alert('라벨을 입력해주세요.');
-        return;
-    }
-
-    if (adminContactSchema.length >= MAX_CONTACT_FIELDS) {
-        alert(`컨택트 필드는 최대 ${MAX_CONTACT_FIELDS}개까지 추가할 수 있습니다.`);
-        return;
-    }
-
-    if ((type === 'select' || type === 'checkbox') && !options.length) {
-        alert('선택지/체크박스 타입은 옵션을 한 개 이상 입력해야 합니다.');
-        return;
-    }
-
-    adminContactSchema.push({
-        label,
-        type,
-        placeholder,
-        helpText,
-        ...(required ? { required: true } : {}),
-        ...(options.length ? { options } : {}),
+    renderPresetButtons('contact-preset-buttons', (preset) => {
+        if (!confirm(`${preset.label} 프리셋으로 덮어쓸까요? 기존 필드 구성은 사라집니다.`)) return;
+        adminContactSchema = JSON.parse(JSON.stringify(preset.fields));
+        renderContactSchemaEditor();
     });
-    renderContactSchema();
-    renderUsage();
+}
 
-    if (labelInput) labelInput.value = '';
-    if (placeholderInput) placeholderInput.value = '';
-    if (helpTextInput) helpTextInput.value = '';
-    if (optionsInput) optionsInput.value = '';
-    if (requiredInput) requiredInput.checked = false;
+function applyThemeToScopes() {
+    const validTheme = THEME_PRESETS.some((preset) => preset.id === pageTheme) ? pageTheme : 'classic';
+    pageTheme = validTheme;
+
+    const scopes = document.querySelectorAll('.theme-scope');
+    scopes.forEach((scope) => {
+        THEME_PRESETS.forEach((preset) => scope.classList.remove(`theme-${preset.id}`));
+        scope.classList.add(`theme-${validTheme}`);
+    });
+}
+
+function renderThemeOptions() {
+    const host = document.getElementById('theme-options');
+    if (!host) return;
+
+    host.innerHTML = '';
+
+    THEME_PRESETS.forEach((preset) => {
+        const tile = document.createElement('button');
+        tile.type = 'button';
+        tile.className = `theme-tile ${preset.id === pageTheme ? 'active' : ''}`;
+        tile.setAttribute('aria-pressed', preset.id === pageTheme ? 'true' : 'false');
+
+        const swatch = document.createElement('div');
+        swatch.className = 'theme-swatch';
+        (preset.swatch || []).slice(0, 4).forEach((color) => {
+            const cell = document.createElement('span');
+            cell.style.background = color;
+            swatch.appendChild(cell);
+        });
+
+        const meta = document.createElement('div');
+        meta.className = 'theme-meta';
+        const title = document.createElement('div');
+        title.className = 'title';
+        title.innerText = preset.label;
+        const desc = document.createElement('div');
+        desc.className = 'desc';
+        desc.innerText = preset.desc;
+        meta.appendChild(title);
+        meta.appendChild(desc);
+
+        tile.appendChild(swatch);
+        tile.appendChild(meta);
+        tile.onclick = () => {
+            pageTheme = preset.id;
+            applyThemeToScopes();
+            renderThemeOptions();
+        };
+
+        host.appendChild(tile);
+    });
 }
 
 function renderOnboardingBanner() {
-    const card = document.getElementById('onboarding-card');
-    if (!card) return;
-    const nameInput = document.getElementById('name');
-    const shouldShow = !adminLinks.length && !(nameInput?.value?.trim());
-    card.style.display = shouldShow ? 'block' : 'none';
-    if (shouldShow) {
-        renderOnboardingPresets();
+    const banner = document.getElementById('onboarding-banner');
+    if (!banner) return;
+    const hasProfile = !!(document.getElementById('name')?.value?.trim() && document.getElementById('desc')?.value?.trim());
+    const hasLinks = adminLinks.length > 0;
+    if (hasProfile && hasLinks) {
+        banner.style.display = 'none';
+    } else {
+        banner.style.display = 'block';
     }
 }
 
-function applyDefaultTemplate() {
-    const nameInput = document.getElementById('name');
-    const descInput = document.getElementById('desc');
-    const photoInput = document.getElementById('photo');
-
-    if (nameInput && !nameInput.value) nameInput.value = '나의 링크 보드';
-    if (descInput && !descInput.value) descInput.value = '주요 채널과 컨택트를 한 곳에 모았어요.';
-    if (photoInput && !photoInput.value) photoInput.value = 'https://placehold.co/200x200.png';
-
-    const inferredSlug = slugify(nameInput?.value || derivedPageId || 'my-page');
-    if (inferredSlug) {
-        adminSlugs = [inferredSlug, ...adminSlugs.filter((s) => s !== inferredSlug)];
+function renderTurnstileWidget() {
+    const host = document.getElementById('turnstile-widget');
+    if (!host || !APP_CONFIG.turnstileSiteKey) return;
+    
+    if (typeof turnstile !== 'undefined') {
+        try {
+            window.__turnstileId = turnstile.render(host, {
+                sitekey: APP_CONFIG.turnstileSiteKey,
+                callback: (token) => {
+                    window.__turnstileToken = token;
+                },
+            });
+        } catch(e) {
+            console.error('Turnstile 렌더링 실패', e);
+        }
     }
-
-    adminLinks = [
-        { title: 'Instagram', url: 'https://instagram.com/' + (derivedPageId || 'mychannel'), platformId: 'instagram', handle: derivedPageId || 'mychannel' },
-        { title: 'YouTube', url: 'https://www.youtube.com/@' + (derivedPageId || 'creator'), platformId: 'youtube', handle: derivedPageId || 'creator' },
-        { title: '이메일 문의', url: 'mailto:hello@example.com', isPrivate: true },
-    ];
-
-    applyContactPreset('basic');
-    renderAdminLinks();
-    renderContactSchema();
-    renderSlugEditor();
-    renderOnboardingBanner();
-    renderUsage();
 }
 
-function requestUpgrade() {
-    window.location.href = 'mailto:support@example.com?subject=%EC%97%85%EA%B7%B8%EB%A0%88%EC%9D%B4%EB%93%9C%20%EB%AC%B8%EC%9D%98';
+function setPageLoginStatus(message, tone = 'info') {
+    const statusEl = document.getElementById('page-login-status');
+    if (!statusEl) return false;
+    
+    statusEl.textContent = message;
+    statusEl.className = `status-banner ${tone}`;
+    statusEl.style.display = message ? 'block' : 'none';
+
+    return true;
 }
