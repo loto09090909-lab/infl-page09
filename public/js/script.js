@@ -1758,6 +1758,10 @@ function renderContactSchema() {
     renderContactSchemaEditor();
 }
 
+function renderContactSchema() {
+    renderContactSchemaEditor();
+}
+
 function hydrateContactSettings() {
     const webhookInput = document.getElementById('contactWebhook');
     const webhookUrlsInput = document.getElementById('contactWebhookUrls');
