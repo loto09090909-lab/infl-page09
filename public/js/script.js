@@ -2208,8 +2208,7 @@ function hydrateContactSettings() {
             ? contactSettings.emailRecipients.join('\n')
             : '';
         emailRecipientsInput.oninput = (e) => {
-            const raw = (e.target.value || '').split(/[
-,]/);
+            const raw = (e.target.value || '').split(/[\n,]/);
             const list = raw.map((item) => item.trim()).filter(Boolean);
             contactSettings = list.length
                 ? { ...contactSettings, emailRecipients: list }
